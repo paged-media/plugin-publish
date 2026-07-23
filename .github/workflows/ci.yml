@@ -35,9 +35,9 @@ jobs:
         run: cargo build --workspace --all-targets
 
       # The save-back path runs in the editor/SDK wasm, so keep the adapter
-      # wasm32-clean.
+      # wasm32-clean; the pdf-import mapper SHIPS as wasm in the pdf bundle.
       - name: build (wasm32)
-        run: cargo build -p idml-import -p idml-export --target wasm32-unknown-unknown
+        run: cargo build -p idml-import -p idml-export -p pdf-import --target wasm32-unknown-unknown
 
   # The TS side — the paged.publish plugin bundle (packages/publish-bundle),
   # which consumes the published @paged-media/plugin-api + plugin-sdk canaries.
