@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+# The IDML adapter git-deps the Paged model crates from the public
+# paged-media/core engine repo, so CI fetches core over https (no auth
+# needed — both repos are public).
+jobs:
+  check:
+    name: fmt + clippy + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: build (native)
+        run: cargo build --workspace --all-targets
+
+      # The save-back path runs in the editor/SDK wasm, so keep the adapter
+      # wasm32-clean.
+      - name: build (wasm32)
+        run: cargo build -p idml-import -p idml-export --target wasm32-unknown-unknown

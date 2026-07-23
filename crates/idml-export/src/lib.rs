@@ -304,4 +304,3 @@ fn entry_bytes<R: Read + std::io::Seek>(
     entry.read_to_end(&mut buf)?;
     Ok(Some(buf))
 }
-
