@@ -36,9 +36,9 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @paged-media/publish typecheck
-      - run: pnpm --filter @paged-media/publish build # produce dist (pnpm pack skips prepublishOnly)
-      - name: publish the bundle if its version is new (canary)
+      - run: pnpm -r --filter "./packages/*" typecheck
+      - run: pnpm -r --filter "./packages/*" build # produce dist (pnpm pack skips prepublishOnly)
+      - name: publish each bundle whose version is new (canary)
         # No-op without NPM_TOKEN, so the workflow is green until the secret is set.
         if: ${{ env.NPM_TOKEN != '' }}
         env:
@@ -46,13 +46,15 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -e
-          dir=packages/publish-bundle
-          name=$(node -p "require('./$dir/package.json').name")
-          version=$(node -p "require('./$dir/package.json').version")
-          if npm view "$name@$version" version >/dev/null 2>&1; then
-            echo "skip $name@$version (already published)"; exit 0
-          fi
-          ( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" )
-          tgz="$RUNNER_TEMP/$(echo "$name" | sed 's#@##; s#/#-#')-${version}.tgz"
-          echo "publish $name@$version ($tgz)"
-          npm publish "$tgz" --tag canary --access public
+          for dir in packages/*/; do
+            [ -f "$dir/package.json" ] || continue
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "skip $name@$version (already published)"; continue
+            fi
+            ( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" )
+            tgz="$RUNNER_TEMP/$(echo "$name" | sed 's#@##; s#/#-#')-${version}.tgz"
+            echo "publish $name@$version ($tgz)"
+            npm publish "$tgz" --tag canary --access public
+          done

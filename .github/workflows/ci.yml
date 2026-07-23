@@ -42,7 +42,7 @@ jobs:
   # The TS side — the paged.publish plugin bundle (packages/publish-bundle),
   # which consumes the published @paged-media/plugin-api + plugin-sdk canaries.
   bundle:
-    name: publish-bundle typecheck + build
+    name: bundles typecheck + build + validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @paged-media/publish typecheck
-      - run: pnpm --filter @paged-media/publish build
-      - name: validate manifest
-        run: npx --yes @paged-media/plugin-cli@canary validate packages/publish-bundle/manifest.json
+      - run: pnpm -r --filter "./packages/*" typecheck
+      - run: pnpm -r --filter "./packages/*" build
+      - name: validate every bundle manifest
+        run: |
+          set -e
+          for m in packages/*/manifest.json; do
+            echo "== validate $m =="
+            npx --yes @paged-media/plugin-cli@canary validate "$m"
+          done
