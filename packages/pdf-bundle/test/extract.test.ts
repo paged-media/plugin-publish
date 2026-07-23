@@ -17,7 +17,10 @@ import { describe, expect, it } from "vitest";
 import {
   groupLines,
   itemsToParagraphs,
+  itemsToPositionedFrames,
+  lineFrame,
   lineToParagraph,
+  splitLineByGaps,
   textBBox,
   textCharCount,
   type PositionedItem,
@@ -118,6 +121,51 @@ describe("line grouping", () => {
     expect(paras).toHaveLength(2);
     expect(paras[0].runs[0].text).toBe("line one");
     expect(paras[1].runs[0].text).toBe("line two");
+  });
+});
+
+describe("position-preserving frames", () => {
+  it("places a line frame at the line's coordinates with the baseline restored", () => {
+    // A 12pt line whose baseline sits 100pt from the page top, starting at x=72.
+    const f = lineFrame(
+      [pi("Hello world", 72, 100, 12, { widthPt: 60 })],
+      612,
+    )!;
+    expect(f.kind).toBe("text");
+    expect(f.x_pt).toBe(72);
+    // top = baseline - 0.8*size = 100 - 9.6
+    expect(f.y_pt).toBeCloseTo(90.4, 1);
+    // width = text extent + slack, capped to page
+    expect(f.width_pt).toBeGreaterThanOrEqual(60);
+    expect(f.width_pt).toBeLessThanOrEqual(612 - 72);
+    expect(f.paragraphs).toHaveLength(1);
+    expect(f.paragraphs[0].runs[0].text).toBe("Hello world");
+  });
+
+  it("splits a shared-baseline line at a column gutter into separate frames", () => {
+    const items = [
+      pi("Title", 250, 80, 24, { widthPt: 80 }),
+      pi("left column", 72, 120, 10, { widthPt: 55 }), // ends at 127
+      pi("right column", 350, 120, 10, { widthPt: 60 }), // gap 223pt >> 3em
+    ];
+    const frames = itemsToPositionedFrames(items, 612, 792);
+    // Title (1) + left column (1) + right column (1) = 3.
+    expect(frames.length).toBe(3);
+    const title = frames.find((f) => f.paragraphs[0].runs[0].text === "Title")!;
+    expect(title.x_pt).toBe(250);
+    expect(title.paragraphs[0].runs[0].font_size_pt).toBe(24);
+    // The right column keeps its own x, not merged into the left.
+    const rightCol = frames.find((f) => f.x_pt === 350)!;
+    expect(rightCol.paragraphs[0].runs[0].text).toBe("right column");
+  });
+
+  it("keeps ordinary word spacing in one frame (no false column split)", () => {
+    const items = [
+      pi("The", 72, 100, 10, { widthPt: 18 }),
+      pi("quick", 96, 100, 10, { widthPt: 28 }), // small gaps ~word spaces
+      pi("fox", 128, 100, 10, { widthPt: 16 }),
+    ];
+    expect(splitLineByGaps(items)).toHaveLength(1);
   });
 });
 
