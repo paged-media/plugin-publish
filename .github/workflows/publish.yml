@@ -1,39 +1,30 @@
-# Canary publish of the paged.publish plugin bundle (@paged-media/publish) via
-# OIDC TRUSTED PUBLISHING (tokenless). No NPM_TOKEN: the runner mints a
-# short-lived OIDC token (id-token: write) that npm trusts because the package
-# has this repo+workflow configured as a Trusted Publisher on npmjs.
+# Canary publish of the paged.publish plugin bundle (@paged-media/publish).
 #
-# Why pnpm pack -> npm publish: OIDC trusted publishing is an npm-CLI feature
-# (>= 11.5.1), while `pnpm pack` is what applies publishConfig (repointing
-# main/types to dist). So we pack with pnpm (correct tarball) and upload with
-# npm (OIDC).
+# AUTH: classic npm automation token (NO trusted publisher / OIDC needed).
+# Set a repo (or org) secret `NPM_TOKEN` = an npm automation token whose owner
+# can publish in the @paged-media scope (incl. CREATING a new package). The
+# publish step is GUARDED on that secret, so the workflow is a clean no-op
+# until it's set (no chronic red), then auto-publishes each version bump.
+#
+# Why pnpm pack -> npm publish: `pnpm pack` applies publishConfig (repointing
+# main/types to dist); npm does the authenticated upload.
 #
 # Pre-1.0: every version is a -canary.N prerelease under the `canary` dist-tag.
-# An unchanged version skips; bump packages/publish-bundle/package.json version
-# to release it.
-#
-# ONE-TIME npm setup (required before the first publish succeeds):
-#   npmjs.com -> @paged-media/publish -> Trusted Publisher -> GitHub Actions ->
-#     org: paged-media, repo: plugin-publish, workflow: publish.yml,
-#     action: npm publish
-#   (the package must exist first; create it with an initial manual publish, or
-#    an org member with publish rights runs `npm publish` once.)
-#
-# TRIGGER: workflow_dispatch ONLY for now — a `push`-triggered run would fail
-# auth on every commit until the Trusted Publisher is configured. Once the
-# one-time npm setup is done (and the package exists), ADD back:
-#     push:
-#       branches: [main]
-# to auto-publish each version bump on merge (matching plugin-sdk).
+# An unchanged version skips; bump packages/publish-bundle/package.json to
+# release. (A granular token limited to existing packages can't create the
+# first version — the initial publish needs an owner/full-scope token.)
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
-permissions:
-  id-token: write # OIDC token for trusted publishing
-  contents: read
+# Workflow-level so the publish step's `if:` guard can read it (a step's own
+# env isn't visible to its `if`).
+env:
+  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
 jobs:
-  verify-and-publish:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,13 +33,17 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22 # >= 22.14 required for OIDC trusted publishing
-      - name: upgrade npm (OIDC needs >= 11.5.1)
-        run: npm install -g npm@latest
+          node-version: 22
+          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @paged-media/publish typecheck
-      - run: pnpm --filter @paged-media/publish build # produce dist (pnpm pack does NOT run prepublishOnly)
+      - run: pnpm --filter @paged-media/publish build # produce dist (pnpm pack skips prepublishOnly)
       - name: publish the bundle if its version is new (canary)
+        # No-op without NPM_TOKEN, so the workflow is green until the secret is set.
+        if: ${{ env.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -e
           dir=packages/publish-bundle
@@ -59,5 +54,5 @@ jobs:
           fi
           ( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" )
           tgz="$RUNNER_TEMP/$(echo "$name" | sed 's#@##; s#/#-#')-${version}.tgz"
-          echo "publish $name@$version via OIDC ($tgz)"
+          echo "publish $name@$version ($tgz)"
           npm publish "$tgz" --tag canary --access public
