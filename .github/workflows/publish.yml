@@ -18,9 +18,14 @@
 #     action: npm publish
 #   (the package must exist first; create it with an initial manual publish, or
 #    an org member with publish rights runs `npm publish` once.)
+#
+# TRIGGER: workflow_dispatch ONLY for now — a `push`-triggered run would fail
+# auth on every commit until the Trusted Publisher is configured. Once the
+# one-time npm setup is done (and the package exists), ADD back:
+#     push:
+#       branches: [main]
+# to auto-publish each version bump on merge (matching plugin-sdk).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
