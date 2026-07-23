@@ -31,15 +31,60 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use paged_model::{
-    Bounds, CharacterRun, CornerSpec, DesignMap, FrameRef, Page, Paragraph, Rectangle, Spread,
-    SpreadRef, Story, StoryRef, TextFrame,
+    Bounds, CharacterRun, ColorEntry, ColorModel, ColorSpace, CornerSpec, DesignMap, FrameRef,
+    Graphic, Page, Paragraph, PathAnchor, Polygon, Rectangle, Spread, SpreadRef, Story, StoryRef,
+    TextFrame,
 };
 use paged_scene::{Document, ParsedSpread, ParsedStory};
 
-use crate::ir::{DocumentIr, FrameIr, ImageFrameIr, RectIr, TextFrameIr};
+use crate::ir::{DocumentIr, FrameIr, RectIr, TextFrameIr, VectorIr};
 use crate::Error;
 
 const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// Builds the document's colour palette, deduping PDF sRGB colours into
+/// `ColorEntry` swatches the model resolves (`fill_color`/`stroke_color` refs).
+struct Palette {
+    graphic: Graphic,
+    seen: HashMap<(u8, u8, u8), String>,
+}
+impl Palette {
+    fn new() -> Self {
+        Palette {
+            graphic: Graphic::default(),
+            seen: HashMap::new(),
+        }
+    }
+    /// sRGB in 0..=1 → a deduped `"Color/pdf_r_g_b"` swatch id (model RGB is
+    /// stored 0..=255).
+    fn color_id(&mut self, rgb: [f32; 3]) -> String {
+        let key = (to_u8(rgb[0]), to_u8(rgb[1]), to_u8(rgb[2]));
+        if let Some(id) = self.seen.get(&key) {
+            return id.clone();
+        }
+        let id = format!("Color/pdf_{}_{}_{}", key.0, key.1, key.2);
+        self.graphic.colors.insert(
+            id.clone(),
+            ColorEntry {
+                self_id: id.clone(),
+                name: None,
+                space: ColorSpace::Rgb,
+                value: vec![key.0 as f32, key.1 as f32, key.2 as f32],
+                model: ColorModel::Process,
+                alternate_space: None,
+                alternate_value: Vec::new(),
+                tint: None,
+                alpha: None,
+            },
+        );
+        self.seen.insert(key, id.clone());
+        id
+    }
+}
+
+fn to_u8(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
 
 /// Monotonic id source — the model only needs unique strings, and every id we
 /// mint (frame/story/page) is internal to this from-scratch document.
@@ -61,6 +106,7 @@ pub fn build_document(ir: &DocumentIr) -> Result<Document, Error> {
     let mut ids = IdGen::new();
     let mut spreads = Vec::with_capacity(ir.pages.len());
     let mut stories = Vec::new();
+    let mut palette = Palette::new();
 
     for (page_idx, page) in ir.pages.iter().enumerate() {
         let mut spread = Spread {
@@ -103,7 +149,10 @@ pub fn build_document(ir: &DocumentIr) -> Result<Document, Error> {
                     push_image(&mut spread, &mut ids, img.rect, bytes);
                 }
                 FrameIr::Text(tf) => {
-                    push_text(&mut spread, &mut stories, &mut ids, tf);
+                    push_text(&mut spread, &mut stories, &mut ids, &mut palette, tf);
+                }
+                FrameIr::Vector(v) => {
+                    push_vector(&mut spread, &mut ids, &mut palette, v);
                 }
             }
         }
@@ -135,7 +184,7 @@ pub fn build_document(ir: &DocumentIr) -> Result<Document, Error> {
 
     let mut document = Document {
         designmap,
-        palette: Default::default(),
+        palette: palette.graphic,
         spreads,
         stories,
         master_spreads: HashMap::new(),
@@ -194,6 +243,7 @@ fn push_text(
     spread: &mut Spread,
     stories: &mut Vec<ParsedStory>,
     ids: &mut IdGen,
+    palette: &mut Palette,
     tf: &TextFrameIr,
 ) {
     let mut story = Story::default();
@@ -207,10 +257,9 @@ fn push_text(
                 font: run.font_family.clone(),
                 font_style: font_style(run.bold, run.italic),
                 point_size: Some(run.font_size_pt),
-                // Colour → swatch mapping is Phase 2; recovered body text is
-                // overwhelmingly black, so leaving fill_color None (renderer
-                // default = black) is honest for now and avoids dangling
-                // colour refs the skeleton palette can't resolve.
+                // Recovered fill colour → a swatch (defaults to the renderer's
+                // black when the run carried no colour).
+                fill_color: run.color_rgb.map(|c| palette.color_id(c)),
                 text: run.text.clone(),
                 ..Default::default()
             });
@@ -233,6 +282,62 @@ fn push_text(
         self_id: story_id,
         story,
     });
+}
+
+/// Build a Polygon from a vector IR: flatten its contours into a flat anchor
+/// list + subpath boundaries, AABB bounds, and fill/stroke swatches.
+fn push_vector(spread: &mut Spread, ids: &mut IdGen, palette: &mut Palette, v: &VectorIr) {
+    let subs: Vec<_> = v.subpaths.iter().filter(|s| s.points.len() >= 2).collect();
+    if subs.is_empty() {
+        return;
+    }
+    let mut anchors: Vec<PathAnchor> = Vec::new();
+    let mut starts: Vec<usize> = Vec::new();
+    let mut opens: Vec<bool> = Vec::new();
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for sub in &subs {
+        starts.push(anchors.len());
+        opens.push(!sub.closed);
+        for p in &sub.points {
+            anchors.push(PathAnchor {
+                anchor: (p.x_pt, p.y_pt),
+                left: (p.x_pt, p.y_pt),
+                right: (p.x_pt, p.y_pt),
+            });
+            min_x = min_x.min(p.x_pt);
+            min_y = min_y.min(p.y_pt);
+            max_x = max_x.max(p.x_pt);
+            max_y = max_y.max(p.y_pt);
+        }
+    }
+    // Canonical single-contour form (matches the parser + renderer contract):
+    // one contour → no explicit starts; a single CLOSED contour also drops the
+    // open flags, a single OPEN one keeps `[true]`.
+    if subs.len() == 1 {
+        starts = Vec::new();
+        if !opens[0] {
+            opens = Vec::new();
+        }
+    }
+    let bounds = Bounds {
+        top: min_y,
+        left: min_x,
+        bottom: max_y,
+        right: max_x,
+    };
+    let poly = blank_polygon(
+        ids.id("vec"),
+        bounds,
+        anchors,
+        starts,
+        opens,
+        v.fill_rgb.map(|c| palette.color_id(c)),
+        v.stroke_rgb.map(|c| palette.color_id(c)),
+        v.stroke_width_pt,
+    );
+    let idx = spread.polygons.len();
+    spread.polygons.push(poly);
+    spread.frames_in_order.push(FrameRef::Polygon(idx));
 }
 
 /// IDML expresses bold/italic through the font *style* string, not flags.
@@ -353,7 +458,57 @@ fn blank_text_frame(self_id: String, parent_story: String, bounds: Bounds) -> Te
     }
 }
 
-// unused in Phase 1 but part of the IR surface — silence dead-code until the
-// image exporter/other consumers use it directly.
-#[allow(dead_code)]
-fn _touch(_: &ImageFrameIr) {}
+/// A neutral polygon — every field at its no-op value, with the caller's
+/// geometry (anchors/subpaths), AABB bounds, and fill/stroke swatches.
+fn blank_polygon(
+    self_id: String,
+    bounds: Bounds,
+    anchors: Vec<PathAnchor>,
+    subpath_starts: Vec<usize>,
+    subpath_open: Vec<bool>,
+    fill_color: Option<String>,
+    stroke_color: Option<String>,
+    stroke_weight: Option<f32>,
+) -> Polygon {
+    Polygon {
+        self_id: Some(self_id),
+        bounds,
+        item_transform: Some(IDENTITY),
+        fill_color,
+        fill_tint: None,
+        stroke_color,
+        stroke_weight,
+        stroke_type: None,
+        stroke_alignment: None,
+        end_join: None,
+        miter_limit: None,
+        stroke_gap_color: None,
+        stroke_gap_tint: None,
+        stroke_dash: Vec::new(),
+        applied_object_style: None,
+        anchors,
+        subpath_starts,
+        subpath_open,
+        text_wrap: None,
+        item_layer: None,
+        effects: None,
+        gradient_fill_angle: None,
+        gradient_fill_length: None,
+        gradient_stroke_angle: None,
+        gradient_stroke_length: None,
+        opacity: None,
+        blend_mode: None,
+        text_paths: Vec::new(),
+        image_link: None,
+        has_image_element: false,
+        has_inline_pdf: false,
+        image_item_transform: None,
+        image_bytes: None,
+        image_clip: None,
+        overprint_fill: false,
+        overprint_stroke: false,
+        nonprinting: false,
+        visible: true,
+        locked: false,
+    }
+}

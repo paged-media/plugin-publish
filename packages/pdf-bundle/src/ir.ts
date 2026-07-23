@@ -56,7 +56,31 @@ export interface ImageFrameIr extends RectFields {
   png_b64: string;
 }
 
-export type FrameIr = TextFrameIr | ImageFrameIr;
+/** A point in page points, top-left origin. */
+export interface PointIr {
+  x_pt: number;
+  y_pt: number;
+}
+
+/** One contour of a vector path. `closed` contours are filled/closed shapes;
+ *  open ones are strokes (a line/polyline). Curves are flattened to points. */
+export interface SubpathIr {
+  points: PointIr[];
+  closed: boolean;
+}
+
+/** A vector shape recovered from the PDF's path ops — one or more contours
+ *  (compound path) with an optional fill and/or stroke. Colours are sRGB
+ *  0..1; `build` registers them as swatches. */
+export interface VectorIr {
+  kind: "vector";
+  subpaths: SubpathIr[];
+  fill_rgb?: [number, number, number];
+  stroke_rgb?: [number, number, number];
+  stroke_width_pt?: number;
+}
+
+export type FrameIr = TextFrameIr | ImageFrameIr | VectorIr;
 
 /** One page: size in points, an optional full-page raster background (base64
  *  PNG) kept beneath low-confidence content, and frames in reading order. */
