@@ -145,6 +145,54 @@ fn ir_maps_to_paged_ocf_with_editable_text_and_images() {
 }
 
 #[test]
+fn vector_maps_to_polygon_with_swatch() {
+    // A single filled rectangle (red) + a stroked open line (blue) on one page.
+    let json = r#"{
+      "pages": [{
+        "width_pt": 612.0, "height_pt": 792.0,
+        "frames": [
+          { "kind": "vector",
+            "subpaths": [{ "points": [
+              {"x_pt":10.0,"y_pt":10.0},{"x_pt":100.0,"y_pt":10.0},
+              {"x_pt":100.0,"y_pt":50.0},{"x_pt":10.0,"y_pt":50.0}], "closed": true }],
+            "fill_rgb": [1.0, 0.0, 0.0] },
+          { "kind": "vector",
+            "subpaths": [{ "points": [{"x_pt":10.0,"y_pt":70.0},{"x_pt":200.0,"y_pt":70.0}], "closed": false }],
+            "stroke_rgb": [0.0, 0.0, 1.0], "stroke_width_pt": 2.0 }
+        ]
+      }]
+    }"#;
+    let ir: pdf_import::ir::DocumentIr = serde_json::from_str(json).expect("parse IR");
+    let doc = pdf_import::build::build_document(&ir).expect("build");
+    let s = &doc.spreads[0].spread;
+    assert_eq!(s.polygons.len(), 2, "two vector shapes → two polygons");
+
+    // The filled rect: a red swatch fill, closed single contour (no explicit
+    // starts/opens), 4 anchors.
+    let rect = &s.polygons[0];
+    assert_eq!(rect.fill_color.as_deref(), Some("Color/pdf_255_0_0"));
+    assert!(rect.stroke_color.is_none());
+    assert_eq!(rect.anchors.len(), 4);
+    assert!(rect.subpath_starts.is_empty());
+    assert!(rect.subpath_open.is_empty(), "single closed contour");
+
+    // The open line: a blue stroke, single OPEN contour keeps `[true]`.
+    let line = &s.polygons[1];
+    assert_eq!(line.stroke_color.as_deref(), Some("Color/pdf_0_0_255"));
+    assert_eq!(line.stroke_weight, Some(2.0));
+    assert_eq!(line.subpath_open, vec![true]);
+
+    // Both colours registered as RGB swatches (0..255).
+    let red = doc
+        .palette
+        .colors
+        .get("Color/pdf_255_0_0")
+        .expect("red swatch");
+    assert_eq!(red.value, vec![255.0, 0.0, 0.0]);
+    assert!(doc.palette.colors.contains_key("Color/pdf_0_0_255"));
+}
+
+#[test]
 fn pgm_round_trips_are_stable() {
     // Drift guard proper: build once, serialize, deserialize, and confirm the
     // primary fields survive (the #[serde(skip)] caches are rebuilt, so we

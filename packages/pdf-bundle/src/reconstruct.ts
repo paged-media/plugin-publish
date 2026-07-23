@@ -39,6 +39,16 @@ import {
   type ReconstructOptions,
 } from "./extract";
 import { ensureWorker, renderPageToPng } from "./raster";
+import { extractGraphics } from "./graphics";
+
+/** Above this many decomposed objects a page is rasterized instead — a
+ *  pathologically complex vector page would otherwise flood the editor. */
+const MAX_PAGE_OBJECTS = 4000;
+
+/** Below this many non-whitespace chars a page WITH images counts as
+ *  image-dominant and is rasterized (a cover/photo page) rather than losing
+ *  its images. */
+const IMAGE_DOMINANT_TEXT_FLOOR = 300;
 
 /** Below this many non-whitespace characters a page is treated as non-text
  *  (rasterized rather than reconstructed). */
@@ -94,33 +104,42 @@ export async function reconstructPdf(
 
       const pageIr: PageIr = { width_pt: widthPt, height_pt: heightPt, frames: [] };
 
-      // Classify the page from its content mix. A text-dominant page becomes
-      // editable positioned text; a visually-rich page (images, or heavy
-      // vector art like a form/chart) is rendered to a faithful full-page
-      // image so the design isn't lost. (Decomposing rich pages into
-      // individual editable images + vector paths is the next fidelity slice.)
-      const { imageOps, vectorOps } = await countVisualOps(page);
+      // DECOMPOSE the page into editable objects: vector shapes (paths + colour,
+      // behind the text) + positioned text on top. Images aren't decomposed as
+      // objects (in-browser XObject decode is too slow to do inline), so an
+      // IMAGE-DOMINANT page (images + little text) is rendered to a faithful
+      // full-page raster instead; a text page that merely has a logo keeps its
+      // editable text + vectors (the logo is dropped for now).
+      const graphics = await extractGraphics(page, widthPt, heightPt);
       const items = rotated ? [] : normalizeItems(await page.getTextContent(), heightPt);
       const chars = textCharCount(items);
-      const visuallyRich =
-        vectorOps >= HEAVY_VECTOR_OPS ||
-        (chars < RICH_TEXT_FLOOR && (imageOps > 0 || vectorOps >= VECTOR_RICH_OPS));
 
-      if (!rotated && !visuallyRich && chars >= minChars) {
-        // Position-preserving: one frame per line at its actual coordinates.
-        pageIr.frames.push(...itemsToPositionedFrames(items, widthPt, heightPt, heur));
-      }
+      const imageDominant =
+        graphics !== null && graphics.imageOps > 0 && chars < IMAGE_DOMINANT_TEXT_FLOOR;
+      const tooComplex =
+        graphics === null || graphics.vectors.length > MAX_PAGE_OBJECTS;
 
-      // Visually-rich, scanned, or otherwise un-reconstructed → a faithful
-      // full-page raster (an image object, not lost content).
-      if (pageIr.frames.length === 0) {
+      if (tooComplex || imageDominant) {
+        // Faithful full-page raster (complex vector page, image-dominant page,
+        // or a page we couldn't read).
         const png = await renderPageToPng(page, dpi);
         pageIr.background_png_b64 = toBase64(png);
+      } else {
+        pageIr.frames.push(...graphics.vectors);
+        if (chars >= minChars) {
+          pageIr.frames.push(...itemsToPositionedFrames(items, widthPt, heightPt, heur));
+        }
+        // Nothing decomposed (a scanned/blank page) → a faithful raster so
+        // content isn't lost.
+        if (pageIr.frames.length === 0) {
+          const png = await renderPageToPng(page, dpi);
+          pageIr.background_png_b64 = toBase64(png);
+        }
       }
 
       // eslint-disable-next-line no-console
       console.debug(
-        `reconstructPdf: page ${n}/${count} — ${visuallyRich || pageIr.frames.length === 0 ? "raster" : `${pageIr.frames.length} text frames`} (chars=${chars}, img=${imageOps}, vec=${vectorOps})`,
+        `reconstructPdf: page ${n}/${count} — ${pageIr.frames.filter((f) => f.kind === "image").length} img, ${pageIr.frames.filter((f) => f.kind === "vector").length} vec, ${pageIr.frames.filter((f) => f.kind === "text").length} text${pageIr.background_png_b64 ? " +raster" : ""}`,
       );
       pages.push(pageIr);
       page.cleanup();
@@ -131,52 +150,6 @@ export async function reconstructPdf(
   } finally {
     await pdf.destroy();
   }
-}
-
-// ------------------------------------------------ page classification
-
-/** Below this many non-whitespace chars a page is not "text-dominant". */
-const RICH_TEXT_FLOOR = 300;
-/** At/above this many vector fill/stroke ops a low-text page counts as
- *  visually rich (a form, chart, or vector illustration) and is rastered. */
-const VECTOR_RICH_OPS = 24;
-/** At/above this many vector ops a page is rastered REGARDLESS of text volume —
- *  a form/table/chart whose lines carry meaning we can't yet vectorize, so a
- *  faithful raster beats editable-text-without-the-rules. */
-const HEAVY_VECTOR_OPS = 80;
-
-/** Count the page's image + vector paint ops from its operator list — the
- *  signal for whether a page is a visual/graphic page or a text page. */
-async function countVisualOps(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  page: any,
-): Promise<{ imageOps: number; vectorOps: number }> {
-  let imageOps = 0;
-  let vectorOps = 0;
-  try {
-    const ops = await page.getOperatorList();
-    const OPS = pdfjsLib.OPS;
-    for (const fn of ops.fnArray) {
-      if (
-        fn === OPS.paintImageXObject ||
-        fn === OPS.paintInlineImageXObject ||
-        fn === OPS.paintImageMaskXObject
-      ) {
-        imageOps++;
-      } else if (
-        fn === OPS.fill ||
-        fn === OPS.eoFill ||
-        fn === OPS.stroke ||
-        fn === OPS.fillStroke ||
-        fn === OPS.eoFillStroke
-      ) {
-        vectorOps++;
-      }
-    }
-  } catch {
-    // no op list — treat as no visual ops
-  }
-  return { imageOps, vectorOps };
 }
 
 /** pdf.js text content → point-space `PositionedItem`s (top-left origin). Only

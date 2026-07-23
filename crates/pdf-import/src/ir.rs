@@ -53,6 +53,38 @@ pub struct PageIr {
 pub enum FrameIr {
     Text(TextFrameIr),
     Image(ImageFrameIr),
+    Vector(VectorIr),
+}
+
+/// A point in page points, top-left origin.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct PointIr {
+    pub x_pt: f32,
+    pub y_pt: f32,
+}
+
+/// One contour of a vector path. `closed` ⇒ a filled/closed shape; open ⇒ a
+/// stroked polyline. Curves are pre-flattened to points on the TS side.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubpathIr {
+    #[serde(default)]
+    pub points: Vec<PointIr>,
+    #[serde(default)]
+    pub closed: bool,
+}
+
+/// A vector shape — one or more contours (compound path) with an optional
+/// sRGB (0..1) fill and/or stroke.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VectorIr {
+    #[serde(default)]
+    pub subpaths: Vec<SubpathIr>,
+    #[serde(default)]
+    pub fill_rgb: Option<[f32; 3]>,
+    #[serde(default)]
+    pub stroke_rgb: Option<[f32; 3]>,
+    #[serde(default)]
+    pub stroke_width_pt: Option<f32>,
 }
 
 /// A rectangle in point coordinates, top-left origin (y grows downward).
