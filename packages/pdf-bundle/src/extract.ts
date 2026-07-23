@@ -24,7 +24,7 @@
 // Reflowable paragraph grouping (leading/indent detection) + columns are
 // Phase 3.
 
-import type { ParagraphIr, RectFields, RunIr } from "./ir";
+import type { ParagraphIr, RectFields, RunIr, TextFrameIr } from "./ir";
 
 /** A positioned text run in point coordinates, top-left origin (y-down).
  *  `xPt` is the run's left edge (baseline origin x); `baselineTopY` is the
@@ -50,6 +50,10 @@ export interface ReconstructOptions {
   sizeEqualityTolPt: number;
   /** Padding added around the recovered text bbox for the frame, in points. */
   framePaddingPt: number;
+  /** Split a line into separate frames (columns / sidebars) when an intra-line
+   *  gap exceeds this × the font size — well above a word space, so ordinary
+   *  spacing stays one frame but a column gutter separates. */
+  columnGapFactor: number;
 }
 
 export const DEFAULT_OPTIONS: ReconstructOptions = {
@@ -57,6 +61,7 @@ export const DEFAULT_OPTIONS: ReconstructOptions = {
   lineToleranceFactor: 0.3,
   sizeEqualityTolPt: 0.6,
   framePaddingPt: 2,
+  columnGapFactor: 3,
 };
 
 const isBlank = (s: string): boolean => s.trim().length === 0;
@@ -159,6 +164,100 @@ export function itemsToParagraphs(
   return groupLines(items, opts)
     .map((line) => lineToParagraph(line, opts))
     .filter((p): p is ParagraphIr => p !== null && p.runs.length > 0);
+}
+
+/** Approximate ascent as a fraction of the font size (matches the engine's
+ *  default first-baseline offset of `point_size × 0.8`), so a frame placed at
+ *  `baseline − ASCENT×size` lands its recovered baseline back on the PDF's. */
+const ASCENT_FACTOR = 0.8;
+const DESCENT_FACTOR = 0.25;
+
+/**
+ * Position-preserving reconstruction: ONE text frame per visual line, placed at
+ * the line's actual PDF coordinates, so the text lands where it was instead of
+ * reflowing into a single page block. Each frame holds one paragraph (the
+ * line's styled runs) and is sized to the line so it never re-wraps. This is
+ * the faithful-reconstruction path (fidelity over flow-editability); lines stay
+ * independently editable.
+ */
+export function itemsToPositionedFrames(
+  items: PositionedItem[],
+  pageWidthPt: number,
+  _pageHeightPt: number,
+  opts: ReconstructOptions = DEFAULT_OPTIONS,
+): TextFrameIr[] {
+  const frames: TextFrameIr[] = [];
+  for (const line of groupLines(items, opts)) {
+    // Split the line at column gutters so a body column and a sidebar sharing
+    // a baseline become separate, correctly-placed frames instead of one run.
+    for (const segment of splitLineByGaps(line, opts)) {
+      const frame = lineFrame(segment, pageWidthPt, opts);
+      if (frame) frames.push(frame);
+    }
+  }
+  return frames;
+}
+
+/** Split a single (x-sorted) line into segments wherever an inter-item gap
+ *  exceeds `columnGapFactor × fontSize` — a column gutter, not a word space. */
+export function splitLineByGaps(
+  line: PositionedItem[],
+  opts: ReconstructOptions = DEFAULT_OPTIONS,
+): PositionedItem[][] {
+  const sorted = [...line].sort((a, b) => a.xPt - b.xPt);
+  const segments: PositionedItem[][] = [];
+  let cur: PositionedItem[] = [];
+  let prevEnd = Number.NaN;
+  for (const item of sorted) {
+    const gap = Number.isNaN(prevEnd) ? 0 : item.xPt - prevEnd;
+    if (cur.length > 0 && gap > opts.columnGapFactor * item.fontSizePt) {
+      segments.push(cur);
+      cur = [];
+    }
+    cur.push(item);
+    prevEnd = item.xPt + item.widthPt;
+  }
+  if (cur.length > 0) segments.push(cur);
+  return segments;
+}
+
+/** Build one positioned text frame from a single line, or null if the line has
+ *  no renderable text. */
+export function lineFrame(
+  line: PositionedItem[],
+  pageWidthPt: number,
+  opts: ReconstructOptions = DEFAULT_OPTIONS,
+): TextFrameIr | null {
+  const para = lineToParagraph(line, opts);
+  if (!para) return null;
+  const real = line.filter((i) => !isBlank(i.text));
+  if (real.length === 0) return null;
+
+  const maxSize = Math.max(...real.map((i) => i.fontSizePt));
+  // Items in a line share a baseline (grouped within tolerance); take the
+  // lowest so mixed-size runs sit on a common line.
+  const baseline = Math.max(...real.map((i) => i.baselineTopY));
+  const left = Math.min(...real.map((i) => i.xPt));
+  const right = Math.max(...real.map((i) => i.xPt + i.widthPt));
+
+  const top = baseline - ASCENT_FACTOR * maxSize;
+  const height = maxSize * (ASCENT_FACTOR + DESCENT_FACTOR + 0.2);
+  // Width: the text extent plus slack so a substituted font (wider metrics
+  // than the PDF's) doesn't force a wrap — capped so frames don't span the
+  // page (which would make overlapping line-frames hard to select).
+  const width = Math.min(
+    Math.max(0, pageWidthPt - left),
+    right - left + maxSize * 4,
+  );
+
+  return {
+    kind: "text",
+    x_pt: left,
+    y_pt: Math.max(0, top),
+    width_pt: width,
+    height_pt: height,
+    paragraphs: [para],
+  };
 }
 
 /** Bounding box of the items (text ink), padded — the text frame's geometry.

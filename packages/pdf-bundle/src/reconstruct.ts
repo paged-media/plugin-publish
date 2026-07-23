@@ -33,8 +33,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import type { DocumentIr, PageIr } from "./ir";
 import {
   DEFAULT_OPTIONS,
-  itemsToParagraphs,
-  textBBox,
+  itemsToPositionedFrames,
   textCharCount,
   type PositionedItem,
   type ReconstructOptions,
@@ -50,6 +49,11 @@ export interface ReconstructPdfOptions extends Partial<ReconstructOptions> {
   dpi?: number;
   /** Min non-whitespace chars for a page to be treated as text (default 4). */
   minTextChars?: number;
+  /** Cap on pages reconstructed (default 25) — bounds memory/time on big docs;
+   *  the importer surfaces the truncation. */
+  maxPages?: number;
+  /** Skip embedded-image extraction (text/vectors only). Default false. */
+  skipImages?: boolean;
 }
 
 /** Reconstruct a PDF into a Document IR (editable text where recoverable,
@@ -61,8 +65,9 @@ export async function reconstructPdf(
 ): Promise<DocumentIr> {
   await ensureWorker();
   const heur: ReconstructOptions = { ...DEFAULT_OPTIONS, ...opts };
-  const dpi = opts.dpi ?? 150;
+  const dpi = opts.dpi ?? 110;
   const minChars = opts.minTextChars ?? MIN_TEXT_CHARS;
+  const maxPages = opts.maxPages ?? 12;
 
   let pdf: Awaited<ReturnType<typeof pdfjsLib.getDocument>["promise"]>;
   try {
@@ -72,8 +77,15 @@ export async function reconstructPdf(
   }
 
   try {
+    const count = Math.min(pdf.numPages, maxPages);
+    if (pdf.numPages > count) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `reconstructPdf: document has ${pdf.numPages} pages; reconstructing the first ${count} (maxPages).`,
+      );
+    }
     const pages: PageIr[] = [];
-    for (let n = 1; n <= pdf.numPages; n++) {
+    for (let n = 1; n <= count; n++) {
       const page = await pdf.getPage(n);
       const vp = page.getViewport({ scale: 1 });
       const widthPt = vp.width;
@@ -82,31 +94,89 @@ export async function reconstructPdf(
 
       const pageIr: PageIr = { width_pt: widthPt, height_pt: heightPt, frames: [] };
 
-      if (!rotated) {
-        const tc = await page.getTextContent();
-        const items = normalizeItems(tc, heightPt);
-        if (textCharCount(items) >= minChars) {
-          const paragraphs = itemsToParagraphs(items, heur);
-          const bbox = textBBox(items, widthPt, heightPt, heur);
-          if (paragraphs.length > 0 && bbox) {
-            pageIr.frames.push({ kind: "text", ...bbox, paragraphs });
-          }
-        }
+      // Classify the page from its content mix. A text-dominant page becomes
+      // editable positioned text; a visually-rich page (images, or heavy
+      // vector art like a form/chart) is rendered to a faithful full-page
+      // image so the design isn't lost. (Decomposing rich pages into
+      // individual editable images + vector paths is the next fidelity slice.)
+      const { imageOps, vectorOps } = await countVisualOps(page);
+      const items = rotated ? [] : normalizeItems(await page.getTextContent(), heightPt);
+      const chars = textCharCount(items);
+      const visuallyRich =
+        vectorOps >= HEAVY_VECTOR_OPS ||
+        (chars < RICH_TEXT_FLOOR && (imageOps > 0 || vectorOps >= VECTOR_RICH_OPS));
+
+      if (!rotated && !visuallyRich && chars >= minChars) {
+        // Position-preserving: one frame per line at its actual coordinates.
+        pageIr.frames.push(...itemsToPositionedFrames(items, widthPt, heightPt, heur));
       }
 
-      // No editable text recovered → keep the page as a raster background.
+      // Visually-rich, scanned, or otherwise un-reconstructed → a faithful
+      // full-page raster (an image object, not lost content).
       if (pageIr.frames.length === 0) {
         const png = await renderPageToPng(page, dpi);
         pageIr.background_png_b64 = toBase64(png);
       }
 
+      // eslint-disable-next-line no-console
+      console.debug(
+        `reconstructPdf: page ${n}/${count} — ${visuallyRich || pageIr.frames.length === 0 ? "raster" : `${pageIr.frames.length} text frames`} (chars=${chars}, img=${imageOps}, vec=${vectorOps})`,
+      );
       pages.push(pageIr);
       page.cleanup();
     }
+    // eslint-disable-next-line no-console
+    console.debug(`reconstructPdf: done — ${pages.length} pages`);
     return { pages };
   } finally {
     await pdf.destroy();
   }
+}
+
+// ------------------------------------------------ page classification
+
+/** Below this many non-whitespace chars a page is not "text-dominant". */
+const RICH_TEXT_FLOOR = 300;
+/** At/above this many vector fill/stroke ops a low-text page counts as
+ *  visually rich (a form, chart, or vector illustration) and is rastered. */
+const VECTOR_RICH_OPS = 24;
+/** At/above this many vector ops a page is rastered REGARDLESS of text volume —
+ *  a form/table/chart whose lines carry meaning we can't yet vectorize, so a
+ *  faithful raster beats editable-text-without-the-rules. */
+const HEAVY_VECTOR_OPS = 80;
+
+/** Count the page's image + vector paint ops from its operator list — the
+ *  signal for whether a page is a visual/graphic page or a text page. */
+async function countVisualOps(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
+): Promise<{ imageOps: number; vectorOps: number }> {
+  let imageOps = 0;
+  let vectorOps = 0;
+  try {
+    const ops = await page.getOperatorList();
+    const OPS = pdfjsLib.OPS;
+    for (const fn of ops.fnArray) {
+      if (
+        fn === OPS.paintImageXObject ||
+        fn === OPS.paintInlineImageXObject ||
+        fn === OPS.paintImageMaskXObject
+      ) {
+        imageOps++;
+      } else if (
+        fn === OPS.fill ||
+        fn === OPS.eoFill ||
+        fn === OPS.stroke ||
+        fn === OPS.fillStroke ||
+        fn === OPS.eoFillStroke
+      ) {
+        vectorOps++;
+      }
+    }
+  } catch {
+    // no op list — treat as no visual ops
+  }
+  return { imageOps, vectorOps };
 }
 
 /** pdf.js text content → point-space `PositionedItem`s (top-left origin). Only
