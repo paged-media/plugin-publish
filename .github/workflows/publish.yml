@@ -1,0 +1,58 @@
+# Canary publish of the paged.publish plugin bundle (@paged-media/publish) via
+# OIDC TRUSTED PUBLISHING (tokenless). No NPM_TOKEN: the runner mints a
+# short-lived OIDC token (id-token: write) that npm trusts because the package
+# has this repo+workflow configured as a Trusted Publisher on npmjs.
+#
+# Why pnpm pack -> npm publish: OIDC trusted publishing is an npm-CLI feature
+# (>= 11.5.1), while `pnpm pack` is what applies publishConfig (repointing
+# main/types to dist). So we pack with pnpm (correct tarball) and upload with
+# npm (OIDC).
+#
+# Pre-1.0: every version is a -canary.N prerelease under the `canary` dist-tag.
+# An unchanged version skips; bump packages/publish-bundle/package.json version
+# to release it.
+#
+# ONE-TIME npm setup (required before the first publish succeeds):
+#   npmjs.com -> @paged-media/publish -> Trusted Publisher -> GitHub Actions ->
+#     org: paged-media, repo: plugin-publish, workflow: publish.yml,
+#     action: npm publish
+#   (the package must exist first; create it with an initial manual publish, or
+#    an org member with publish rights runs `npm publish` once.)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC token for trusted publishing
+  contents: read
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # >= 22.14 required for OIDC trusted publishing
+      - name: upgrade npm (OIDC needs >= 11.5.1)
+        run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @paged-media/publish typecheck
+      - run: pnpm --filter @paged-media/publish build # produce dist (pnpm pack does NOT run prepublishOnly)
+      - name: publish the bundle if its version is new (canary)
+        run: |
+          set -e
+          dir=packages/publish-bundle
+          name=$(node -p "require('./$dir/package.json').name")
+          version=$(node -p "require('./$dir/package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "skip $name@$version (already published)"; exit 0
+          fi
+          ( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" )
+          tgz="$RUNNER_TEMP/$(echo "$name" | sed 's#@##; s#/#-#')-${version}.tgz"
+          echo "publish $name@$version via OIDC ($tgz)"
+          npm publish "$tgz" --tag canary --access public
