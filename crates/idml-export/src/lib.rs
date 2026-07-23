@@ -305,6 +305,3 @@ fn entry_bytes<R: Read + std::io::Seek>(
     Ok(Some(buf))
 }
 
-#[cfg(test)]
-#[cfg(any())] // Phase-1: integration tests need paged-gen/paged-mutate (circular); re-homed in Phase 2
-mod tests;
