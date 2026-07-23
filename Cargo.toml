@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/idml-import", "crates/idml-export"]
+members = ["crates/idml-import", "crates/idml-export", "crates/pdf-import"]
 
 [workspace.package]
 version = "0.0.0"
@@ -23,11 +23,16 @@ too_many_arguments = "allow"
 # Bump the rev as the model evolves (the two-repo rev-pin dance).
 paged-model = { git = "https://github.com/paged-media/core", rev = "683d2c1bdcadae082c53474681b692244ccbc1a2" }
 paged-scene = { git = "https://github.com/paged-media/core", rev = "683d2c1bdcadae082c53474681b692244ccbc1a2" }
+# The native `.paged` model codec (pgm to_bytes/from_bytes) — the PDF import
+# builds a Document and persists it natively (no IDML round-trip), same rev so
+# crate identity unifies with paged-model/paged-scene.
+paged-store = { git = "https://github.com/paged-media/core", rev = "683d2c1bdcadae082c53474681b692244ccbc1a2" }
 
 thiserror = "2"
 bytes = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 quick-xml = { version = "0.41", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tracing = "0.1"
 base64 = "0.22"

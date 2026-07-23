@@ -12,11 +12,36 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-// @paged-media/pdf — the paged.pdf plugin bundle (Phase 0): image-only PDF
-// import routed through the engine's IDML + inline-image path.
+// @paged-media/pdf — the paged.pdf plugin bundle. Phase 0: image-only PDF
+// import (raster → inline-image IDML). Phase 1: editable reconstruction
+// (pdf.js text → Document IR → the pdf-import wasm mapper → native .paged),
+// with the image path as the fallback.
 
 export { pdfBundle, activate } from "./activate";
 export { contributePdfIo, PDF_IMPORTER_ID, PDF_MIME } from "./io/pdf";
-export { rasterizePdf } from "./raster";
+export { rasterizePdf, renderPageToPng, ensureWorker } from "./raster";
 export { buildIdmlFromRasters } from "./idml-fallback";
 export type { PdfPageRaster } from "./idml-fallback";
+// Phase 1 surface.
+export { reconstructPdf } from "./reconstruct";
+export type { ReconstructPdfOptions } from "./reconstruct";
+export { loadPdfMapper, _resetPdfMapperCache } from "./engine-loader";
+export type { PdfMapper, LoadMapperOptions } from "./engine-loader";
+export {
+  itemsToParagraphs,
+  groupLines,
+  lineToParagraph,
+  textBBox,
+  textCharCount,
+  DEFAULT_OPTIONS,
+} from "./extract";
+export type { PositionedItem, ReconstructOptions } from "./extract";
+export type {
+  DocumentIr,
+  PageIr,
+  FrameIr,
+  TextFrameIr,
+  ImageFrameIr,
+  ParagraphIr,
+  RunIr,
+} from "./ir";

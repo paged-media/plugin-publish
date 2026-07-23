@@ -1,0 +1,34 @@
+[package]
+name = "pdf-import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "PDF-blind mapper: a reading-ordered Document IR (from pdf.js) → paged_scene::Document → native .paged bytes. No PDF knowledge, no heuristics — those live in the TS bundle next to pdf.js."
+
+[lib]
+# cdylib for the wasm-bindgen `--target web` artifact the bundle loads;
+# rlib so native `cargo test` exercises the pure mapper.
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+paged-scene = { workspace = true }
+paged-model = { workspace = true }
+paged-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+
+# The wasm-bindgen surface is target-gated so the pure IR→Document→pgm mapper
+# stays native-testable and the binding only compiles for wasm32.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+zip = { workspace = true }
