@@ -31,8 +31,8 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use paged_model::{
-    Bounds, CharacterRun, CornerSpec, FrameRef, Page, Paragraph, Rectangle, Spread, Story,
-    TextFrame,
+    Bounds, CharacterRun, CornerSpec, DesignMap, FrameRef, Page, Paragraph, Rectangle, Spread,
+    SpreadRef, Story, StoryRef, TextFrame,
 };
 use paged_scene::{Document, ParsedSpread, ParsedStory};
 
@@ -114,8 +114,27 @@ pub fn build_document(ir: &DocumentIr) -> Result<Document, Error> {
         });
     }
 
+    // The shell derives page navigation + the "document loaded" state from the
+    // designmap's ORDERED spread/story refs (not from Document.spreads, which
+    // only the renderer + health reads). A parsed IDML gets these from
+    // designmap.xml; our from-scratch pgm must fill them itself, or the editor
+    // shows "No document loaded" despite a populated scene. The default section
+    // ("Cover") is synthesized by the shell when sections are empty.
+    let designmap = DesignMap {
+        spreads: spreads
+            .iter()
+            .map(|s| SpreadRef { src: s.src.clone() })
+            .collect(),
+        stories: stories
+            .iter()
+            .map(|s| StoryRef { src: s.src.clone() })
+            .collect(),
+        document_name: Some("Imported PDF".to_string()),
+        ..Default::default()
+    };
+
     let mut document = Document {
-        designmap: Default::default(),
+        designmap,
         palette: Default::default(),
         spreads,
         stories,

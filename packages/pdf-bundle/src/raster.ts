@@ -39,8 +39,8 @@ let workerConfigured = false;
 
 /** Ensure pdf.js's worker is configured (idempotent). Exposed so
  *  `reconstruct.ts`, which drives its own `getDocument`, shares the setup. */
-export function ensureWorker(): void {
-  configureWorker();
+export async function ensureWorker(): Promise<void> {
+  await configureWorker();
 }
 
 /** Render a single already-loaded pdf.js page to a PNG at `dpi`. Reuses the
@@ -57,16 +57,24 @@ export async function renderPageToPng(
   return target.toPng();
 }
 
-function configureWorker(): void {
+async function configureWorker(): Promise<void> {
   if (workerConfigured) return;
   workerConfigured = true;
   try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-      "pdfjs-dist/build/pdf.worker.min.mjs",
-      import.meta.url,
-    ).toString();
+    // Resolve the worker via a `?url` import — tsup keeps `?url` external
+    // (tsup.config `external: [/\?url$/]`) so the editor's Vite resolves it to
+    // a served worker asset. The prior `new URL(pkg, import.meta.url)` form
+    // broke under Vite's dep pre-bundling (import.meta.url moved into
+    // .vite/deps and the worker subpath 404'd → "Setting up fake worker
+    // failed"). Same mechanism as the wasm `?url` load in engine-loader.
+    // @ts-ignore — `?url` is a bundler affordance (untyped).
+    const mod = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")) as {
+      default: string;
+    };
+    pdfjsLib.GlobalWorkerOptions.workerSrc = mod.default;
   } catch {
-    // Leave workerSrc unset — pdf.js will use its main-thread fake worker.
+    // Leave workerSrc unset (e.g. node/vitest, where there is no bundler to
+    // resolve `?url`) — pdf.js falls back to its main-thread fake worker.
   }
 }
 
@@ -124,7 +132,7 @@ export async function rasterizePdf(
   bytes: Uint8Array,
   opts?: { dpi?: number },
 ): Promise<PdfPageRaster[]> {
-  configureWorker();
+  await configureWorker();
   const dpi = opts?.dpi ?? 150;
   const scale = dpi / 72;
 

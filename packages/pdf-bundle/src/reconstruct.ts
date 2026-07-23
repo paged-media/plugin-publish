@@ -59,7 +59,7 @@ export async function reconstructPdf(
   bytes: Uint8Array,
   opts: ReconstructPdfOptions = {},
 ): Promise<DocumentIr> {
-  ensureWorker();
+  await ensureWorker();
   const heur: ReconstructOptions = { ...DEFAULT_OPTIONS, ...opts };
   const dpi = opts.dpi ?? 150;
   const minChars = opts.minTextChars ?? MIN_TEXT_CHARS;
