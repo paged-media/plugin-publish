@@ -1,0 +1,14 @@
+{
+  "id": "media.paged.publish",
+  "name": "paged.publish",
+  "version": "0.1.0-canary.0",
+  "apiVersion": "^0.2",
+  "publisher": "paged.media",
+  "capabilities": {
+    "document": { "read": "broad", "readNative": true, "openNative": true }
+  },
+  "contributes": {
+    "importers": ["media.paged.publish.importer.idml"],
+    "exporters": ["media.paged.publish.exporter.idml"]
+  }
+}

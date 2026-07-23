@@ -1,2 +1,6 @@
 /target
 **/*.rs.bk
+
+# TS bundle (packages/*) build + deps
+node_modules
+dist
