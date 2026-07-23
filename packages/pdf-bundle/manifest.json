@@ -1,11 +1,19 @@
 {
   "id": "media.paged.pdf",
   "name": "paged.pdf",
-  "version": "0.1.0-canary.0",
+  "version": "0.2.0-canary.0",
   "apiVersion": "^0.2",
   "publisher": "paged.media",
   "capabilities": {
-    "document": { "read": "broad", "openNative": true }
+    "document": { "read": "broad", "openNative": true },
+    "wasm": [
+      {
+        "name": "pdf-import",
+        "path": "bin/pdf_import_bg.wasm",
+        "purpose": "codec",
+        "maxBytes": 4194304
+      }
+    ]
   },
   "contributes": {
     "importers": ["media.paged.pdf.importer.pdf"]

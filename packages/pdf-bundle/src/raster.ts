@@ -26,6 +26,7 @@
 // can't be created, pdf.js falls back to its main-thread "fake worker".
 
 import * as pdfjsLib from "pdfjs-dist";
+import type { PDFPageProxy } from "pdfjs-dist";
 
 /** One rasterized page: point size at scale 1 + the PNG-encoded pixels. */
 export interface PdfPageRaster {
@@ -35,6 +36,26 @@ export interface PdfPageRaster {
 }
 
 let workerConfigured = false;
+
+/** Ensure pdf.js's worker is configured (idempotent). Exposed so
+ *  `reconstruct.ts`, which drives its own `getDocument`, shares the setup. */
+export function ensureWorker(): void {
+  configureWorker();
+}
+
+/** Render a single already-loaded pdf.js page to a PNG at `dpi`. Reuses the
+ *  same canvas target as `rasterizePdf`; used by `reconstruct.ts` to raster
+ *  only the low-confidence pages (single PDF parse, no re-load). */
+export async function renderPageToPng(
+  page: PDFPageProxy,
+  dpi = 150,
+): Promise<Uint8Array> {
+  const scale = dpi / 72;
+  const viewport = page.getViewport({ scale });
+  const target = makeTarget(Math.ceil(viewport.width), Math.ceil(viewport.height));
+  await page.render({ canvasContext: target.ctx, viewport }).promise;
+  return target.toPng();
+}
 
 function configureWorker(): void {
   if (workerConfigured) return;
