@@ -1,0 +1,27 @@
+[package]
+name = "idml-import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Import parser (ZIP + XML source packages). Produces a typed AST of the supported schema subset."
+
+[lints]
+workspace = true
+
+[dependencies]
+paged-scene = { workspace = true }
+# N5 — the Paged model types live here (parser depends on the model, imports
+# into it). idml-import re-exports them so its dependents are untouched.
+paged-model = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+zip = { workspace = true }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+base64 = { workspace = true }
+
+[dev-dependencies]
+zip = { workspace = true }

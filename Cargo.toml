@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["crates/idml-import", "crates/idml-export"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MPL-2.0 OR LicenseRef-PMEL"
+publish = false
+
+[workspace.lints]
+
+[workspace.dependencies]
+# The shared Paged model crates, git-depped from the PUBLIC core engine repo.
+# Pinned to a rev; when core builds the adapter back (Phase 2) a core-side
+# [patch] redirects these to core's local copies so crate identity unifies.
+# Bump the rev as the model evolves (the two-repo rev-pin dance).
+paged-model = { git = "https://github.com/paged-media/core", rev = "683d2c1bdcadae082c53474681b692244ccbc1a2" }
+paged-scene = { git = "https://github.com/paged-media/core", rev = "683d2c1bdcadae082c53474681b692244ccbc1a2" }
+
+thiserror = "2"
+bytes = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+base64 = "0.22"
