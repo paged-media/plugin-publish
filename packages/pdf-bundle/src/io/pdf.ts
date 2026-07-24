@@ -41,7 +41,7 @@ import type {
 
 import { rasterizePdf } from "../raster";
 import { buildIdmlFromRasters } from "../idml-fallback";
-import { reconstructPdf } from "../reconstruct";
+import { extractPdf } from "../pdfium";
 import { loadPdfMapper } from "../engine-loader";
 
 export const PDF_IMPORTER_ID = "media.paged.pdf.importer.pdf";
@@ -98,7 +98,7 @@ async function tryEditableImport(
   const mapper = await loadPdfMapper(host);
   if (!mapper) return null;
   try {
-    const ir = await reconstructPdf(bytes);
+    const ir = await extractPdf(bytes);
     const paged = mapper.mapIrToPaged(ir);
     if (!paged) return null;
     return { paged, pageCount: ir.pages.length };

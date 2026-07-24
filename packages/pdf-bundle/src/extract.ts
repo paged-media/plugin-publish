@@ -38,6 +38,8 @@ export interface PositionedItem {
   fontFamily?: string;
   bold: boolean;
   italic: boolean;
+  /** sRGB fill 0..1, when the reader supplies a colour. */
+  colorRgb?: [number, number, number];
 }
 
 export interface ReconstructOptions {
@@ -97,6 +99,9 @@ export function groupLines(
   return lines;
 }
 
+const colorKey = (c?: [number, number, number]): string =>
+  c ? c.map((v) => Math.round(v * 255)).join(",") : "";
+
 const sameStyle = (
   a: PositionedItem,
   b: PositionedItem,
@@ -105,6 +110,7 @@ const sameStyle = (
   (a.fontFamily ?? "") === (b.fontFamily ?? "") &&
   a.bold === b.bold &&
   a.italic === b.italic &&
+  colorKey(a.colorRgb) === colorKey(b.colorRgb) &&
   Math.abs(a.fontSizePt - b.fontSizePt) <= opts.sizeEqualityTolPt;
 
 const runOf = (item: PositionedItem, text: string): RunIr => {
@@ -112,6 +118,7 @@ const runOf = (item: PositionedItem, text: string): RunIr => {
   if (item.fontFamily) run.font_family = item.fontFamily;
   if (item.bold) run.bold = true;
   if (item.italic) run.italic = true;
+  if (item.colorRgb) run.color_rgb = item.colorRgb;
   return run;
 };
 
@@ -191,11 +198,40 @@ export function itemsToPositionedFrames(
     // Split the line at column gutters so a body column and a sidebar sharing
     // a baseline become separate, correctly-placed frames instead of one run.
     for (const segment of splitLineByGaps(line, opts)) {
+      // PDFium's per-glyph font size tracks ink height (x-height vs ascender),
+      // so a single-size line arrives as jittering sizes that shatter it into
+      // one run per glyph — thousands of runs the engine then lays out one by
+      // one. Snap every glyph in the segment to the segment's dominant size:
+      // it collapses the runs AND removes the spurious size variation.
+      normalizeSegmentSize(segment);
       const frame = lineFrame(segment, pageWidthPt, opts);
       if (frame) frames.push(frame);
     }
   }
   return frames;
+}
+
+/** Snap every item in a segment to the segment's dominant font size (the mode
+ *  over 0.5pt buckets, weighted by glyph count). PDFium reports per-glyph sizes
+ *  that swing with ink height, so a uniform line otherwise fragments into a run
+ *  per glyph; collapsing to one size lets `sameStyle` merge them. */
+export function normalizeSegmentSize(segment: PositionedItem[]): void {
+  const real = segment.filter((i) => i.text.trim().length > 0);
+  if (real.length === 0) return;
+  const buckets = new Map<number, number>();
+  for (const i of real) {
+    const b = Math.round(i.fontSizePt * 2) / 2; // 0.5pt buckets
+    buckets.set(b, (buckets.get(b) ?? 0) + i.text.length);
+  }
+  let mode = real[0].fontSizePt;
+  let best = -1;
+  for (const [size, weight] of buckets) {
+    if (weight > best) {
+      best = weight;
+      mode = size;
+    }
+  }
+  for (const i of segment) i.fontSizePt = mode;
 }
 
 /** Split a single (x-sorted) line into segments wherever an inter-item gap

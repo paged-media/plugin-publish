@@ -22,7 +22,10 @@ export { contributePdfIo, PDF_IMPORTER_ID, PDF_MIME } from "./io/pdf";
 export { rasterizePdf, renderPageToPng, ensureWorker } from "./raster";
 export { buildIdmlFromRasters } from "./idml-fallback";
 export type { PdfPageRaster } from "./idml-fallback";
-// Phase 1 surface.
+// The PDFium reader engine (replaces pdf.js as of slice 3).
+export { extractPdf, loadPdfium, _resetPdfium } from "./pdfium";
+export type { ExtractOptions } from "./pdfium";
+// Legacy pdf.js reconstruction (kept for the image fallback path).
 export { reconstructPdf } from "./reconstruct";
 export type { ReconstructPdfOptions } from "./reconstruct";
 export { loadPdfMapper, _resetPdfMapperCache } from "./engine-loader";
