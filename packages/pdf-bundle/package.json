@@ -18,8 +18,7 @@
   "dependencies": {
     "@paged-media/plugin-api": "0.2.27-canary.0",
     "@paged-media/plugin-sdk": "0.2.27-canary.0",
-    "jszip": "^3.10.1",
-    "pdfjs-dist": "^4.10.38"
+    "jszip": "^3.10.1"
   },
   "peerDependencies": {
     "@paged-media/plugin-api": "0.2.27-canary.0",

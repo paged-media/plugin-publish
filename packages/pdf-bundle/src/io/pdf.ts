@@ -39,9 +39,8 @@ import type {
   ImportRequest,
 } from "@paged-media/plugin-api";
 
-import { rasterizePdf } from "../raster";
 import { buildIdmlFromRasters } from "../idml-fallback";
-import { extractPdf } from "../pdfium";
+import { extractPdf, rasterizePdf } from "../pdfium";
 import { loadPdfMapper } from "../engine-loader";
 
 export const PDF_IMPORTER_ID = "media.paged.pdf.importer.pdf";

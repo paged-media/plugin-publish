@@ -37,6 +37,7 @@ import {
   itemsToPositionedFrames,
   type PositionedItem,
 } from "./extract";
+import type { PdfPageRaster } from "./idml-fallback";
 
 // FPDF_PAGEOBJ_* object types.
 const OBJ_PATH = 2;
@@ -161,6 +162,29 @@ export async function loadPdfium(): Promise<Fpdf | null> {
           "number",
           "number",
         ]),
+        // Page → bitmap raster (the fallback path; replaces pdf.js render).
+        BitmapCreate: cw("FPDFBitmap_Create", "number", ["number", "number", "number"]),
+        BitmapFillRect: cw("FPDFBitmap_FillRect", "number", [
+          "number",
+          "number",
+          "number",
+          "number",
+          "number",
+          "number",
+        ]),
+        RenderPageBitmap: cw("FPDF_RenderPageBitmap", null, [
+          "number",
+          "number",
+          "number",
+          "number",
+          "number",
+          "number",
+          "number",
+          "number",
+        ]),
+        BitmapGetBuffer: cw("FPDFBitmap_GetBuffer", "number", ["number"]),
+        BitmapGetStride: cw("FPDFBitmap_GetStride", "number", ["number"]),
+        BitmapDestroy: cw("FPDFBitmap_Destroy", null, ["number"]),
       };
       f.InitLibrary();
       return f;
@@ -174,6 +198,121 @@ export async function loadPdfium(): Promise<Fpdf | null> {
 /** For tests — drop the memoized engine. */
 export function _resetPdfium(): void {
   cached = undefined;
+}
+
+export interface RasterOptions {
+  /** Render DPI (PDF user units are points, 1/72"). Default 150. */
+  dpi?: number;
+  /** Cap on pages rendered (safety for huge PDFs). Default 20. */
+  maxPages?: number;
+}
+
+/**
+ * Rasterize each PDF page to a PNG via PDFium's `FPDF_RenderPageBitmap` — the
+ * Phase-0 image fallback (used when the editable reconstruction can't run).
+ * Replaces the pdf.js renderer; PDFium renders BGRA, which we swap to RGBA and
+ * encode to PNG through a canvas. `widthPt`/`heightPt` are the page size in
+ * points; pixels are rendered at `dpi/72` scale.
+ */
+export async function rasterizePdf(
+  bytes: Uint8Array,
+  opts: RasterOptions = {},
+): Promise<PdfPageRaster[]> {
+  const f = await loadPdfium();
+  if (!f) throw new Error("rasterizePdf: PDFium wasm failed to load");
+  const scale = (opts.dpi ?? 150) / 72;
+  const maxPages = opts.maxPages ?? 20;
+
+  const buf = f.malloc(bytes.length);
+  f.M.HEAPU8.set(bytes, buf);
+  const doc = f.LoadMemDocument(buf, bytes.length, 0);
+  if (!doc) {
+    f.free(buf);
+    throw new Error("rasterizePdf: PDFium could not open the document");
+  }
+  try {
+    const count = Math.min(f.PageCount(doc), maxPages);
+    const pages: PdfPageRaster[] = [];
+    for (let n = 0; n < count; n++) {
+      const page = f.LoadPage(doc, n);
+      const widthPt = f.PageWidth(page);
+      const heightPt = f.PageHeight(page);
+      const w = Math.max(1, Math.round(widthPt * scale));
+      const h = Math.max(1, Math.round(heightPt * scale));
+      // alpha=1 → BGRA; fill opaque white, then render the page on top.
+      const bitmap = f.BitmapCreate(w, h, 1);
+      f.BitmapFillRect(bitmap, 0, 0, w, h, 0xffffffff);
+      // flags=0x10 FPDF_ANNOT off; use FPDF_LCD_TEXT(2)|FPDF_ANNOT(1)? keep 0.
+      f.RenderPageBitmap(bitmap, page, 0, 0, w, h, 0, 0);
+      const ptr = f.BitmapGetBuffer(bitmap);
+      const stride = f.BitmapGetStride(bitmap);
+      const heap = f.M.HEAPU8;
+      const rgba = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        let src = ptr + y * stride;
+        let dst = y * w * 4;
+        for (let x = 0; x < w; x++) {
+          rgba[dst] = heap[src + 2]; // R ← B
+          rgba[dst + 1] = heap[src + 1]; // G
+          rgba[dst + 2] = heap[src]; // B ← R
+          rgba[dst + 3] = heap[src + 3]; // A
+          src += 4;
+          dst += 4;
+        }
+      }
+      f.BitmapDestroy(bitmap);
+      f.ClosePage(page);
+      pages.push({ widthPt, heightPt, pngBytes: await encodePng(rgba, w, h) });
+    }
+    return pages;
+  } finally {
+    f.CloseDoc(doc);
+    f.free(buf);
+  }
+}
+
+/** Encode RGBA pixels to PNG bytes through a canvas (OffscreenCanvas when
+ *  available — worker-safe — else a DOM `<canvas>`). Uses `createImageData` +
+ *  `.data.set` rather than the `ImageData` constructor to sidestep the
+ *  generic-typed-array mismatch on the constructor overload. */
+async function encodePng(
+  rgba: Uint8ClampedArray,
+  w: number,
+  h: number,
+): Promise<Uint8Array> {
+  const paint = (
+    ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+  ): void => {
+    const img = ctx.createImageData(w, h);
+    img.data.set(rgba);
+    ctx.putImageData(img, 0, 0);
+  };
+  if (typeof OffscreenCanvas !== "undefined") {
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("rasterizePdf: OffscreenCanvas 2d unavailable");
+    paint(ctx);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("rasterizePdf: canvas 2d unavailable");
+  paint(ctx);
+  return await new Promise<Uint8Array>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("rasterizePdf: canvas.toBlob returned null"));
+        return;
+      }
+      blob
+        .arrayBuffer()
+        .then((b) => resolve(new Uint8Array(b)))
+        .catch(reject);
+    }, "image/png");
+  });
 }
 
 export interface ExtractOptions {
