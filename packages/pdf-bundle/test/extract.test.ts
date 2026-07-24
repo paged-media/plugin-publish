@@ -20,6 +20,7 @@ import {
   itemsToPositionedFrames,
   lineFrame,
   lineToParagraph,
+  normalizeSegmentSize,
   splitLineByGaps,
   textBBox,
   textCharCount,
@@ -181,5 +182,37 @@ describe("geometry + confidence", () => {
   it("counts only non-whitespace characters", () => {
     expect(textCharCount([pi("a b ", 0, 0)])).toBe(2);
     expect(textCharCount([pi("   ", 0, 0)])).toBe(0);
+  });
+});
+
+describe("per-glyph size normalization (PDFium jitter)", () => {
+  it("snaps a line's jittering glyph sizes to the dominant size", () => {
+    // PDFium reports per-glyph sizes that swing with ink height; a uniform
+    // ~9pt line arrives as 9/6/9/6/... Normalization must pick 9 (the mode by
+    // glyph count) so the whole line reads as one size.
+    const seg = [
+      pi("Ei", 0, 100, 9.0),
+      pi("n", 12, 100, 6.1),
+      pi("ge", 18, 100, 9.0),
+      pi("tra", 30, 100, 6.0),
+      pi("gen", 48, 100, 9.0),
+    ];
+    normalizeSegmentSize(seg);
+    expect(new Set(seg.map((i) => i.fontSizePt)).size).toBe(1);
+    expect(seg[0].fontSizePt).toBe(9);
+  });
+
+  it("collapses jittered sizes into a single run through the frame builder", () => {
+    // Without normalization each size change would start a new run; after it,
+    // the whole line is one run — the fix that cut 2880 runs → 148.
+    const line = [
+      pi("a", 0, 100, 9.0, { widthPt: 6 }),
+      pi("b", 6, 100, 6.2, { widthPt: 6 }),
+      pi("c", 12, 100, 9.1, { widthPt: 6 }),
+      pi("d", 18, 100, 6.0, { widthPt: 6 }),
+    ];
+    const [frame] = itemsToPositionedFrames(line, 600, 800);
+    expect(frame.paragraphs[0].runs).toHaveLength(1);
+    expect(frame.paragraphs[0].runs[0].text).toBe("abcd");
   });
 });

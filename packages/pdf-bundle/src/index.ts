@@ -12,19 +12,18 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-// @paged-media/pdf — the paged.pdf plugin bundle. Phase 0: image-only PDF
-// import (raster → inline-image IDML). Phase 1: editable reconstruction
-// (pdf.js text → Document IR → the pdf-import wasm mapper → native .paged),
-// with the image path as the fallback.
+// @paged-media/pdf — the paged.pdf plugin bundle. PDFium (wasm) reads the PDF:
+// text/vector/image objects → a Document IR → the pdf-import wasm mapper →
+// native .paged (editable). A PDFium page raster is the Phase-0 image fallback
+// when the editable path can't run. No pdf.js.
 
 export { pdfBundle, activate } from "./activate";
 export { contributePdfIo, PDF_IMPORTER_ID, PDF_MIME } from "./io/pdf";
-export { rasterizePdf, renderPageToPng, ensureWorker } from "./raster";
 export { buildIdmlFromRasters } from "./idml-fallback";
 export type { PdfPageRaster } from "./idml-fallback";
-// Phase 1 surface.
-export { reconstructPdf } from "./reconstruct";
-export type { ReconstructPdfOptions } from "./reconstruct";
+// The PDFium reader engine — editable reconstruction + the raster fallback.
+export { extractPdf, rasterizePdf, loadPdfium, _resetPdfium } from "./pdfium";
+export type { ExtractOptions, RasterOptions } from "./pdfium";
 export { loadPdfMapper, _resetPdfMapperCache } from "./engine-loader";
 export type { PdfMapper, LoadMapperOptions } from "./engine-loader";
 export {
