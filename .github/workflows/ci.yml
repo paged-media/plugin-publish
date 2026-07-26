@@ -63,3 +63,74 @@ jobs:
             echo "== validate $m =="
             npx --yes @paged-media/plugin-cli@canary validate "$m"
           done
+
+  # Test evidence — the suites this repo has always had and CI never ran.
+  # `check` covers fmt/clippy/build and `bundle` covers typecheck/build, so a
+  # green run said nothing about whether the 170 Rust tests (pdf-import,
+  # idml-import) or the pdf-bundle vitest specs still passed. The state matrix
+  # read plugin.publish "never published" for the same reason.
+  #
+  # Evidence hand-off is INVERTED (2026-07-26): this repo is PUBLIC and the
+  # state repo is PRIVATE, so it cannot resolve state's publish-results action
+  # from a public workflow. We upload; state pulls (siblings-pull.yml).
+  tests:
+    name: tests (evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Mirrors rust-toolchain.toml — dtolnay's action does NOT read that
+          # file and hard-fails without an explicit toolchain.
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+
+      # Red results must still publish (the matrix wants the ✗), so the run
+      # does not abort here — the gate at the end fails the build once the
+      # artifacts are safely uploaded.
+      - name: nextest → JUnit
+        run: |
+          set -uo pipefail
+          cargo nextest run --profile ci || echo "RUST_FAILED=1" >> "$GITHUB_ENV"
+          test -s target/nextest/ci/junit.xml
+
+      - name: upload nextest results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: vitest → JUnit
+        run: |
+          set -uo pipefail
+          pnpm -r --no-bail exec vitest run --reporter=default \
+            --reporter=junit --outputFile=junit.xml || echo "TS_FAILED=1" >> "$GITHUB_ENV"
+          cat packages/*/junit.xml > junit-all.xml 2>/dev/null || true
+          [ -s junit-all.xml ]
+
+      - name: upload vitest results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-junit
+          path: junit-all.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: tests failed
+        if: ${{ env.RUST_FAILED == '1' || env.TS_FAILED == '1' }}
+        run: exit 1

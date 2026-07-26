@@ -1,0 +1,12 @@
+# The `ci` profile emits JUnit at target/nextest/ci/junit.xml, which
+# .github/workflows/ci.yml uploads as the `nextest-junit` artifact and the
+# state repo pulls (siblings-pull.yml) onto the plugin.publish lane.
+#
+# Without this profile the run produces no file and the crates' evidence never
+# reaches the matrix — which is exactly where this repo sat: real tests in
+# pdf-import and idml-import, and a CI that only ran fmt/clippy/build.
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
