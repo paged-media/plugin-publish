@@ -114,11 +114,22 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # Only packages that DECLARE a test script. `pnpm -r exec vitest run`
+      # runs it everywhere, and vitest exits non-zero in a package with no
+      # test files ("No test files found") — which set the failure flag on the
+      # first run here even though all 170 Rust and 18 TS tests passed. A gate
+      # that fires on a package having no tests is a gate nobody will believe.
       - name: vitest → JUnit
         run: |
           set -uo pipefail
-          pnpm -r --no-bail exec vitest run --reporter=default \
-            --reporter=junit --outputFile=junit.xml || echo "TS_FAILED=1" >> "$GITHUB_ENV"
+          for d in packages/*/; do
+            node -e "process.exit(require('./${d}package.json').scripts?.test ? 0 : 1)" \
+              2>/dev/null || continue
+            echo "== vitest in $d"
+            (cd "$d" && pnpm exec vitest run --reporter=default \
+              --reporter=junit --outputFile=junit.xml) \
+              || echo "TS_FAILED=1" >> "$GITHUB_ENV"
+          done
           cat packages/*/junit.xml > junit-all.xml 2>/dev/null || true
           [ -s junit-all.xml ]
 
