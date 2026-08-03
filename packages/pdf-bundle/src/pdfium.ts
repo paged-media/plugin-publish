@@ -184,6 +184,10 @@ export async function loadPdfium(): Promise<Fpdf | null> {
         ]),
         BitmapGetBuffer: cw("FPDFBitmap_GetBuffer", "number", ["number"]),
         BitmapGetStride: cw("FPDFBitmap_GetStride", "number", ["number"]),
+        BitmapGetWidth: cw("FPDFBitmap_GetWidth", "number", ["number"]),
+        BitmapGetHeight: cw("FPDFBitmap_GetHeight", "number", ["number"]),
+        BitmapGetFormat: cw("FPDFBitmap_GetFormat", "number", ["number"]),
+        ImgGetBitmap: cw("FPDFImageObj_GetBitmap", "number", ["number"]),
         BitmapDestroy: cw("FPDFBitmap_Destroy", null, ["number"]),
       };
       f.InitLibrary();
@@ -400,7 +404,7 @@ export async function extractPdf(
             runKey = key;
           }
         } else if (type === OBJ_IMAGE) {
-          const img = extractImage(f, obj, p, heightPt);
+          const img = await extractImage(f, obj, p, heightPt);
           if (img) frames.push(img);
           runVector = null; // z-order boundary — never merge across an image
           runKey = "";
@@ -546,12 +550,12 @@ function extractTextItems(
   return items;
 }
 
-function extractImage(
+async function extractImage(
   f: Fpdf,
   obj: number,
   p: { a: number; b: number; c: number; d: number; mat: number },
   pageH: number,
-): ImageFrameIr | null {
+): Promise<ImageFrameIr | null> {
   // Placement: the image's unit square [0,1]² mapped by its matrix → page.
   f.GetMatrix(obj, p.mat);
   const m = readMatrix(f, p.mat);
@@ -569,9 +573,23 @@ function extractImage(
   const bottom = Math.max(...ys);
   if (right - left <= 0.5 || bottom - top <= 0.5) return null;
 
-  // Only pass through images we know the engine decodes directly (JPEG /
-  // DCTDecode). Others are skipped for now (a bitmap→PNG path is a follow-up).
-  if (!isJpeg(f, obj)) return null;
+  // JPEG (DCTDecode) streams pass straight through — the engine decodes
+  // them natively. Every OTHER filter (Flate, LZW, RunLength, JBIG2, …)
+  // goes through PDFium's own decode: FPDFImageObj_GetBitmap → RGBA →
+  // PNG. That closes the "non-JPEG images drop" gap the coverage spec
+  // named as the real remaining import item.
+  if (!isJpeg(f, obj)) {
+    const png = await imageBitmapToPng(f, obj);
+    if (!png) return null;
+    return {
+      kind: "image",
+      x_pt: left,
+      y_pt: top,
+      width_pt: right - left,
+      height_pt: bottom - top,
+      png_b64: toBase64(png),
+    };
+  }
   const len = f.ImgDataRaw(obj, 0, 0);
   if (len <= 0) return null;
   const bufP = f.malloc(len);
@@ -587,6 +605,54 @@ function extractImage(
     height_pt: bottom - top,
     png_b64: toBase64(raw), // JPEG bytes; the engine sniffs the format
   };
+}
+
+/** Decode a non-JPEG image object through PDFium's bitmap lane and encode
+ *  PNG. Formats per FPDFBitmap_GetFormat: 1=Gray, 2=BGR, 3=BGRx, 4=BGRA
+ *  (the same swizzle the page-raster fallback uses). Returns null when
+ *  PDFium can't produce a bitmap (the honest skip — never a fake frame). */
+async function imageBitmapToPng(f: Fpdf, obj: number): Promise<Uint8Array | null> {
+  const bitmap = f.ImgGetBitmap(obj);
+  if (!bitmap) return null;
+  try {
+    const w = f.BitmapGetWidth(bitmap) as number;
+    const h = f.BitmapGetHeight(bitmap) as number;
+    const stride = f.BitmapGetStride(bitmap) as number;
+    const format = f.BitmapGetFormat(bitmap) as number;
+    const buf = f.BitmapGetBuffer(bitmap) as number;
+    if (w <= 0 || h <= 0 || !buf) return null;
+    const heap = f.M.HEAPU8;
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dst = (y * w + x) * 4;
+        if (format === 1) {
+          const g = heap[buf + y * stride + x];
+          rgba[dst] = g;
+          rgba[dst + 1] = g;
+          rgba[dst + 2] = g;
+          rgba[dst + 3] = 255;
+        } else if (format === 2) {
+          const src = buf + y * stride + x * 3;
+          rgba[dst] = heap[src + 2];
+          rgba[dst + 1] = heap[src + 1];
+          rgba[dst + 2] = heap[src];
+          rgba[dst + 3] = 255;
+        } else if (format === 3 || format === 4) {
+          const src = buf + y * stride + x * 4;
+          rgba[dst] = heap[src + 2];
+          rgba[dst + 1] = heap[src + 1];
+          rgba[dst + 2] = heap[src];
+          rgba[dst + 3] = format === 4 ? heap[src + 3] : 255;
+        } else {
+          return null; // unknown format — honest skip
+        }
+      }
+    }
+    return await encodePng(rgba, w, h);
+  } finally {
+    f.BitmapDestroy(bitmap);
+  }
 }
 
 /** True when the image's (last) filter is DCTDecode — i.e. a JPEG stream we can
