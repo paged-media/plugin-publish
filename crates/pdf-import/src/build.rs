@@ -510,5 +510,10 @@ fn blank_polygon(
         nonprinting: false,
         visible: true,
         locked: false,
+        // PDF paths carry their corner geometry in the path data
+        // itself — there is no parametric corner effect to lift.
+        corner_radius: None,
+        corner_option: None,
+        corners: Default::default(),
     }
 }

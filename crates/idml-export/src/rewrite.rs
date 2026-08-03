@@ -259,6 +259,11 @@ fn invert_matrix(m: &[f32; 6]) -> Option<[f32; 6]> {
 enum Patch {
     Set(String),
     Remove,
+    /// B-23 — model-owned, but the model value is byte-equivalent to
+    /// what's on disk: emit the ORIGINAL bytes. Distinct from a `None`
+    /// lookup (which means "not model-owned at all") so the intent
+    /// reads at the call site.
+    Keep,
 }
 
 /// Rewrite one page-item / range start tag: emit it with the same name,
@@ -266,8 +271,14 @@ enum Patch {
 /// their new value; `Remove` keys are dropped), then append any
 /// model-owned keys that were newly set (absent from the source).
 ///
-/// `lookup(key) -> Option<Patch>`: `None` ⇒ not model-owned, pass the
-/// original attribute through. `Some(Set)` / `Some(Remove)` ⇒ patch it.
+/// `lookup(key, raw_value) -> Option<Patch>`: `None` ⇒ not model-owned
+/// (or model-equivalent to what's already on disk), pass the original
+/// attribute through byte-for-byte. `Some(Set)` / `Some(Remove)` ⇒
+/// patch it. `raw_value` is the ESCAPED on-disk value; B-23's corner
+/// attributes use it to answer "would re-emitting this change bytes?"
+/// — `format_f32` rounds to 4 decimals, so an untouched
+/// `CornerRadius="44.51279527491718"` must pass through rather than be
+/// reformatted.
 /// `extras`: `(key, value)` pairs to append if the key wasn't already
 /// present (newly-set model attributes). Returns the rebuilt
 /// `BytesStart` preserving the element name exactly.
@@ -277,7 +288,7 @@ fn patch_start<F>(
     extras: &[(&str, String)],
 ) -> Result<BytesStart<'static>, quick_xml::Error>
 where
-    F: Fn(&[u8]) -> Option<Patch>,
+    F: Fn(&[u8], &[u8]) -> Option<Patch>,
 {
     // Rebuild the start tag's raw inner content (`name attr="v" ...`)
     // by hand so unchanged attributes reproduce their ON-DISK bytes
@@ -293,8 +304,8 @@ where
     for attr in src.attributes() {
         let attr = attr?;
         let key = attr.key.as_ref().to_vec();
-        match lookup(&key) {
-            None => {
+        match lookup(&key, attr.value.as_ref()) {
+            None | Some(Patch::Keep) => {
                 // Not model-owned — copy the raw escaped value bytes.
                 content.push(b' ');
                 content.extend_from_slice(&key);
@@ -840,6 +851,11 @@ fn write_new_text_frame(
 
 /// Serialise an inserted bounds-only vector frame (`<Rectangle>` /
 /// `<Oval>`). Geometry is the four-corner box at the model bounds.
+/// B-18: `item_transform` is the value to WRITE (already re-based when
+/// the item is emitted nested); when the item is itself a container,
+/// its `nested_children` recurse inside the element, re-based against
+/// the container's composed MODEL transform.
+#[allow(clippy::too_many_arguments)]
 fn write_new_box_item(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     kind: &str,
@@ -850,6 +866,7 @@ fn write_new_box_item(
     stroke_weight: Option<f32>,
     nonprinting: bool,
     bounds: Bounds,
+    spread: &Spread,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
     push_common_item_attrs(
@@ -866,6 +883,15 @@ fn write_new_box_item(
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
     write_box_path_geometry(writer, bounds)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    if let Some(children) = spread.nested_children.get(self_id) {
+        write_nested_children(
+            writer,
+            spread,
+            model_transform_of(spread, self_id),
+            children,
+            None,
+        )?;
+    }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(kind)))?;
     Ok(())
 }
@@ -889,6 +915,7 @@ fn write_new_path_item(
     subpath_starts: &[usize],
     subpath_open: &[bool],
     extra_attrs: &[(&'static str, String)],
+    spread: &Spread,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
     push_common_item_attrs(
@@ -912,14 +939,207 @@ fn write_new_path_item(
         write_contour_path_geometry(writer, anchors, subpath_starts, subpath_open)?;
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    // B-18: a Polygon container's nested children recurse inside the
+    // element (GraphicLine ids never key `nested_children`).
+    if let Some(children) = spread.nested_children.get(self_id) {
+        write_nested_children(
+            writer,
+            spread,
+            model_transform_of(spread, self_id),
+            children,
+            None,
+        )?;
+    }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(kind)))?;
+    Ok(())
+}
+
+/// B-18: resolve a `FrameRef` (a `nested_children` entry) to its `Self`
+/// id against the spread's backing vecs.
+fn nested_ref_self_id(spread: &Spread, r: idml_import::FrameRef) -> Option<&str> {
+    use idml_import::FrameRef;
+    match r {
+        FrameRef::TextFrame(i) => spread.text_frames.get(i)?.self_id.as_deref(),
+        FrameRef::Rectangle(i) => spread.rectangles.get(i)?.self_id.as_deref(),
+        FrameRef::Oval(i) => spread.ovals.get(i)?.self_id.as_deref(),
+        FrameRef::GraphicLine(i) => spread.graphic_lines.get(i)?.self_id.as_deref(),
+        FrameRef::Polygon(i) => spread.polygons.get(i)?.self_id.as_deref(),
+        FrameRef::Group(i) => spread.groups.get(i)?.self_id.as_deref(),
+    }
+}
+
+/// B-18: a container's composed (spread-space) model transform, looked
+/// up by `Self` id across the container-capable kinds.
+fn model_transform_of(spread: &Spread, id: &str) -> Option<[f32; 6]> {
+    if let Some(r) = spread
+        .rectangles
+        .iter()
+        .find(|r| r.self_id.as_deref() == Some(id))
+    {
+        return r.item_transform;
+    }
+    if let Some(o) = spread
+        .ovals
+        .iter()
+        .find(|o| o.self_id.as_deref() == Some(id))
+    {
+        return o.item_transform;
+    }
+    if let Some(p) = spread
+        .polygons
+        .iter()
+        .find(|p| p.self_id.as_deref() == Some(id))
+    {
+        return p.item_transform;
+    }
+    None
+}
+
+/// B-18: re-base a child's composed (spread-space) model transform to
+/// its container's coordinate space — the form IDML serialises for
+/// nested items: `on_disk = inverse(parent) ∘ composed`. A singular
+/// parent keeps the composed value (documented loss, mirrors the
+/// group lane's degenerate case).
+fn relative_to_parent(
+    parent: Option<[f32; 6]>,
+    child_composed: Option<[f32; 6]>,
+) -> Option<[f32; 6]> {
+    match parent {
+        None => child_composed,
+        Some(p) => match invert_matrix(&p) {
+            None => child_composed,
+            Some(inv) => Some(compose_matrix(
+                &inv,
+                &child_composed.unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            )),
+        },
+    }
+}
+
+/// B-18: emit a container's nested children (paste-into content)
+/// INSIDE the container element, in model order, skipping the ids the
+/// source already carried in place (`present`). Child transforms are
+/// re-based to the container's space; a child that is itself a
+/// container recurses through the `write_new_*` emitters. A pasted-in
+/// `Group` ref is a residual — the parser never lifts one, so a model
+/// can't carry it here; skipped defensively.
+fn write_nested_children(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
+    parent_model_transform: Option<[f32; 6]>,
+    children: &[idml_import::FrameRef],
+    present: Option<&std::collections::HashSet<String>>,
+) -> Result<(), quick_xml::Error> {
+    use idml_import::FrameRef;
+    for &r in children {
+        let Some(id) = nested_ref_self_id(spread, r) else {
+            continue;
+        };
+        if present.is_some_and(|p| p.contains(id)) {
+            continue;
+        }
+        match r {
+            FrameRef::TextFrame(i) => {
+                if let Some(f) = spread.text_frames.get(i) {
+                    let mut f = f.clone();
+                    f.item_transform = relative_to_parent(parent_model_transform, f.item_transform);
+                    write_new_text_frame(writer, &f)?;
+                }
+            }
+            FrameRef::Rectangle(i) => {
+                if let Some(rect) = spread.rectangles.get(i) {
+                    write_new_box_item(
+                        writer,
+                        "Rectangle",
+                        id,
+                        relative_to_parent(parent_model_transform, rect.item_transform),
+                        &rect.fill_color,
+                        &rect.stroke_color,
+                        rect.stroke_weight,
+                        rect.nonprinting,
+                        rect.bounds,
+                        spread,
+                    )?;
+                }
+            }
+            FrameRef::Oval(i) => {
+                if let Some(o) = spread.ovals.get(i) {
+                    write_new_box_item(
+                        writer,
+                        "Oval",
+                        id,
+                        relative_to_parent(parent_model_transform, o.item_transform),
+                        &o.fill_color,
+                        &o.stroke_color,
+                        o.stroke_weight,
+                        o.nonprinting,
+                        o.bounds,
+                        spread,
+                    )?;
+                }
+            }
+            FrameRef::Polygon(i) => {
+                if let Some(p) = spread.polygons.get(i) {
+                    write_new_path_item(
+                        writer,
+                        "Polygon",
+                        id,
+                        relative_to_parent(parent_model_transform, p.item_transform),
+                        &p.fill_color,
+                        &p.stroke_color,
+                        p.stroke_weight,
+                        p.nonprinting,
+                        p.bounds,
+                        &p.anchors,
+                        &p.subpath_starts,
+                        &p.subpath_open,
+                        &[],
+                        spread,
+                    )?;
+                }
+            }
+            FrameRef::GraphicLine(i) => {
+                if let Some(l) = spread.graphic_lines.get(i) {
+                    let mut extra: Vec<(&'static str, String)> = Vec::new();
+                    for (k, t) in [
+                        ("LeftLineEnd", l.start_arrow),
+                        ("RightLineEnd", l.end_arrow),
+                    ] {
+                        if t.draws() && !t.as_idml().is_empty() {
+                            extra.push((k, t.as_idml().to_string()));
+                        }
+                    }
+                    write_new_path_item(
+                        writer,
+                        "GraphicLine",
+                        id,
+                        relative_to_parent(parent_model_transform, l.item_transform),
+                        &None,
+                        &l.stroke_color,
+                        l.stroke_weight,
+                        l.nonprinting,
+                        l.bounds,
+                        &l.anchors,
+                        &l.subpath_starts,
+                        &l.subpath_open,
+                        &extra,
+                        spread,
+                    )?;
+                }
+            }
+            FrameRef::Group(_) => {}
+        }
+    }
     Ok(())
 }
 
 /// Append every model page item whose `Self` id was NOT seen in the
 /// source XML — the inserted nodes. Emitted at the spread's close in
 /// the model's per-kind vec order. Group members are skipped (a group's
-/// own insertion is a separate, deferred lane — see Known losses).
+/// own insertion is a separate, deferred lane — see Known losses), and
+/// so are B-18 nested children (paste-into content emits INSIDE its
+/// container — at the container's close for source containers, or via
+/// the `write_new_*` recursion for inserted ones — never top-level).
 pub(crate) fn write_inserted_items(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     spread: &Spread,
@@ -930,6 +1150,16 @@ pub(crate) fn write_inserted_items(
     let mut grouped: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for g in &spread.groups {
         collect_group_member_ids(spread, g, &mut grouped);
+    }
+    // B-18: ids nested inside a container. Also keeps the children of
+    // a REMOVED container from resurfacing flat (they vanish with it,
+    // matching InDesign's delete semantics).
+    for children in spread.nested_children.values() {
+        for &r in children {
+            if let Some(id) = nested_ref_self_id(spread, r) {
+                grouped.insert(id);
+            }
+        }
     }
     for f in &spread.text_frames {
         if let Some(id) = f.self_id.as_deref() {
@@ -951,6 +1181,7 @@ pub(crate) fn write_inserted_items(
                     r.stroke_weight,
                     r.nonprinting,
                     r.bounds,
+                    spread,
                 )?;
             }
         }
@@ -968,6 +1199,7 @@ pub(crate) fn write_inserted_items(
                     o.stroke_weight,
                     o.nonprinting,
                     o.bounds,
+                    spread,
                 )?;
             }
         }
@@ -989,6 +1221,7 @@ pub(crate) fn write_inserted_items(
                     &p.subpath_starts,
                     &p.subpath_open,
                     &[],
+                    spread,
                 )?;
             }
         }
@@ -1022,6 +1255,7 @@ pub(crate) fn write_inserted_items(
                     &l.subpath_starts,
                     &l.subpath_open,
                     &extra,
+                    spread,
                 )?;
             }
         }
@@ -1133,6 +1367,33 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     // bit-bucket until the matching close. `0` ⇒ not removing.
     let mut remove_depth: usize = 0;
 
+    // ---- B-18 nested content (paste-into) state ----
+    // Model-side nesting index: child `Self` id → host container id.
+    let mut nested_owner: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (host, children) in &spread.nested_children {
+        for &r in children {
+            if let Some(id) = nested_ref_self_id(spread, r) {
+                nested_owner.insert(id, host.as_str());
+            }
+        }
+    }
+    // Every open page-item element (outermost first) — the source-side
+    // nesting truth. `eligible` mirrors the parser's lift rule: only a
+    // Rectangle / Oval / Polygon WITH a Self id, and only when no
+    // `<Group>` opened in between (`groups_at_open` vs `group_depth`),
+    // hosts paste-into children.
+    struct OpenItem {
+        depth: usize,
+        self_id: Option<String>,
+        eligible: bool,
+        groups_at_open: usize,
+    }
+    let mut open_items: Vec<OpenItem> = Vec::new();
+    // Per host: the child ids the source already carries nested in
+    // place, so the container-close flush emits only the missing ones.
+    let mut present_in: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -1241,15 +1502,67 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     buf.clear();
                     continue;
                 }
-                // A top-level page item whose `Self` left the model is a
-                // structural REMOVE: drop the element + its subtree.
-                if group_depth == 0 && ITEM_KINDS.contains(&name_owned.as_slice()) {
+                // Page-item triage: the legacy structural REMOVE (a
+                // top-level item whose `Self` left the model) plus the
+                // B-18 paste-into lanes — comparing where the element
+                // sits in the SOURCE (top level vs nested under an
+                // eligible container) against where the MODEL wants it
+                // (`nested_owner`).
+                if ITEM_KINDS.contains(&name_owned.as_slice()) {
                     if let Some(id) = attr_value(&e, b"Self") {
-                        seen_ids.insert(id.clone());
-                        if !model_ids.contains(id.as_str()) {
-                            remove_depth = depth;
-                            buf.clear();
-                            continue;
+                        let source_host: Option<String> = open_items
+                            .last()
+                            .filter(|it| it.eligible && it.groups_at_open == group_depth)
+                            .and_then(|it| it.self_id.clone());
+                        let model_host = nested_owner.get(id.as_str()).copied();
+                        match (source_host.as_deref(), model_host) {
+                            (Some(sh), Some(mh)) if sh == mh => {
+                                // Kept in place — patched below with
+                                // the host-composed accum; the
+                                // container flush won't re-emit it.
+                                seen_ids.insert(id.clone());
+                                present_in
+                                    .entry(mh.to_string())
+                                    .or_default()
+                                    .insert(id.clone());
+                            }
+
+                            (None, Some(_)) if group_depth == 0 => {
+                                // PasteInto: top-level in source,
+                                // nested in the model — drop the
+                                // element here; it re-emits inside its
+                                // model container at that container's
+                                // close. NOT marked seen.
+                                remove_depth = depth;
+                                buf.clear();
+                                continue;
+                            }
+                            (Some(_), Some(_)) => {
+                                // Re-pasted: nested in source under A,
+                                // nested in the model under B — drop
+                                // here; B's flush re-emits it. NOT
+                                // marked seen.
+                                remove_depth = depth;
+                                buf.clear();
+                                continue;
+                            }
+                            (Some(_), None) if model_ids.contains(id.as_str()) => {
+                                // ReleaseFrom: nested in source,
+                                // top-level in the model — drop here;
+                                // the top-level insert lane re-emits
+                                // it before `</Spread>`. NOT seen.
+                                remove_depth = depth;
+                                buf.clear();
+                                continue;
+                            }
+                            _ => {
+                                seen_ids.insert(id.clone());
+                                if group_depth == 0 && !model_ids.contains(id.as_str()) {
+                                    remove_depth = depth;
+                                    buf.clear();
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
@@ -1298,10 +1611,22 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         continue;
                     }
                 }
-                let group_accum = if group_depth > 0 {
-                    Some(accumulate_group_xforms(&group_xforms))
-                } else {
-                    None
+                // B-18: a model-nested child re-bases against its
+                // HOST's composed model transform (which already folds
+                // every group above the host); everything else keeps
+                // the legacy group accumulation.
+                let nested_accum = attr_value(&e, b"Self")
+                    .and_then(|id| nested_owner.get(id.as_str()).copied())
+                    .map(|host| model_transform_of(spread, host));
+                let group_accum = match nested_accum {
+                    Some(tx) => Some(tx),
+                    None => {
+                        if group_depth > 0 {
+                            Some(accumulate_group_xforms(&group_xforms))
+                        } else {
+                            None
+                        }
+                    }
                 };
                 let patched = patch_spread_item(
                     &e,
@@ -1338,8 +1663,12 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     // anchors the same way the transform is (see the
                     // group note in `rewrite_spread`), so we don't rewrite
                     // a member's path either — leave `geom: None` inside a
-                    // group so its points pass through verbatim.
-                    let geom = if group_depth > 0 {
+                    // group so its points pass through verbatim. B-18
+                    // residual: nested (paste-into) children get the same
+                    // conservative treatment — their `<PathPointArray>`
+                    // passes through verbatim, so a path-point edit on a
+                    // nested child doesn't write back yet.
+                    let geom = if group_depth > 0 || !open_items.is_empty() {
                         None
                     } else {
                         self_id.as_deref().and_then(|id| {
@@ -1361,6 +1690,17 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         buffered: Vec::new(),
                         parsed: Vec::new(),
                     });
+                    // B-18: record the open page item for source-side
+                    // nesting detection + the container-close flush.
+                    open_items.push(OpenItem {
+                        depth,
+                        self_id: self_id.clone(),
+                        eligible: matches!(
+                            name_owned.as_slice(),
+                            b"Rectangle" | b"Oval" | b"Polygon"
+                        ) && self_id.is_some(),
+                        groups_at_open: group_depth,
+                    });
                 }
             }
             Event::Empty(e) => {
@@ -1369,14 +1709,49 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     buf.clear();
                     continue;
                 }
-                // A self-closing top-level page item: track it as seen,
-                // and drop it when its `Self` left the model (REMOVE).
-                if group_depth == 0 && ITEM_KINDS.contains(&e.name().as_ref()) {
+                // A self-closing page item: the same triage as the
+                // Start arm (legacy REMOVE + the B-18 paste-into
+                // lanes), except a drop is a plain skip — there is no
+                // subtree.
+                if ITEM_KINDS.contains(&e.name().as_ref()) {
                     if let Some(id) = attr_value(&e, b"Self") {
-                        seen_ids.insert(id.clone());
-                        if !model_ids.contains(id.as_str()) {
-                            buf.clear();
-                            continue;
+                        let source_host: Option<String> = open_items
+                            .last()
+                            .filter(|it| it.eligible && it.groups_at_open == group_depth)
+                            .and_then(|it| it.self_id.clone());
+                        let model_host = nested_owner.get(id.as_str()).copied();
+                        match (source_host.as_deref(), model_host) {
+                            (Some(sh), Some(mh)) if sh == mh => {
+                                seen_ids.insert(id.clone());
+                                present_in
+                                    .entry(mh.to_string())
+                                    .or_default()
+                                    .insert(id.clone());
+                            }
+                            (None, Some(_)) if group_depth == 0 => {
+                                // PasteInto — re-emitted inside its
+                                // container at the container's close.
+                                buf.clear();
+                                continue;
+                            }
+                            (Some(_), Some(_)) => {
+                                // Re-pasted under a different host.
+                                buf.clear();
+                                continue;
+                            }
+                            (Some(_), None) if model_ids.contains(id.as_str()) => {
+                                // ReleaseFrom — re-emitted top-level
+                                // by the insert lane.
+                                buf.clear();
+                                continue;
+                            }
+                            _ => {
+                                seen_ids.insert(id.clone());
+                                if group_depth == 0 && !model_ids.contains(id.as_str()) {
+                                    buf.clear();
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
@@ -1403,10 +1778,20 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     }
                 }
                 let name_is_item = ITEM_KINDS.contains(&e.name().as_ref());
-                let group_accum = if group_depth > 0 {
-                    Some(accumulate_group_xforms(&group_xforms))
-                } else {
-                    None
+                // B-18: same host-composed accum override as the Start
+                // arm.
+                let nested_accum = attr_value(&e, b"Self")
+                    .and_then(|id| nested_owner.get(id.as_str()).copied())
+                    .map(|host| model_transform_of(spread, host));
+                let group_accum = match nested_accum {
+                    Some(tx) => Some(tx),
+                    None => {
+                        if group_depth > 0 {
+                            Some(accumulate_group_xforms(&group_xforms))
+                        } else {
+                            None
+                        }
+                    }
                 };
                 let patched = patch_spread_item(
                     &e,
@@ -1419,6 +1804,8 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 )?;
                 // A labelled item serialised as an EMPTY tag must grow
                 // children — expand to Start + Properties/Label + End.
+                // Same for a B-18 container the model gave nested
+                // children (its paste-into content emits inside).
                 let pending_entries = if name_is_item {
                     attr_value(&e, b"Self")
                         .and_then(|id| spread.labels.get(&id).cloned())
@@ -1426,16 +1813,40 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 } else {
                     None
                 };
-                if let Some(entries) = pending_entries {
+                let pending_children: Option<(String, Vec<idml_import::FrameRef>)> = if name_is_item
+                {
+                    attr_value(&e, b"Self").and_then(|id| {
+                        spread
+                            .nested_children
+                            .get(&id)
+                            .filter(|v| !v.is_empty())
+                            .map(|v| (id.clone(), v.clone()))
+                    })
+                } else {
+                    None
+                };
+                if pending_entries.is_some() || pending_children.is_some() {
                     let name_owned = e.name().as_ref().to_vec();
                     match patched {
                         Some(start) => writer.write_event(Event::Start(start))?,
                         None => writer.write_event(Event::Start(e.clone().into_owned()))?,
                     }
-                    writer.write_event(Event::Start(BytesStart::new("Properties")))?;
-                    write_label_entries(&mut writer, &entries)?;
-                    writer
-                        .write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+                    if let Some(entries) = pending_entries {
+                        writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+                        write_label_entries(&mut writer, &entries)?;
+                        writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                            "Properties",
+                        )))?;
+                    }
+                    if let Some((host_id, children)) = pending_children {
+                        write_nested_children(
+                            &mut writer,
+                            spread,
+                            model_transform_of(spread, &host_id),
+                            &children,
+                            present_in.get(&host_id),
+                        )?;
+                    }
                     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
                         String::from_utf8_lossy(&name_owned).into_owned(),
                     )))?;
@@ -1550,6 +1961,27 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                             }
                         }
                         label_ctx.pop();
+                    }
+                }
+                // B-18: a page item closing — pop it from the open
+                // stack and, when the model nests children under it,
+                // flush the ones the source didn't already carry in
+                // place, just before the close tag (InDesign's element
+                // order puts pasted-in content last).
+                if ITEM_KINDS.contains(&name_owned.as_slice())
+                    && open_items.last().is_some_and(|it| it.depth == depth)
+                {
+                    let item = open_items.pop().expect("guarded by is_some_and");
+                    if let Some(host_id) = item.self_id.as_deref() {
+                        if let Some(children) = spread.nested_children.get(host_id) {
+                            write_nested_children(
+                                &mut writer,
+                                spread,
+                                model_transform_of(spread, host_id),
+                                children,
+                                present_in.get(host_id),
+                            )?;
+                        }
                     }
                 }
                 if name_owned == b"Group" {
@@ -1671,9 +2103,10 @@ fn patch_spread_item(
             let bounds = frame.bounds;
             let start = patch_start(
                 e,
-                |k| {
+                |k, raw| {
                     frame_attr_patch(
                         k,
+                        raw,
                         patch_tx,
                         item_transform,
                         &fill,
@@ -1685,6 +2118,10 @@ fn patch_spread_item(
                         bounds,
                         None,
                         None,
+                        // TextFrame carries the corner attrs on disk but
+                        // has no model fields (B-23 residual) — `None`
+                        // passes every corner attribute through verbatim.
+                        None,
                     )
                 },
                 &frame_attr_extras(
@@ -1695,6 +2132,7 @@ fn patch_spread_item(
                     stroke_weight,
                     next.as_deref(),
                     nonprinting,
+                    None,
                     None,
                     None,
                 ),
@@ -1720,6 +2158,11 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     start_arrow: None,
                     end_arrow: None,
+                    corners: Some(corner_attrs_of(
+                        r.corner_radius,
+                        &r.corner_option,
+                        &r.corners,
+                    )),
                 }),
             )
         }
@@ -1742,6 +2185,9 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     start_arrow: None,
                     end_arrow: None,
+                    // B-23 residual: Oval carries the corner attrs on
+                    // disk but has no model fields — pass verbatim.
+                    corners: None,
                 }),
             )
         }
@@ -1764,6 +2210,11 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     start_arrow: None,
                     end_arrow: None,
+                    corners: Some(corner_attrs_of(
+                        r.corner_radius,
+                        &r.corner_option,
+                        &r.corners,
+                    )),
                 }),
             )
         }
@@ -1786,6 +2237,9 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     start_arrow: Some(r.start_arrow),
                     end_arrow: Some(r.end_arrow),
+                    // B-23 residual: GraphicLine carries the corner
+                    // attrs on disk but has no model fields.
+                    corners: None,
                 }),
             )
         }
@@ -1809,6 +2263,137 @@ struct VectorItem {
     /// source attributes pass through verbatim.
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
+    /// B-23 — `CornerOption` / `CornerRadius` + the four per-corner
+    /// pairs. `Some` for the kinds whose model parses them (Rectangle,
+    /// Polygon); `None` for Oval / GraphicLine / TextFrame, whose
+    /// on-disk corner attributes pass through verbatim because there is
+    /// no model field that could have changed them.
+    corners: Option<CornerAttrs>,
+}
+
+/// B-23 — the corner vocabulary IDML writes on a page item, lifted out
+/// of the model so one patch routine covers Rectangle and Polygon.
+/// `corners` is `[top_left, top_right, bottom_right, bottom_left]`.
+struct CornerAttrs {
+    corner_radius: Option<f32>,
+    corner_option: Option<String>,
+    corners: [idml_import::CornerSpec; 4],
+}
+
+fn corner_attrs_of(
+    corner_radius: Option<f32>,
+    corner_option: &Option<String>,
+    corners: &[idml_import::CornerSpec; 4],
+) -> CornerAttrs {
+    CornerAttrs {
+        corner_radius,
+        corner_option: corner_option.clone(),
+        corners: *corners,
+    }
+}
+
+/// The IDML token InDesign writes for a `CornerOption` value. Note
+/// `BevelCorner` (not `BeveledCorner`) — that's the spelling measured in
+/// the real-export corpus, and the parser accepts both.
+fn corner_option_idml(v: idml_import::CornerOption) -> &'static str {
+    use idml_import::CornerOption as C;
+    match v {
+        C::None => "None",
+        C::Rounded => "RoundedCorner",
+        C::Inverse => "InverseRoundedCorner",
+        C::Inset => "InsetCorner",
+        C::Bevel => "BevelCorner",
+        C::Fancy => "FancyCorner",
+    }
+}
+
+/// `[top_left, top_right, bottom_right, bottom_left]` attribute names,
+/// index-parallel to `CornerAttrs::corners`.
+const PER_CORNER_KEYS: [(&str, &str); 4] = [
+    ("TopLeftCornerOption", "TopLeftCornerRadius"),
+    ("TopRightCornerOption", "TopRightCornerRadius"),
+    ("BottomRightCornerOption", "BottomRightCornerRadius"),
+    ("BottomLeftCornerOption", "BottomLeftCornerRadius"),
+];
+
+/// Patch decision for one corner attribute. `None` ⇒ the key isn't a
+/// corner attribute, or the model value is byte-equivalent to what's
+/// already on disk (pass the original bytes through — `format_f32`
+/// rounds to 4 decimals and the option enum loses the exact source
+/// spelling, so re-emitting an UNMUTATED value would corrupt an
+/// otherwise byte-identical round-trip).
+fn corner_attr_patch(key: &[u8], raw: &[u8], c: &CornerAttrs) -> Option<Patch> {
+    let raw = std::str::from_utf8(raw).ok();
+    if key == b"CornerRadius" {
+        return Some(preserving_f32_patch(raw, c.corner_radius));
+    }
+    if key == b"CornerOption" {
+        // Parsed verbatim as a String, so the model value already IS
+        // the on-disk spelling — a plain string patch round-trips.
+        return Some(opt_string_patch(&c.corner_option));
+    }
+    for (i, (okey, rkey)) in PER_CORNER_KEYS.iter().enumerate() {
+        if key == okey.as_bytes() {
+            return Some(preserving_option_patch(raw, c.corners[i].option));
+        }
+        if key == rkey.as_bytes() {
+            return Some(preserving_f32_patch(raw, c.corners[i].radius));
+        }
+    }
+    None
+}
+
+/// Corner attributes to append when the model carries a value the source
+/// element didn't have (a corner written onto a frame that never had the
+/// attribute). Unmutated frames append nothing.
+fn corner_attr_extras(c: &CornerAttrs) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(s) = &c.corner_option {
+        out.push(("CornerOption", s.clone()));
+    }
+    if let Some(r) = c.corner_radius {
+        out.push(("CornerRadius", format_f32(r)));
+    }
+    for (i, (okey, rkey)) in PER_CORNER_KEYS.iter().enumerate() {
+        if let Some(o) = c.corners[i].option {
+            out.push((okey, corner_option_idml(o).to_string()));
+        }
+        if let Some(r) = c.corners[i].radius {
+            out.push((rkey, format_f32(r)));
+        }
+    }
+    out
+}
+
+/// `Set` only when the model number differs from the on-disk spelling's
+/// own parse; otherwise `None` keeps the source bytes.
+fn preserving_f32_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
+    match v {
+        Some(n) => {
+            if raw.and_then(|s| s.trim().parse::<f32>().ok()) == Some(n) {
+                Patch::Keep
+            } else {
+                Patch::Set(format_f32(n))
+            }
+        }
+        None => Patch::Remove,
+    }
+}
+
+/// Same rule for a `CornerOption` enum: the parse is lossy across
+/// spellings (`BevelCorner` / `BeveledCorner` both mean `Bevel`), so an
+/// unmutated value must keep its source token.
+fn preserving_option_patch(raw: Option<&str>, v: Option<idml_import::CornerOption>) -> Patch {
+    match v {
+        Some(o) => {
+            if raw.and_then(idml_import::CornerOption::from_idml) == Some(o) {
+                Patch::Keep
+            } else {
+                Patch::Set(corner_option_idml(o).to_string())
+            }
+        }
+        None => Patch::Remove,
+    }
 }
 
 fn patch_vector_item(
@@ -1821,9 +2406,10 @@ fn patch_vector_item(
     };
     let start = patch_start(
         e,
-        |k| {
+        |k, raw| {
             frame_attr_patch(
                 k,
+                raw,
                 patch_tx,
                 item.item_transform,
                 &item.fill_color,
@@ -1835,6 +2421,7 @@ fn patch_vector_item(
                 item.bounds,
                 item.start_arrow,
                 item.end_arrow,
+                item.corners.as_ref(),
             )
         },
         &frame_attr_extras(
@@ -1847,6 +2434,7 @@ fn patch_vector_item(
             item.nonprinting,
             item.start_arrow,
             item.end_arrow,
+            item.corners.as_ref(),
         ),
     )?;
     Ok(Some(start.into_owned()))
@@ -1861,6 +2449,7 @@ fn patch_vector_item(
 #[allow(clippy::too_many_arguments)]
 fn frame_attr_patch(
     key: &[u8],
+    raw: &[u8],
     patch_tx: bool,
     item_transform: Option<[f32; 6]>,
     fill: &Option<String>,
@@ -1872,7 +2461,14 @@ fn frame_attr_patch(
     bounds: idml_import::Bounds,
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
+    corners: Option<&CornerAttrs>,
 ) -> Option<Patch> {
+    // B-23 — corner vocabulary first; `None` falls through to the rest.
+    if let Some(c) = corners {
+        if let Some(p) = corner_attr_patch(key, raw, c) {
+            return Some(p);
+        }
+    }
     match key {
         b"ItemTransform" if !patch_tx => None,
         b"ItemTransform" => Some(match item_transform {
@@ -1922,6 +2518,7 @@ fn frame_attr_extras(
     nonprinting: bool,
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
+    corners: Option<&CornerAttrs>,
 ) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     if patch_tx {
@@ -1953,6 +2550,9 @@ fn frame_attr_extras(
                 out.push((key, t.as_idml().to_string()));
             }
         }
+    }
+    if let Some(c) = corners {
+        out.extend(corner_attr_extras(c));
     }
     out
 }
@@ -2496,7 +3096,7 @@ fn patch_paragraph_range(
     };
     let start = patch_start(
         e,
-        |k| match k {
+        |k, _| match k {
             b"AppliedParagraphStyle" => Some(opt_string_patch(&style)),
             _ => None,
         },
@@ -2515,7 +3115,7 @@ fn patch_character_range(
     };
     let r = run.clone();
     let extras = character_extras(&r);
-    let start = patch_start(e, |k| character_attr_patch(k, &r), &extras)?;
+    let start = patch_start(e, |k, _| character_attr_patch(k, &r), &extras)?;
     Ok(start.into_owned())
 }
 
@@ -2579,4 +3179,95 @@ fn attr_value(e: &BytesStart, key: &[u8]) -> Option<String> {
         .flatten()
         .find(|a| a.key.as_ref() == key)
         .and_then(|Attribute { value, .. }| std::str::from_utf8(&value).ok().map(|s| s.to_string()))
+}
+
+// ---------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A spread carrying one polygon with the corner vocabulary spelled
+    /// the way InDesign writes it: long floats and the `BevelCorner`
+    /// token (which the model's enum normalises to `Bevel`).
+    const POLY_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><Polygon Self="p" GeometricBounds="0 0 100 200" CornerOption="BevelCorner" CornerRadius="44.51279527491718" TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="44.51279527491718" TopRightCornerRadius="44.51279527491718" FillColor="Color/Black"/></Spread>
+</idPkg:Spread>"#;
+
+    fn parsed() -> idml_import::Spread {
+        idml_import::parse_spread(POLY_SPREAD).expect("parse")
+    }
+
+    /// B-23 — an UNMUTATED polygon round-trips byte-identically even
+    /// though every corner value now flows through the patch path.
+    /// `format_f32` rounds to 4 decimals and the option enum loses the
+    /// source spelling, so the preserving rule is load-bearing: without
+    /// it, `44.51279527491718` would come back as `44.5128` and
+    /// `BevelCorner` as `BeveledCorner`.
+    #[test]
+    fn b23_unmutated_polygon_corner_attrs_round_trip_byte_identically() {
+        let out = rewrite_spread(POLY_SPREAD, &parsed()).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(POLY_SPREAD),
+            "unmutated corner attributes must reproduce their on-disk bytes"
+        );
+    }
+
+    /// A mutated corner value patches IN PLACE — same attribute
+    /// position, only the value changes; every other attribute is
+    /// untouched.
+    #[test]
+    fn b23_mutated_polygon_corner_attrs_patch_in_place() {
+        let mut spread = parsed();
+        spread.polygons[0].corners[0].radius = Some(12.5);
+        spread.polygons[0].corners[0].option = Some(idml_import::CornerOption::Rounded);
+        let out = rewrite_spread(POLY_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(r#"TopLeftCornerOption="RoundedCorner""#), "{s}");
+        assert!(s.contains(r#"TopLeftCornerRadius="12.5""#), "{s}");
+        // Untouched neighbours keep their exact source spelling.
+        assert!(
+            s.contains(r#"TopRightCornerRadius="44.51279527491718""#),
+            "{s}"
+        );
+        assert!(s.contains(r#"CornerOption="BevelCorner""#), "{s}");
+        assert!(s.contains(r#"FillColor="Color/Black""#), "{s}");
+    }
+
+    /// Clearing a corner value drops the attribute (restoring the IDML
+    /// implicit default) rather than writing an empty string.
+    #[test]
+    fn b23_cleared_polygon_corner_attr_is_removed() {
+        let mut spread = parsed();
+        spread.polygons[0].corners[0].option = None;
+        spread.polygons[0].corner_radius = None;
+        let out = rewrite_spread(POLY_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(!s.contains("TopLeftCornerOption="), "{s}");
+        assert!(!s.contains(r#" CornerRadius="#), "{s}");
+        assert!(
+            s.contains(r#"TopLeftCornerRadius="44.51279527491718""#),
+            "{s}"
+        );
+    }
+
+    /// A corner written onto a frame whose source element never had the
+    /// attribute is APPENDED (the `extras` lane), not silently dropped.
+    #[test]
+    fn b23_newly_set_polygon_corner_attr_is_appended() {
+        let mut spread = parsed();
+        spread.polygons[0].corners[3].option = Some(idml_import::CornerOption::Inverse);
+        spread.polygons[0].corners[3].radius = Some(9.0);
+        let out = rewrite_spread(POLY_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"BottomLeftCornerOption="InverseRoundedCorner""#),
+            "{s}"
+        );
+        assert!(s.contains(r#"BottomLeftCornerRadius="9""#), "{s}");
+    }
 }

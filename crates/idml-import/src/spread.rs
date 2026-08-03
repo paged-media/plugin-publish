@@ -22,9 +22,13 @@
 //! Coverage:
 //! - `<Page GeometricBounds="...">` — one entry per page.
 //! - `<TextFrame ParentStory="..." GeometricBounds="..." ItemTransform="...">`
-//!   at spread level. Text frames nested inside `<Group>` are
-//!   intentionally out of scope for now; a warning surfaces via the
-//!   parse result counters so higher layers can detect loss.
+//!   at spread level, inside `<Group>` wrappers (lifted with composed
+//!   transforms), and — B-18 — nested inside a Rectangle / Oval /
+//!   Polygon container (InDesign paste-into): those children register
+//!   in `Spread::nested_children` keyed by the host's `Self` id so the
+//!   renderer can clip them by the host path. Formats still not lifted
+//!   (a `<Group>` pasted into a container, id-less hosts) bump the
+//!   `skipped_nested_frames` counter so higher layers can detect loss.
 //!
 //! GeometricBounds is `y1 x1 y2 x2` in points (IDML convention:
 //! y-axis grows downward from page origin).
@@ -99,6 +103,29 @@ struct GroupBuilder {
 /// real-world IDMLs use almost exclusively).
 struct CurrentFrame {
     kind: CurrentFrameKind,
+    /// The shape's `Self` id (B-18). Kept on the parse state so a
+    /// page item opening *inside* this one (InDesign paste-into) can
+    /// key itself into [`Spread::nested_children`] without a
+    /// backing-vec lookup.
+    self_id: Option<String>,
+    /// The shape's RAW `ItemTransform` (B-18) — NOT the composed
+    /// spread-space one stored on the shape. When a child page item
+    /// opens inside this frame, this raw matrix joins
+    /// `group_transforms` so the child's composed transform falls out
+    /// of `effective_item_transform` exactly like a group member's.
+    own_item_transform: Option<[f32; 6]>,
+    /// B-18: `Some(host_self_id)` when this frame was lifted into
+    /// [`Spread::nested_children`] as paste-into content; `None` when
+    /// it registered top-level / with a group. Drives the matching
+    /// unregister route if the frame is later dropped for missing
+    /// bounds.
+    nested_into: Option<String>,
+    /// B-18: `group_builders.len()` when this frame opened. A page
+    /// item opening inside this frame is only LIFTED as paste-into
+    /// content when no `<Group>` opened in between (equal depth) —
+    /// members of a group that was itself pasted into the container
+    /// stay with their group (the residual flatten lane).
+    groups_at_open: usize,
     /// True if the open tag had no `GeometricBounds` — bounds must
     /// then come from `<PathPointType Anchor="...">` children.
     needs_bounds: bool,
@@ -383,10 +410,15 @@ fn read_stroke_style_attrs(e: &quick_xml::events::BytesStart) -> StrokeStyleAttr
     }
 }
 
-/// Rectangle-only corner attributes (`CornerRadius`, `CornerOption`,
-/// plus the four per-corner overrides Q-16 added). The per-corner
-/// values default to `None`; the renderer falls back to the legacy
-/// global pair when a corner spec is empty.
+/// Corner attributes (`CornerRadius`, `CornerOption`, plus the four
+/// per-corner overrides Q-16 added). The per-corner values default to
+/// `None`; the renderer falls back to the legacy global pair when a
+/// corner spec is empty.
+///
+/// B-23: read for `<Rectangle>` **and** `<Polygon>`. InDesign writes the
+/// identical attribute vocabulary on both (and on Oval / TextFrame /
+/// GraphicLine / Group, which stay parse-less for now — see the B-23
+/// residual note in `paged-mutate`'s `set_property`).
 struct CornerAttrs {
     corner_radius: Option<f32>,
     corner_option: Option<String>,
@@ -478,6 +510,12 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
     // outer group's `members` can carry a `FrameRef::Group(idx)`.
     let mut group_builders: Vec<GroupBuilder> = Vec::new();
     let mut current_frame: Option<CurrentFrame> = None;
+    // B-18 paste-into: stack of page items whose element is still
+    // open while a CHILD page item is being parsed. Parked at the
+    // child's open tag, restored at its close — so the container's
+    // own trailing children (`<PathPointType>`, `<Image>`, …) keep
+    // attaching to the container after the nested child ends.
+    let mut container_stack: Vec<CurrentFrame> = Vec::new();
     // Tracks the rectangle index whose `<GradientFeatherSetting>`
     // is currently open, so nested `<GradientStop>` children can
     // be appended to the right effects bag. Cleared on the
@@ -512,23 +550,44 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
     // never visit the `End` arm) still get recorded. The
     // close handler below unregisters frames that ultimately
     // got dropped for missing bounds.
-    fn register_with_group(
+    fn register_frame(
         out: &mut Spread,
         group_builders: &mut [GroupBuilder],
+        nested_into: Option<&str>,
         frame_ref: FrameRef,
     ) {
-        if let Some(b) = group_builders.last_mut() {
+        if let Some(host) = nested_into {
+            // B-18: paste-into content — reachable only through the
+            // host container's `nested_children` entry, never through
+            // `frames_in_order` / group members.
+            out.nested_children
+                .entry(host.to_string())
+                .or_default()
+                .push(frame_ref);
+        } else if let Some(b) = group_builders.last_mut() {
             b.members.push(frame_ref);
         } else {
             out.frames_in_order.push(frame_ref);
         }
     }
-    fn unregister_last_in_group(
+    fn unregister_frame(
         out: &mut Spread,
         group_builders: &mut [GroupBuilder],
+        nested_into: Option<&str>,
         expected: FrameRef,
     ) {
-        if let Some(b) = group_builders.last_mut() {
+        if let Some(host) = nested_into {
+            let mut emptied = false;
+            if let Some(children) = out.nested_children.get_mut(host) {
+                if children.last() == Some(&expected) {
+                    children.pop();
+                }
+                emptied = children.is_empty();
+            }
+            if emptied {
+                out.nested_children.remove(host);
+            }
+        } else if let Some(b) = group_builders.last_mut() {
             if b.members.last() == Some(&expected) {
                 b.members.pop();
             }
@@ -537,32 +596,95 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
         }
     }
 
+    // B-18 paste-into: called at a page-item open tag. When another
+    // page item is still open, that item is this one's CONTAINER: its
+    // parse state is parked (restored when this child closes) and its
+    // RAW ItemTransform joins `group_transforms`, so the child's
+    // spread-space transform composes through
+    // `effective_item_transform` exactly like a group member's (IDML
+    // serialises a nested item's ItemTransform relative to its parent
+    // item). Returns the host `Self` id the child registers under in
+    // `Spread::nested_children`; `None` = register top-level / with
+    // the open group. TextFrame / GraphicLine hosts and id-less hosts
+    // are NOT liftable (B-18 residual) — their children keep the
+    // legacy flatten-to-top-level behaviour and bump
+    // `skipped_nested_frames`.
+    fn park_open_container(
+        out: &mut Spread,
+        current_frame: &mut Option<CurrentFrame>,
+        container_stack: &mut Vec<CurrentFrame>,
+        group_transforms: &mut Vec<Option<[f32; 6]>>,
+        groups_open: usize,
+    ) -> Option<String> {
+        let open = current_frame.take()?;
+        // A `<Group>` opened between the container and this child ⇒
+        // the child belongs to that (pasted-in) group's flatten lane;
+        // the Group open arm already counted the loss once.
+        let in_pasted_group = groups_open != open.groups_at_open;
+        let liftable = !in_pasted_group
+            && matches!(
+                open.kind,
+                CurrentFrameKind::Rect(_)
+                    | CurrentFrameKind::Oval(_)
+                    | CurrentFrameKind::Polygon(_)
+            )
+            && open.self_id.is_some();
+        let host = if liftable {
+            open.self_id.clone()
+        } else {
+            if !in_pasted_group {
+                out.skipped_nested_frames += 1;
+            }
+            None
+        };
+        // Compose the container transform only for lifted children —
+        // the flatten lanes keep the legacy (no-container) transform
+        // so residual formats parse exactly as before B-18. A `None`
+        // entry keeps the push/pop bookkeeping balanced either way.
+        group_transforms.push(if host.is_some() {
+            open.own_item_transform
+        } else {
+            None
+        });
+        container_stack.push(open);
+        host
+    }
+
     // Pop the just-closed frame from its backing vec when no
     // bounds were ever supplied (neither GeometricBounds attr
     // nor PathGeometry anchors). Preserves the prior "skip
     // bounds-less frames" behaviour while letting the open-tag
-    // path stay simple.
+    // path stay simple. B-18: pop only when the pending frame is
+    // still the LAST of its kind — a bounds-less container whose
+    // nested child of the same kind was kept is no longer last;
+    // leave the ghost in place (it was unregistered, so nothing
+    // paints it) rather than popping the wrong shape.
     fn drop_pending(out: &mut Spread, kind: CurrentFrameKind) {
         match kind {
             CurrentFrameKind::Text(i) => {
-                debug_assert_eq!(i + 1, out.text_frames.len());
-                out.text_frames.pop();
+                if i + 1 == out.text_frames.len() {
+                    out.text_frames.pop();
+                }
             }
             CurrentFrameKind::Rect(i) => {
-                debug_assert_eq!(i + 1, out.rectangles.len());
-                out.rectangles.pop();
+                if i + 1 == out.rectangles.len() {
+                    out.rectangles.pop();
+                }
             }
             CurrentFrameKind::Oval(i) => {
-                debug_assert_eq!(i + 1, out.ovals.len());
-                out.ovals.pop();
+                if i + 1 == out.ovals.len() {
+                    out.ovals.pop();
+                }
             }
             CurrentFrameKind::Line(i) => {
-                debug_assert_eq!(i + 1, out.graphic_lines.len());
-                out.graphic_lines.pop();
+                if i + 1 == out.graphic_lines.len() {
+                    out.graphic_lines.pop();
+                }
             }
             CurrentFrameKind::Polygon(i) => {
-                debug_assert_eq!(i + 1, out.polygons.len());
-                out.polygons.pop();
+                if i + 1 == out.polygons.len() {
+                    out.polygons.pop();
+                }
             }
         }
     }
@@ -574,6 +696,143 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
             CurrentFrameKind::Oval(i) => out.ovals[i].bounds = bounds,
             CurrentFrameKind::Line(i) => out.graphic_lines[i].bounds = bounds,
             CurrentFrameKind::Polygon(i) => out.polygons[i].bounds = bounds,
+        }
+    }
+
+    // Close-tag bookkeeping for a page item: flush the placed image's
+    // clip path, finalize path-derived bounds (dropping bounds-less
+    // ghosts), and stash retained Bezier anchors. Shared by the
+    // `Event::End` arm and the B-18 self-closing-nested-child path
+    // (an `Event::Empty` child inside a container never fires an End
+    // event).
+    fn finalize_page_item(out: &mut Spread, group_builders: &mut [GroupBuilder], cf: CurrentFrame) {
+        // W1.21: flush the placed image's clipping
+        // path onto the host shape. Written before the
+        // bounds/drop logic — if the frame is dropped
+        // (bounds-less ghost) the clip rides along into
+        // the pop. Only Rectangle / Oval / Polygon host
+        // images, so the other kinds carry no field.
+        if let Some(clip) = cf.clip.clone() {
+            match cf.kind {
+                CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
+                    out.rectangles[i].image_clip = Some(clip);
+                }
+                CurrentFrameKind::Oval(i) if i < out.ovals.len() => {
+                    out.ovals[i].image_clip = Some(clip);
+                }
+                CurrentFrameKind::Polygon(i) if i < out.polygons.len() => {
+                    out.polygons[i].image_clip = Some(clip);
+                }
+                _ => {}
+            }
+        }
+        if cf.needs_bounds {
+            if cf.anchors.is_empty() {
+                drop_pending(out, cf.kind);
+                // The frame was registered with the open group (or
+                // its B-18 host container) at open time; unregister
+                // now that it has been discarded so the member /
+                // child list never points to a stale frame index.
+                let frame_ref = match cf.kind {
+                    CurrentFrameKind::Text(i) => FrameRef::TextFrame(i),
+                    CurrentFrameKind::Rect(i) => FrameRef::Rectangle(i),
+                    CurrentFrameKind::Oval(i) => FrameRef::Oval(i),
+                    CurrentFrameKind::Line(i) => FrameRef::GraphicLine(i),
+                    CurrentFrameKind::Polygon(i) => FrameRef::Polygon(i),
+                };
+                unregister_frame(out, group_builders, cf.nested_into.as_deref(), frame_ref);
+                return;
+            }
+            set_pending_bounds(out, cf.kind, bounds_from_anchors(&cf.anchors));
+        }
+        // Polygons keep the curved-path data
+        // even when GeometricBounds was set, so
+        // the renderer can rasterise the actual
+        // outline. GraphicLines keep them too so a
+        // child <TextPath> can flow text along the
+        // actual stroke (curved or multi-segment).
+        if cf.keep_anchors && !cf.anchors.is_empty() {
+            // Drop spurious subpath markers — a
+            // subpath start at the very end of
+            // the anchor list points to nothing,
+            // and the canonical single-contour
+            // case is encoded as `[]` (so callers
+            // can keep using the slice as-is).
+            // `subpath_open` stays parallel to
+            // `subpath_starts`, so when we either
+            // empty or shorten the latter we mirror
+            // the truncation here (P-15).
+            let (subpath_starts, subpath_open) = {
+                let mut starts = cf.subpath_starts.clone();
+                let mut opens = cf.subpath_open.clone();
+                // Keep the indices that point at a
+                // real anchor; trim the parallel
+                // open flags by index so the two
+                // arrays stay in step.
+                let mut keep = vec![true; starts.len()];
+                for (k, &s) in starts.iter().enumerate() {
+                    if s >= cf.anchors.len() {
+                        keep[k] = false;
+                    }
+                }
+                let mut filtered_starts = Vec::with_capacity(starts.len());
+                let mut filtered_open = Vec::with_capacity(opens.len());
+                for k in 0..starts.len() {
+                    if keep[k] {
+                        filtered_starts.push(starts[k]);
+                        filtered_open.push(opens.get(k).copied().unwrap_or(false));
+                    }
+                }
+                starts = filtered_starts;
+                opens = filtered_open;
+                if starts.len() <= 1 {
+                    // The legacy canonical form for
+                    // a single contour. Surface the
+                    // open flag onto a 1-element vec
+                    // so the renderer can still see
+                    // an open single contour.
+                    let lone_open = opens.first().copied().unwrap_or(false);
+                    if lone_open {
+                        (Vec::new(), vec![true])
+                    } else {
+                        (Vec::new(), Vec::new())
+                    }
+                } else {
+                    (starts, opens)
+                }
+            };
+            match cf.kind {
+                CurrentFrameKind::Polygon(i) if i < out.polygons.len() => {
+                    out.polygons[i].anchors = cf.anchors;
+                    out.polygons[i].subpath_starts = subpath_starts;
+                    out.polygons[i].subpath_open = subpath_open;
+                }
+                CurrentFrameKind::Line(i) if i < out.graphic_lines.len() => {
+                    out.graphic_lines[i].anchors = cf.anchors;
+                    out.graphic_lines[i].subpath_starts = subpath_starts;
+                    out.graphic_lines[i].subpath_open = subpath_open;
+                }
+                CurrentFrameKind::Text(i) if i < out.text_frames.len() => {
+                    out.text_frames[i].anchors = cf.anchors;
+                    out.text_frames[i].subpath_starts = subpath_starts;
+                    out.text_frames[i].subpath_open = subpath_open;
+                }
+                CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
+                    // Q-11: only stash when the
+                    // outline is non-rectangular
+                    // (>4 anchors). A plain 4-corner
+                    // AABB is the existing default
+                    // and skipping the stash here
+                    // keeps `from_rectangle`'s
+                    // legacy `Geometry::Rect` path.
+                    if cf.anchors.len() > 4 {
+                        out.rectangles[i].anchors = cf.anchors;
+                        out.rectangles[i].subpath_starts = subpath_starts;
+                        out.rectangles[i].subpath_open = subpath_open;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -595,6 +854,15 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     }
                 }
                 b"Group" => {
+                    // B-18 residual: a <Group> pasted into a container
+                    // (opening while a page item is still current) is
+                    // NOT lifted into `nested_children` — it keeps the
+                    // legacy flatten-to-top-level parse (members
+                    // unclipped, container transform not composed).
+                    // Counted so callers can flag the lossy parse.
+                    if current_frame.is_some() {
+                        out.skipped_nested_frames += 1;
+                    }
                     let t = attr(&e, b"ItemTransform").and_then(|s| parse_matrix(&s));
                     group_transforms.push(t);
                     group_builders.push(GroupBuilder {
@@ -677,8 +945,17 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     }
                 }
                 b"TextFrame" => {
+                    let parked = current_frame.is_some();
+                    let nested_into = park_open_container(
+                        &mut out,
+                        &mut current_frame,
+                        &mut container_stack,
+                        &mut group_transforms,
+                        group_builders.len(),
+                    );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
                     out.text_frames.push(TextFrame {
@@ -731,9 +1008,18 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         locked: common.locked,
                     });
                     let idx = out.text_frames.len() - 1;
-                    register_with_group(&mut out, &mut group_builders, FrameRef::TextFrame(idx));
+                    register_frame(
+                        &mut out,
+                        &mut group_builders,
+                        nested_into.as_deref(),
+                        FrameRef::TextFrame(idx),
+                    );
                     current_frame = Some(CurrentFrame {
                         kind: CurrentFrameKind::Text(idx),
+                        self_id: cf_self_id,
+                        own_item_transform: common.item_transform,
+                        nested_into,
+                        groups_at_open: group_builders.len(),
                         needs_bounds: bounds_attr.is_none(),
                         anchors: Vec::new(),
                         subpath_starts: Vec::new(),
@@ -751,10 +1037,33 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         clip: None,
                         in_clipping_path: false,
                     });
+                    if !event_is_start {
+                        // Self-closing item: no End event will come.
+                        // Clear the open-frame slot so B-18 nesting
+                        // detection stays truthful (Empty items keep
+                        // the legacy no-finalize semantics: attr
+                        // bounds or zero, never dropped), and restore
+                        // the parked container when this was a
+                        // nested child.
+                        current_frame = None;
+                        if parked {
+                            group_transforms.pop();
+                            current_frame = container_stack.pop();
+                        }
+                    }
                 }
                 b"Rectangle" => {
+                    let parked = current_frame.is_some();
+                    let nested_into = park_open_container(
+                        &mut out,
+                        &mut current_frame,
+                        &mut container_stack,
+                        &mut group_transforms,
+                        group_builders.len(),
+                    );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    let cf_self_id = common.self_id.clone();
                     let stroke = read_stroke_style_attrs(&e);
                     let corner = read_corner_attrs(&e);
                     let item_transform =
@@ -809,9 +1118,18 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         subpath_open: Vec::new(),
                     });
                     let idx = out.rectangles.len() - 1;
-                    register_with_group(&mut out, &mut group_builders, FrameRef::Rectangle(idx));
+                    register_frame(
+                        &mut out,
+                        &mut group_builders,
+                        nested_into.as_deref(),
+                        FrameRef::Rectangle(idx),
+                    );
                     current_frame = Some(CurrentFrame {
                         kind: CurrentFrameKind::Rect(idx),
+                        self_id: cf_self_id,
+                        own_item_transform: common.item_transform,
+                        nested_into,
+                        groups_at_open: group_builders.len(),
                         needs_bounds: bounds_attr.is_none(),
                         anchors: Vec::new(),
                         subpath_starts: Vec::new(),
@@ -829,10 +1147,33 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         clip: None,
                         in_clipping_path: false,
                     });
+                    if !event_is_start {
+                        // Self-closing item: no End event will come.
+                        // Clear the open-frame slot so B-18 nesting
+                        // detection stays truthful (Empty items keep
+                        // the legacy no-finalize semantics: attr
+                        // bounds or zero, never dropped), and restore
+                        // the parked container when this was a
+                        // nested child.
+                        current_frame = None;
+                        if parked {
+                            group_transforms.pop();
+                            current_frame = container_stack.pop();
+                        }
+                    }
                 }
                 b"Oval" => {
+                    let parked = current_frame.is_some();
+                    let nested_into = park_open_container(
+                        &mut out,
+                        &mut current_frame,
+                        &mut container_stack,
+                        &mut group_transforms,
+                        group_builders.len(),
+                    );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
                     out.ovals.push(Oval {
@@ -873,9 +1214,18 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         locked: common.locked,
                     });
                     let idx = out.ovals.len() - 1;
-                    register_with_group(&mut out, &mut group_builders, FrameRef::Oval(idx));
+                    register_frame(
+                        &mut out,
+                        &mut group_builders,
+                        nested_into.as_deref(),
+                        FrameRef::Oval(idx),
+                    );
                     current_frame = Some(CurrentFrame {
                         kind: CurrentFrameKind::Oval(idx),
+                        self_id: cf_self_id,
+                        own_item_transform: common.item_transform,
+                        nested_into,
+                        groups_at_open: group_builders.len(),
                         needs_bounds: bounds_attr.is_none(),
                         anchors: Vec::new(),
                         subpath_starts: Vec::new(),
@@ -888,6 +1238,20 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         clip: None,
                         in_clipping_path: false,
                     });
+                    if !event_is_start {
+                        // Self-closing item: no End event will come.
+                        // Clear the open-frame slot so B-18 nesting
+                        // detection stays truthful (Empty items keep
+                        // the legacy no-finalize semantics: attr
+                        // bounds or zero, never dropped), and restore
+                        // the parked container when this was a
+                        // nested child.
+                        current_frame = None;
+                        if parked {
+                            group_transforms.pop();
+                            current_frame = container_stack.pop();
+                        }
+                    }
                 }
                 b"StrokeTransparencySetting" => {
                     // Drop shadows under this wrapper describe a
@@ -1767,8 +2131,17 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     }
                 }
                 b"GraphicLine" => {
+                    let parked = current_frame.is_some();
+                    let nested_into = park_open_container(
+                        &mut out,
+                        &mut current_frame,
+                        &mut container_stack,
+                        &mut group_transforms,
+                        group_builders.len(),
+                    );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
                     out.graphic_lines.push(GraphicLine {
@@ -1809,9 +2182,18 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                             .unwrap_or(100.0),
                     });
                     let idx = out.graphic_lines.len() - 1;
-                    register_with_group(&mut out, &mut group_builders, FrameRef::GraphicLine(idx));
+                    register_frame(
+                        &mut out,
+                        &mut group_builders,
+                        nested_into.as_deref(),
+                        FrameRef::GraphicLine(idx),
+                    );
                     current_frame = Some(CurrentFrame {
                         kind: CurrentFrameKind::Line(idx),
+                        self_id: cf_self_id,
+                        own_item_transform: common.item_transform,
+                        nested_into,
+                        groups_at_open: group_builders.len(),
                         needs_bounds: bounds_attr.is_none(),
                         anchors: Vec::new(),
                         subpath_starts: Vec::new(),
@@ -1827,10 +2209,34 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         clip: None,
                         in_clipping_path: false,
                     });
+                    if !event_is_start {
+                        // Self-closing item: no End event will come.
+                        // Clear the open-frame slot so B-18 nesting
+                        // detection stays truthful (Empty items keep
+                        // the legacy no-finalize semantics: attr
+                        // bounds or zero, never dropped), and restore
+                        // the parked container when this was a
+                        // nested child.
+                        current_frame = None;
+                        if parked {
+                            group_transforms.pop();
+                            current_frame = container_stack.pop();
+                        }
+                    }
                 }
                 b"Polygon" => {
+                    let parked = current_frame.is_some();
+                    let nested_into = park_open_container(
+                        &mut out,
+                        &mut current_frame,
+                        &mut container_stack,
+                        &mut group_transforms,
+                        group_builders.len(),
+                    );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    let corner = read_corner_attrs(&e);
+                    let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
                     out.polygons.push(Polygon {
@@ -1873,11 +2279,23 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         nonprinting: common.nonprinting,
                         visible: common.visible,
                         locked: common.locked,
+                        corner_radius: corner.corner_radius,
+                        corner_option: corner.corner_option,
+                        corners: corner.corners,
                     });
                     let idx = out.polygons.len() - 1;
-                    register_with_group(&mut out, &mut group_builders, FrameRef::Polygon(idx));
+                    register_frame(
+                        &mut out,
+                        &mut group_builders,
+                        nested_into.as_deref(),
+                        FrameRef::Polygon(idx),
+                    );
                     current_frame = Some(CurrentFrame {
                         kind: CurrentFrameKind::Polygon(idx),
+                        self_id: cf_self_id,
+                        own_item_transform: common.item_transform,
+                        nested_into,
+                        groups_at_open: group_builders.len(),
                         needs_bounds: bounds_attr.is_none(),
                         anchors: Vec::new(),
                         subpath_starts: Vec::new(),
@@ -1893,6 +2311,20 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         clip: None,
                         in_clipping_path: false,
                     });
+                    if !event_is_start {
+                        // Self-closing item: no End event will come.
+                        // Clear the open-frame slot so B-18 nesting
+                        // detection stays truthful (Empty items keep
+                        // the legacy no-finalize semantics: attr
+                        // bounds or zero, never dropped), and restore
+                        // the parked container when this was a
+                        // nested child.
+                        current_frame = None;
+                        if parked {
+                            group_transforms.pop();
+                            current_frame = container_stack.pop();
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -1932,139 +2364,14 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     // ghost (matches the previous behaviour of
                     // skipping bounds-less shapes).
                     if let Some(cf) = current_frame.take() {
-                        // W1.21: flush the placed image's clipping
-                        // path onto the host shape. Written before the
-                        // bounds/drop logic — if the frame is dropped
-                        // (bounds-less ghost) the clip rides along into
-                        // the pop. Only Rectangle / Oval / Polygon host
-                        // images, so the other kinds carry no field.
-                        if let Some(clip) = cf.clip.clone() {
-                            match cf.kind {
-                                CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
-                                    out.rectangles[i].image_clip = Some(clip);
-                                }
-                                CurrentFrameKind::Oval(i) if i < out.ovals.len() => {
-                                    out.ovals[i].image_clip = Some(clip);
-                                }
-                                CurrentFrameKind::Polygon(i) if i < out.polygons.len() => {
-                                    out.polygons[i].image_clip = Some(clip);
-                                }
-                                _ => {}
-                            }
-                        }
-                        if cf.needs_bounds {
-                            if cf.anchors.is_empty() {
-                                drop_pending(&mut out, cf.kind);
-                                // The frame was registered with
-                                // the open group at open time;
-                                // unregister now that it has been
-                                // discarded so the group's member
-                                // list never points to a stale
-                                // frame index.
-                                let frame_ref = match cf.kind {
-                                    CurrentFrameKind::Text(i) => FrameRef::TextFrame(i),
-                                    CurrentFrameKind::Rect(i) => FrameRef::Rectangle(i),
-                                    CurrentFrameKind::Oval(i) => FrameRef::Oval(i),
-                                    CurrentFrameKind::Line(i) => FrameRef::GraphicLine(i),
-                                    CurrentFrameKind::Polygon(i) => FrameRef::Polygon(i),
-                                };
-                                unregister_last_in_group(&mut out, &mut group_builders, frame_ref);
-                            } else {
-                                set_pending_bounds(
-                                    &mut out,
-                                    cf.kind,
-                                    bounds_from_anchors(&cf.anchors),
-                                );
-                            }
-                        }
-                        // Polygons keep the curved-path data
-                        // even when GeometricBounds was set, so
-                        // the renderer can rasterise the actual
-                        // outline. GraphicLines keep them too so a
-                        // child <TextPath> can flow text along the
-                        // actual stroke (curved or multi-segment).
-                        if cf.keep_anchors && !cf.anchors.is_empty() {
-                            // Drop spurious subpath markers — a
-                            // subpath start at the very end of
-                            // the anchor list points to nothing,
-                            // and the canonical single-contour
-                            // case is encoded as `[]` (so callers
-                            // can keep using the slice as-is).
-                            // `subpath_open` stays parallel to
-                            // `subpath_starts`, so when we either
-                            // empty or shorten the latter we mirror
-                            // the truncation here (P-15).
-                            let (subpath_starts, subpath_open) = {
-                                let mut starts = cf.subpath_starts.clone();
-                                let mut opens = cf.subpath_open.clone();
-                                // Keep the indices that point at a
-                                // real anchor; trim the parallel
-                                // open flags by index so the two
-                                // arrays stay in step.
-                                let mut keep = vec![true; starts.len()];
-                                for (k, &s) in starts.iter().enumerate() {
-                                    if s >= cf.anchors.len() {
-                                        keep[k] = false;
-                                    }
-                                }
-                                let mut filtered_starts = Vec::with_capacity(starts.len());
-                                let mut filtered_open = Vec::with_capacity(opens.len());
-                                for k in 0..starts.len() {
-                                    if keep[k] {
-                                        filtered_starts.push(starts[k]);
-                                        filtered_open.push(opens.get(k).copied().unwrap_or(false));
-                                    }
-                                }
-                                starts = filtered_starts;
-                                opens = filtered_open;
-                                if starts.len() <= 1 {
-                                    // The legacy canonical form for
-                                    // a single contour. Surface the
-                                    // open flag onto a 1-element vec
-                                    // so the renderer can still see
-                                    // an open single contour.
-                                    let lone_open = opens.first().copied().unwrap_or(false);
-                                    if lone_open {
-                                        (Vec::new(), vec![true])
-                                    } else {
-                                        (Vec::new(), Vec::new())
-                                    }
-                                } else {
-                                    (starts, opens)
-                                }
-                            };
-                            match cf.kind {
-                                CurrentFrameKind::Polygon(i) if i < out.polygons.len() => {
-                                    out.polygons[i].anchors = cf.anchors;
-                                    out.polygons[i].subpath_starts = subpath_starts;
-                                    out.polygons[i].subpath_open = subpath_open;
-                                }
-                                CurrentFrameKind::Line(i) if i < out.graphic_lines.len() => {
-                                    out.graphic_lines[i].anchors = cf.anchors;
-                                    out.graphic_lines[i].subpath_starts = subpath_starts;
-                                    out.graphic_lines[i].subpath_open = subpath_open;
-                                }
-                                CurrentFrameKind::Text(i) if i < out.text_frames.len() => {
-                                    out.text_frames[i].anchors = cf.anchors;
-                                    out.text_frames[i].subpath_starts = subpath_starts;
-                                    out.text_frames[i].subpath_open = subpath_open;
-                                }
-                                CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
-                                    // Q-11: only stash when the
-                                    // outline is non-rectangular
-                                    // (>4 anchors). A plain 4-corner
-                                    // AABB is the existing default
-                                    // and skipping the stash here
-                                    // keeps `from_rectangle`'s
-                                    // legacy `Geometry::Rect` path.
-                                    if cf.anchors.len() > 4 {
-                                        out.rectangles[i].anchors = cf.anchors;
-                                        out.rectangles[i].subpath_starts = subpath_starts;
-                                        out.rectangles[i].subpath_open = subpath_open;
-                                    }
-                                }
-                                _ => {}
-                            }
+                        finalize_page_item(&mut out, &mut group_builders, cf);
+                        // B-18: restore the parked container (this
+                        // frame was paste-into content). The matching
+                        // `group_transforms` entry was pushed when
+                        // this child opened.
+                        if let Some(outer) = container_stack.pop() {
+                            group_transforms.pop();
+                            current_frame = Some(outer);
                         }
                     }
                 }
@@ -2596,6 +2903,235 @@ mod tests {
         assert!((m[5] - 224.0).abs() < 1e-4, "ty = {}", m[5]);
     }
 
+    /// B-18 paste-into: page items nested inside a Rectangle become
+    /// real children in `nested_children` (keyed by the host's Self
+    /// id), stay OUT of `frames_in_order`, and their transforms
+    /// compose the container's ItemTransform (IDML serialises nested
+    /// transforms parent-relative; the model stores spread space).
+    #[test]
+    fn paste_into_children_lift_into_nested_children() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Page Self="p1" GeometricBounds="0 0 792 612"/>
+            <Rectangle Self="host" GeometricBounds="0 0 100 200"
+                       ItemTransform="1 0 0 1 10 20">
+              <TextFrame Self="childText" ParentStory="u1"
+                         GeometricBounds="0 0 40 40"
+                         ItemTransform="1 0 0 1 5 5">
+              </TextFrame>
+              <Oval Self="childOval" GeometricBounds="0 0 10 10"/>
+            </Rectangle>
+            <Rectangle Self="after" GeometricBounds="0 0 50 50"/>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.rectangles.len(), 2, "host + after");
+        assert_eq!(s.text_frames.len(), 1);
+        assert_eq!(s.ovals.len(), 1);
+        assert_eq!(s.skipped_nested_frames, 0, "both children lifted");
+        assert_eq!(
+            s.frames_in_order,
+            vec![FrameRef::Rectangle(0), FrameRef::Rectangle(1)],
+            "children stay out of the top-level z-order list"
+        );
+        let children = s.nested_children.get("host").expect("host has children");
+        assert_eq!(children, &vec![FrameRef::TextFrame(0), FrameRef::Oval(0)]);
+        // Composed transforms: host translate(10,20) ∘ child.
+        let t = s.text_frames[0].item_transform.expect("composed");
+        assert!((t[4] - 15.0).abs() < 1e-4 && (t[5] - 25.0).abs() < 1e-4);
+        let o = s.ovals[0]
+            .item_transform
+            .expect("host transform rides along");
+        assert!((o[4] - 10.0).abs() < 1e-4 && (o[5] - 20.0).abs() < 1e-4);
+    }
+
+    /// B-18: the container's own parse state survives a nested child —
+    /// a PathGeometry-only host (the real-world InDesign shape) still
+    /// derives its bounds after the child closes, and a nested child
+    /// with its own PathGeometry gets its own bounds (not the host's).
+    #[test]
+    fn paste_into_host_path_geometry_survives_nested_child() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="host" ItemTransform="1 0 0 1 0 0">
+              <Properties>
+                <PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+                  <PathPointType Anchor="0 0"/>
+                  <PathPointType Anchor="200 0"/>
+                  <PathPointType Anchor="200 100"/>
+                  <PathPointType Anchor="0 100"/>
+                </PathPointArray></GeometryPathType></PathGeometry>
+              </Properties>
+              <Polygon Self="child">
+                <Properties>
+                  <PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+                    <PathPointType Anchor="10 10"/>
+                    <PathPointType Anchor="60 10"/>
+                    <PathPointType Anchor="35 50"/>
+                  </PathPointArray></GeometryPathType></PathGeometry>
+                </Properties>
+              </Polygon>
+            </Rectangle>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.rectangles.len(), 1);
+        assert_eq!(s.polygons.len(), 1);
+        let host = &s.rectangles[0];
+        assert_eq!(
+            (
+                host.bounds.left,
+                host.bounds.top,
+                host.bounds.right,
+                host.bounds.bottom
+            ),
+            (0.0, 0.0, 200.0, 100.0),
+            "host bounds derive from its own geometry, not the child's"
+        );
+        let child = &s.polygons[0];
+        assert_eq!(child.anchors.len(), 3, "child keeps its own outline");
+        assert_eq!(
+            (
+                child.bounds.left,
+                child.bounds.top,
+                child.bounds.right,
+                child.bounds.bottom
+            ),
+            (10.0, 10.0, 60.0, 50.0)
+        );
+        assert_eq!(
+            s.nested_children.get("host"),
+            Some(&vec![FrameRef::Polygon(0)])
+        );
+    }
+
+    /// B-18: paste-into hosts nest — a child container's own children
+    /// key under the child, and transforms compose through the whole
+    /// chain (outer host ∘ inner host ∘ leaf).
+    #[test]
+    fn paste_into_nests_recursively_with_transform_chain() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="outer" GeometricBounds="0 0 300 300"
+                       ItemTransform="1 0 0 1 10 0">
+              <Rectangle Self="inner" GeometricBounds="0 0 200 200"
+                         ItemTransform="1 0 0 1 0 20">
+                <Oval Self="leaf" GeometricBounds="0 0 10 10"
+                      ItemTransform="1 0 0 1 1 2"/>
+              </Rectangle>
+            </Rectangle>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(
+            s.frames_in_order,
+            vec![FrameRef::Rectangle(0)],
+            "only the outermost host is top-level"
+        );
+        assert_eq!(
+            s.nested_children.get("outer"),
+            Some(&vec![FrameRef::Rectangle(1)])
+        );
+        assert_eq!(
+            s.nested_children.get("inner"),
+            Some(&vec![FrameRef::Oval(0)])
+        );
+        let leaf = s.ovals[0].item_transform.expect("composed chain");
+        assert!((leaf[4] - 11.0).abs() < 1e-4, "tx = {}", leaf[4]);
+        assert!((leaf[5] - 22.0).abs() < 1e-4, "ty = {}", leaf[5]);
+    }
+
+    /// B-18: a container that itself sits inside a `<Group>` still
+    /// lifts its children (group transform ∘ host transform ∘ child).
+    #[test]
+    fn paste_into_inside_a_group_composes_group_and_host() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Group ItemTransform="1 0 0 1 100 0">
+              <Rectangle Self="host" GeometricBounds="0 0 50 50"
+                         ItemTransform="1 0 0 1 0 10">
+                <Oval Self="child" GeometricBounds="0 0 5 5"
+                      ItemTransform="1 0 0 1 1 1"/>
+              </Rectangle>
+            </Group>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.skipped_nested_frames, 0);
+        assert_eq!(s.groups.len(), 1);
+        assert_eq!(
+            s.groups[0].members,
+            vec![FrameRef::Rectangle(0)],
+            "the child joins the host, not the group"
+        );
+        assert_eq!(
+            s.nested_children.get("host"),
+            Some(&vec![FrameRef::Oval(0)])
+        );
+        let c = s.ovals[0].item_transform.expect("composed");
+        assert!((c[4] - 101.0).abs() < 1e-4 && (c[5] - 11.0).abs() < 1e-4);
+    }
+
+    /// B-18 residual: a `<Group>` pasted INTO a container is not
+    /// lifted — it keeps the legacy flatten-to-top-level parse and
+    /// bumps `skipped_nested_frames` exactly once (its members are
+    /// not double-counted).
+    #[test]
+    fn pasted_group_still_flattens_and_counts_once() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="host" GeometricBounds="0 0 100 100">
+              <Group ItemTransform="1 0 0 1 3 4">
+                <Oval Self="member" GeometricBounds="0 0 10 10"/>
+              </Group>
+            </Rectangle>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.skipped_nested_frames, 1, "the pasted group, counted once");
+        assert_eq!(s.groups.len(), 1);
+        assert_eq!(s.groups[0].members, vec![FrameRef::Oval(0)]);
+        assert_eq!(
+            s.frames_in_order,
+            vec![FrameRef::Rectangle(0), FrameRef::Group(0)],
+            "legacy flatten: the group surfaces top-level"
+        );
+        assert!(s.nested_children.is_empty());
+        // Legacy transform lane: only the group's own transform
+        // composes (the host's is deliberately not).
+        let m = s.ovals[0].item_transform.expect("group transform");
+        assert!((m[4] - 3.0).abs() < 1e-4 && (m[5] - 4.0).abs() < 1e-4);
+    }
+
+    /// B-18: a bounds-less nested child (no GeometricBounds, no
+    /// PathGeometry) is dropped like any other ghost — and its
+    /// `nested_children` registration is rolled back so the host's
+    /// child list never points at a popped frame.
+    #[test]
+    fn boundsless_nested_child_is_dropped_and_unregistered() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="host" GeometricBounds="0 0 100 100">
+              <Polygon Self="ghost"></Polygon>
+            </Rectangle>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.polygons.len(), 0, "ghost dropped");
+        assert!(
+            s.nested_children.is_empty(),
+            "registration rolled back: {:?}",
+            s.nested_children
+        );
+        assert_eq!(s.rectangles.len(), 1, "host survives");
+    }
+
     #[test]
     fn parses_text_frame_preference_inset_and_first_baseline() {
         let xml =
@@ -2699,6 +3235,47 @@ mod tests {
         assert_eq!(r.corners[3].option, Some(CornerOption::Rounded));
         assert_eq!(r.corners[3].radius, Some(19.84));
         assert!(r.corners[3].option.unwrap().rounds());
+    }
+
+    /// B-23 — `<Polygon>` carries the identical corner vocabulary, and
+    /// the parser now lifts it. The XML below is the shape measured in
+    /// the real-export corpus (`welcome-guide-template`): a five-point
+    /// arch where only `TopRightCornerOption` is present and the global
+    /// `CornerRadius` + all four per-corner radii are set.
+    #[test]
+    fn b23_parses_polygon_corner_attributes() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Polygon Self="p" GeometricBounds="0 0 100 200"
+                     CornerRadius="243.36"
+                     TopRightCornerOption="RoundedCorner"
+                     TopLeftCornerRadius="243.36" TopRightCornerRadius="243.36"
+                     BottomLeftCornerRadius="243.36" BottomRightCornerRadius="243.36"/>
+            <Polygon Self="q" GeometricBounds="0 0 100 200"
+                     CornerOption="BevelCorner" CornerRadius="16.0625"
+                     TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="16.0625"/>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+
+        let p = &s.polygons[0];
+        assert_eq!(p.corner_radius, Some(243.36));
+        assert_eq!(p.corner_option, None);
+        // Order is [top_left, top_right, bottom_right, bottom_left].
+        assert_eq!(p.corners[0].option, None);
+        assert_eq!(p.corners[1].option, Some(CornerOption::Rounded));
+        assert_eq!(p.corners[0].radius, Some(243.36));
+        assert_eq!(p.corners[3].radius, Some(243.36));
+
+        // `BevelCorner` is the token InDesign actually writes; the
+        // parser used to know only `BeveledCorner` and silently
+        // squared such a frame.
+        let q = &s.polygons[1];
+        assert_eq!(q.corner_option.as_deref(), Some("BevelCorner"));
+        assert_eq!(q.corners[0].option, Some(CornerOption::Bevel));
+        assert_eq!(q.corners[0].radius, Some(16.0625));
+        assert!(q.corners[0].option.unwrap().rounds());
     }
 
     #[test]
