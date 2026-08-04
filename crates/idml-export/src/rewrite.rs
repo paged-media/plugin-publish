@@ -538,6 +538,9 @@ impl ModelGeometry {
     /// the on-disk anchor set for this `<PathPointArray>`. Returns
     /// `Some(target)` when the contour must be rewritten, or `None` to
     /// pass it through verbatim.
+    ///
+    /// A contour the MODEL has no entry for passes through — see
+    /// [`ModelGeometry::contour_slice`].
     fn target_for_contour(&self, contour: usize, parsed: &[PathAnchor]) -> Option<Vec<PathAnchor>> {
         // Bounds-only model (a plain rectangle): the parser keeps no
         // anchors for a 4-corner AABB Rectangle — its geometry lives in
@@ -554,7 +557,7 @@ impl ModelGeometry {
             }
             return None;
         }
-        let model = self.contour_slice(contour);
+        let model = self.contour_slice(contour)?;
         // Anchor-edit path (FramePathPoint / FramePath): the model's
         // anchors for this contour diverged from disk → write them.
         if !anchors_eq_formatted(model, parsed) {
@@ -574,17 +577,50 @@ impl ModelGeometry {
         None
     }
 
-    fn contour_slice(&self, contour: usize) -> &[PathAnchor] {
+    /// The model's anchors for contour `contour`, or `None` when the
+    /// model carries no such contour.
+    ///
+    /// # Why `None` rather than an empty slice or a panic
+    ///
+    /// The model's contour count and the source's `<PathPointArray>`
+    /// count can legitimately disagree in ONE direction: the parser
+    /// drops a **trailing empty** `<GeometryPathType>` as a "spurious
+    /// subpath marker" (a start index that points past the last anchor
+    /// — see idml-import's `parse_spread`). Two corpus templates ship
+    /// exactly that shape (`the-brochure` `Polygon u1659`: 8 contours,
+    /// the last with zero points; `soccer-career-flyer-templates`
+    /// `Polygon u687a`: 7, same). Indexing `subpath_starts` for that
+    /// last array panicked — and the wasm worker runs `panic = abort`,
+    /// so it killed the save outright rather than surfacing an error.
+    ///
+    /// Returning an empty slice would be worse than the panic: the
+    /// caller reads "model says no anchors, disk says some" as a
+    /// divergence and REWRITES the contour, so a visible crash becomes
+    /// a silent geometry loss. Returning `None` means "the model has
+    /// nothing to say about these bytes", and the caller passes the
+    /// source contour through untouched — which is exactly right, since
+    /// the dropped marker was empty: there is no user edit to lose, and
+    /// no way to express one.
+    ///
+    /// The single-contour canonical form (`subpath_starts == []`) is
+    /// held to the same rule: it describes contour 0 and nothing else.
+    /// It used to answer for EVERY index, which is how an unmutated
+    /// `business-magazine-template` save overwrote a 45-point
+    /// `<TextWrapPreference>` contour with the host polygon's 39
+    /// anchors. (The companion half of that fix keeps foreign
+    /// `<PathPointArray>`s out of the contour count altogether — see
+    /// `PathCtx::foreign_depth` in [`rewrite_spread`].)
+    fn contour_slice(&self, contour: usize) -> Option<&[PathAnchor]> {
         if self.subpath_starts.is_empty() {
-            return &self.anchors;
+            return (contour == 0).then_some(self.anchors.as_slice());
         }
-        let start = self.subpath_starts[contour];
+        let start = *self.subpath_starts.get(contour)?;
         let end = self
             .subpath_starts
             .get(contour + 1)
             .copied()
             .unwrap_or(self.anchors.len());
-        self.anchors.get(start..end).unwrap_or(&[])
+        Some(self.anchors.get(start..end).unwrap_or(&[]))
     }
 }
 
@@ -1520,52 +1556,82 @@ pub(crate) fn is_page_item_name(name: &[u8]) -> bool {
     )
 }
 
-/// C-22 — the `Self` ids of every page item the SOURCE XML carries at the
-/// spread's TOP level, in document order.
+/// C-22 — what the SOURCE XML already carries, read off in one cheap
+/// read-only pre-pass.
 ///
-/// A cheap read-only pre-pass. The rewrite itself is a single streaming
-/// pass and cannot know, at the moment it reaches a source element,
-/// whether a model item that sorts BEFORE it will show up later in the
-/// file — which is exactly the question "where does this inserted item
-/// go?" needs answered. One pre-pass answers it for the whole spread.
-///
-/// "Top level" means: not inside a `<Group>` and not inside another page
-/// item (a B-18 paste-into container). Both cases are tracked by the one
-/// depth counter because [`is_page_item_name`] covers `<Group>` too.
-fn source_top_level_ids(original: &[u8]) -> Result<Vec<String>, quick_xml::Error> {
+/// The rewrite itself is a single streaming pass and cannot know, at the
+/// moment it reaches a source element, whether a model item that sorts
+/// BEFORE it will show up later in the file — which is exactly the
+/// question "where does this inserted item go?" needs answered. One
+/// pre-pass answers it for the whole spread.
+struct SourceItems {
+    /// The `Self` ids of every page item at the spread's TOP level, in
+    /// document order.
+    ///
+    /// "Top level" means: not inside a `<Group>` and not inside another
+    /// page item (a B-18 paste-into container). Both cases are tracked
+    /// by the one depth counter because [`is_page_item_name`] covers
+    /// `<Group>` too.
+    top_level: Vec<String>,
+    /// The `Self` ids of every `<Group>` element, **at any depth**.
+    ///
+    /// A source `<Group>` is never dropped and never re-minted —
+    /// [`rewrite_spread`]'s `Group` arms mark its id seen unconditionally
+    /// (unlike the other five kinds, a group takes no part in
+    /// [`triage_placement`]). So a group the source carries is already
+    /// placed, wherever it sits, and the insert lane must leave it
+    /// alone. That matters because a `<Group>` nested inside a page item
+    /// is registered by the PARSER into `Spread::frames_in_order` — the
+    /// documented B-18 residual "flatten to top level, unclipped", so
+    /// the renderer still paints it (see `paged_model::Spread::
+    /// skipped_nested_frames`) — and it is therefore a model top-level
+    /// id that is absent from `top_level`. Reading that absence as "new"
+    /// minted a second copy of the whole subtree.
+    groups: std::collections::HashSet<String>,
+}
+
+fn scan_source_items(original: &[u8]) -> Result<SourceItems, quick_xml::Error> {
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
     config.trim_text(false);
     let mut buf = Vec::new();
-    let mut out: Vec<String> = Vec::new();
+    let mut out = SourceItems {
+        top_level: Vec::new(),
+        groups: std::collections::HashSet::new(),
+    };
     let mut item_depth: usize = 0;
     loop {
-        match reader.read_event_into(&mut buf)? {
+        let (e, is_start) = match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
-            Event::Start(e) => {
-                if is_page_item_name(e.name().as_ref()) {
-                    if item_depth == 0 {
-                        if let Some(id) = attr_value(&e, b"Self") {
-                            out.push(id);
-                        }
-                    }
-                    item_depth += 1;
-                }
-            }
+            Event::Start(e) => (Some(e), true),
+            Event::Empty(e) => (Some(e), false),
             Event::End(e) => {
                 if is_page_item_name(e.name().as_ref()) {
                     item_depth = item_depth.saturating_sub(1);
                 }
+                (None, false)
             }
-            Event::Empty(e) => {
-                if is_page_item_name(e.name().as_ref()) && item_depth == 0 {
-                    if let Some(id) = attr_value(&e, b"Self") {
-                        out.push(id);
+            _ => (None, false),
+        };
+        if let Some(e) = e {
+            let name = e.name().as_ref().to_vec();
+            if is_page_item_name(&name) {
+                let id = attr_value(&e, b"Self");
+                if item_depth == 0 {
+                    if let Some(id) = id.clone() {
+                        out.top_level.push(id);
                     }
                 }
+                if name == b"Group" {
+                    if let Some(id) = id {
+                        out.groups.insert(id);
+                    }
+                }
+                if is_start {
+                    item_depth += 1;
+                }
             }
-            _ => {}
         }
         buf.clear();
     }
@@ -1587,10 +1653,22 @@ fn source_top_level_ids(original: &[u8]) -> Result<Vec<String>, quick_xml::Error
 /// follower still goes at the close — it belongs on top.
 ///
 /// Why anchor forward rather than reorder: the source's document order
-/// IS its z-order, and for an UNMUTATED document it equals
+/// IS its z-order, and for an UNMUTATED document it very nearly equals
 /// `frames_in_order` element for element (the parser appends to that vec
 /// as it walks). So an unmutated spread produces an empty plan, nothing
-/// moves, and byte-identity holds by construction.
+/// moves, and byte-identity holds.
+///
+/// "Very nearly", not "exactly": the one place the two lists diverge on
+/// an unmutated document is a `<Group>` nested inside a page item, which
+/// the parser deliberately flattens into `frames_in_order` (the B-18
+/// residual — the alternative is that the pasted-in subtree never
+/// paints). Absent from the source's TOP level, present in the model's
+/// z-table, and owned by nobody, it read as an insert and was re-minted
+/// on top of the copy the source already carried — one 832 KB corpus
+/// spread saved back at 1.37 MB. Excluding every source group id (at any
+/// depth) restores the invariant the stream pass already keeps: a
+/// `<Group>` the source carries is never re-minted. See
+/// [`SourceItems::groups`].
 ///
 /// A document whose z was RESHUFFLED is not this lane's business, and it
 /// is no longer left alone either: re-ordering elements the SOURCE
@@ -1609,7 +1687,7 @@ fn source_top_level_ids(original: &[u8]) -> Result<Vec<String>, quick_xml::Error
 /// dropped.
 fn plan_insert_positions(
     spread: &Spread,
-    source_top_level: &[String],
+    source: &SourceItems,
     owned: &std::collections::HashSet<&str>,
 ) -> std::collections::HashMap<String, Vec<idml_import::FrameRef>> {
     let mut before: std::collections::HashMap<String, Vec<idml_import::FrameRef>> =
@@ -1624,8 +1702,16 @@ fn plan_insert_positions(
         if owned.contains(id) {
             continue;
         }
-        if source_top_level.iter().any(|s| s == id) {
+        if source.top_level.iter().any(|s| s == id) {
             next_anchor = Some(id.to_string());
+        } else if source.groups.contains(id) {
+            // A `<Group>` the source carries somewhere BELOW the
+            // top level. The stream pass keeps it exactly where it is
+            // and marks it seen, so it is neither new (nothing to
+            // write) nor an anchor (there is no top-level slot to write
+            // before). Planning it minted a second copy of the whole
+            // subtree — see [`SourceItems::groups`].
+            continue;
         } else if let Some(a) = &next_anchor {
             before.entry(a.clone()).or_default().push(r);
         }
@@ -1960,7 +2046,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     // close-of-spread pass never writes a second copy.
     let mut insert_before = {
         let owned = owned_ids(spread);
-        plan_insert_positions(spread, &source_top_level_ids(original)?, &owned)
+        plan_insert_positions(spread, &scan_source_items(original)?, &owned)
     };
 
     let mut reader = Reader::from_reader(original);
@@ -2055,6 +2141,23 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
         contour: usize,
         /// Depth of the open `<PathPointArray>`, or 0 when not in one.
         array_depth: usize,
+        /// Depth of the outermost open element whose `<PathGeometry>`
+        /// is NOT this frame's outline, or 0 when there is none.
+        ///
+        /// A page item can host several `<PathPointArray>`s that have
+        /// nothing to do with its own contours: a placed picture's box
+        /// (`<Image>` / `<EPS>` / `<PDF>` / `<ImportedPage>`), and a
+        /// clipping path (`<ClippingPathSettings>`). The PARSER skips
+        /// exactly those when it fills `subpath_starts` (its
+        /// `in_image_depth` / `in_clipping_path` guards), so counting
+        /// them here made the writer's contour index mean something
+        /// different from the model's — and the mismatch was not a
+        /// harmless off-by-one: an unmutated `business-magazine-template`
+        /// save rewrote a 45-point `Image > TextWrapPreference` contour
+        /// with the host `Polygon`'s 39 anchors. Foreign arrays now pass
+        /// through verbatim and do not advance `contour`, so the two
+        /// indices stay in step by construction.
+        foreign_depth: usize,
         /// Buffered events inside the open `<PathPointArray>` (point
         /// elements + any whitespace between them).
         buffered: Vec<Event<'static>>,
@@ -2136,11 +2239,25 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         }
                     }
                 }
+                // Entering a sub-object that carries its OWN path
+                // geometry — the placed picture's box, or a clipping
+                // path. Everything inside is foreign to the frame's
+                // contours; see `PathCtx::foreign_depth`.
+                if matches!(
+                    name_owned.as_slice(),
+                    b"Image" | b"EPS" | b"PDF" | b"ImportedPage" | b"ClippingPathSettings"
+                ) {
+                    if let Some(ctx) = path_ctx.last_mut() {
+                        if ctx.foreign_depth == 0 {
+                            ctx.foreign_depth = depth;
+                        }
+                    }
+                }
                 // Buffer a `<PathPointArray>` for the innermost path
                 // item so its points can be rewritten at close.
                 if name_owned == b"PathPointArray" {
                     if let Some(ctx) = path_ctx.last_mut() {
-                        if ctx.array_depth == 0 {
+                        if ctx.array_depth == 0 && ctx.foreign_depth == 0 {
                             ctx.array_depth = depth;
                             ctx.buffered.clear();
                             ctx.parsed.clear();
@@ -2274,6 +2391,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         geom,
                         contour: 0,
                         array_depth: 0,
+                        foreign_depth: 0,
                         buffered: Vec::new(),
                         parsed: Vec::new(),
                     });
@@ -2520,6 +2638,11 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         depth = depth.saturating_sub(1);
                         buf.clear();
                         continue;
+                    }
+                    // Leaving the picture box / clipping path: the
+                    // frame's own contours resume here.
+                    if ctx.foreign_depth != 0 && depth == ctx.foreign_depth {
+                        ctx.foreign_depth = 0;
                     }
                     if depth == ctx.item_depth && ITEM_KINDS.contains(&name_owned.as_slice()) {
                         path_ctx.pop();
@@ -4657,9 +4780,9 @@ mod tests {
     /// the group.
     #[test]
     fn c22_nested_source_item_is_not_a_top_level_anchor() {
-        let ids = source_top_level_ids(GROUP_SPREAD).expect("prescan");
+        let source = scan_source_items(GROUP_SPREAD).expect("prescan");
         assert_eq!(
-            ids,
+            source.top_level,
             vec!["r1".to_string(), "p1".to_string(), "g1".to_string()],
             "the pre-scan must see only the spread's top-level items"
         );
