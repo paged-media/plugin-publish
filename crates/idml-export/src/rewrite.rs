@@ -49,6 +49,11 @@
 //!   - `StrokeWeight`      (FrameStrokeWeight)
 //!   - `NextTextFrame`     (LinkFrames / UnlinkFrames; TextFrame only)
 //!   - `Nonprinting`       (FrameNonprinting)
+//!   - `AppliedObjectStyle` (AppliedObjectStyle) — the reference into
+//!     the `<ObjectStyle>` definitions [`crate::resources::patch_styles`]
+//!     writes. IDML has no "no object style", so a CLEARED reference
+//!     writes the reserved [`NONE_OBJECT_STYLE`] sentinel instead of
+//!     dropping the attribute.
 //!   - `GeometricBounds`   (FrameBounds) — patched when the source
 //!     element carries the attribute. When the frame's geometry instead
 //!     lives in `<PathGeometry>`/`<PathPointArray>` (the real-export +
@@ -791,11 +796,21 @@ struct NewItemPaint<'a> {
     /// `<BlendingSetting BlendMode="…">`.
     blend_mode: Option<&'a str>,
     nonprinting: bool,
+    /// `AppliedObjectStyle`. `None` ⇒ IDML's reserved
+    /// [`NONE_OBJECT_STYLE`] sentinel, which is what an item with no
+    /// style applied carries.
+    applied_object_style: Option<&'a str>,
 }
 
 /// `Option<String>` has no `const` default that can be borrowed inline,
 /// so the "this kind carries no fill" case points at one shared `None`.
 static NO_COLOR: Option<String> = None;
+
+/// IDML's reserved "no object style" sentinel. Every page item carries
+/// an `AppliedObjectStyle`; this is the value InDesign writes when none
+/// is applied, so it is both the inserted-item default and what a
+/// CLEARED reference falls back to.
+pub(crate) const NONE_OBJECT_STYLE: &str = "ObjectStyle/$ID/[None]";
 
 impl NewItemPaint<'_> {
     /// True when the item needs a `<TransparencySetting>` sibling after
@@ -815,6 +830,7 @@ impl Default for NewItemPaint<'_> {
             opacity: None,
             blend_mode: None,
             nonprinting: false,
+            applied_object_style: None,
         }
     }
 }
@@ -827,7 +843,16 @@ fn push_common_item_attrs(
     item_transform: Option<[f32; 6]>,
     paint: &NewItemPaint<'_>,
 ) {
-    attrs.push(("AppliedObjectStyle", "ObjectStyle/$ID/[None]".to_string()));
+    // The style the item was given, or IDML's reserved "none" sentinel.
+    // This used to be hard-coded to the sentinel, so an object style
+    // applied to an item CREATED since load saved as unstyled.
+    attrs.push((
+        "AppliedObjectStyle",
+        paint
+            .applied_object_style
+            .unwrap_or(NONE_OBJECT_STYLE)
+            .to_string(),
+    ));
     attrs.push((
         "ItemTransform",
         format_matrix(&item_transform.unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])),
@@ -1003,6 +1028,7 @@ fn write_new_text_frame(
         opacity: f.opacity,
         blend_mode: f.blend_mode.as_deref(),
         nonprinting: f.nonprinting,
+        applied_object_style: f.applied_object_style.as_deref(),
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     emit_start_with_attrs(writer, "TextFrame", &attrs)?;
@@ -1216,6 +1242,7 @@ fn write_new_item(
                         opacity: rect.opacity,
                         blend_mode: rect.blend_mode.as_deref(),
                         nonprinting: rect.nonprinting,
+                        applied_object_style: rect.applied_object_style.as_deref(),
                     },
                     rect.bounds,
                     spread,
@@ -1237,6 +1264,7 @@ fn write_new_item(
                         opacity: o.opacity,
                         blend_mode: o.blend_mode.as_deref(),
                         nonprinting: o.nonprinting,
+                        applied_object_style: o.applied_object_style.as_deref(),
                     },
                     o.bounds,
                     spread,
@@ -1258,6 +1286,7 @@ fn write_new_item(
                         opacity: p.opacity,
                         blend_mode: p.blend_mode.as_deref(),
                         nonprinting: p.nonprinting,
+                        applied_object_style: p.applied_object_style.as_deref(),
                     },
                     p.bounds,
                     &p.anchors,
@@ -1296,6 +1325,7 @@ fn write_new_item(
                         stroke_color: &l.stroke_color,
                         stroke_weight: l.stroke_weight,
                         nonprinting: l.nonprinting,
+                        applied_object_style: l.applied_object_style.as_deref(),
                         ..Default::default()
                     },
                     l.bounds,
@@ -2695,6 +2725,7 @@ fn patch_spread_item(
             let next = frame.next_text_frame.clone();
             let nonprinting = frame.nonprinting;
             let bounds = frame.bounds;
+            let applied_object_style = frame.applied_object_style.clone();
             // C-18: the B-23 residual is closed — a `TextFrame` carries
             // the corner fields and RENDERS them (its body is the same
             // outline a rectangle paints), so they patch back
@@ -2719,6 +2750,7 @@ fn patch_spread_item(
                         None,
                         None,
                         Some(&corners),
+                        &applied_object_style,
                     )
                 },
                 &frame_attr_extras(
@@ -2733,6 +2765,7 @@ fn patch_spread_item(
                     None,
                     None,
                     Some(&corners),
+                    applied_object_style.as_deref(),
                 ),
             )?;
             Ok(Some(start.into_owned()))
@@ -2754,6 +2787,7 @@ fn patch_spread_item(
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
+                    applied_object_style: r.applied_object_style.clone(),
                     start_arrow: None,
                     end_arrow: None,
                     corners: Some(corner_attrs_of(
@@ -2781,6 +2815,7 @@ fn patch_spread_item(
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
+                    applied_object_style: r.applied_object_style.clone(),
                     start_arrow: None,
                     end_arrow: None,
                     // C-18: the B-23 residual is closed — `Oval` now
@@ -2813,6 +2848,7 @@ fn patch_spread_item(
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
+                    applied_object_style: r.applied_object_style.clone(),
                     start_arrow: None,
                     end_arrow: None,
                     corners: Some(corner_attrs_of(
@@ -2840,6 +2876,7 @@ fn patch_spread_item(
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
+                    applied_object_style: r.applied_object_style.clone(),
                     start_arrow: Some(r.start_arrow),
                     end_arrow: Some(r.end_arrow),
                     // C-18: the B-23 residual is closed — `GraphicLine`
@@ -2891,6 +2928,11 @@ struct VectorItem {
     stroke_weight: Option<f32>,
     nonprinting: bool,
     bounds: idml_import::Bounds,
+    /// `AppliedObjectStyle` — the reference into the `<ObjectStyle>`
+    /// definitions `resources::patch_styles` writes. Model-owned
+    /// (`SetProperty(AppliedObjectStyle)` rewrites it), so it has to
+    /// patch back or the applied style is lost on save.
+    applied_object_style: Option<String>,
     /// v43 — `LeftLineEnd` / `RightLineEnd`. `None` for the kinds that
     /// don't carry the fields (Rectangle / Oval / Polygon), so their
     /// source attributes pass through verbatim.
@@ -3055,6 +3097,7 @@ fn patch_vector_item(
                 item.start_arrow,
                 item.end_arrow,
                 item.corners.as_ref(),
+                &item.applied_object_style,
             )
         },
         &frame_attr_extras(
@@ -3069,6 +3112,7 @@ fn patch_vector_item(
             item.start_arrow,
             item.end_arrow,
             item.corners.as_ref(),
+            item.applied_object_style.as_deref(),
         ),
     )?;
     Ok(Some(start.into_owned()))
@@ -3096,6 +3140,7 @@ fn frame_attr_patch(
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
     corners: Option<&CornerAttrs>,
+    applied_object_style: &Option<String>,
 ) -> Option<Patch> {
     // B-23 — corner vocabulary first; `None` falls through to the rest.
     if let Some(c) = corners {
@@ -3104,6 +3149,7 @@ fn frame_attr_patch(
         }
     }
     match key {
+        b"AppliedObjectStyle" => Some(applied_object_style_patch(raw, applied_object_style)),
         b"ItemTransform" if !patch_tx => None,
         b"ItemTransform" => Some(match item_transform {
             Some(m) => Patch::Set(format_matrix(&m)),
@@ -3154,8 +3200,16 @@ fn frame_attr_extras(
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
     corners: Option<&CornerAttrs>,
+    applied_object_style: Option<&str>,
 ) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
+    // An object style APPLIED to an item whose source element never
+    // carried the attribute (a leaner generator's output) — without
+    // this the application is dropped, the same way C-19's `FillTint`
+    // used to fall off here.
+    if let Some(s) = applied_object_style {
+        out.push(("AppliedObjectStyle", s.to_string()));
+    }
     if patch_tx {
         if let Some(m) = item_transform {
             out.push(("ItemTransform", format_matrix(&m)));
@@ -3216,6 +3270,24 @@ fn opt_string_patch(v: &Option<String>) -> Patch {
     match v {
         Some(s) => Patch::Set(s.clone()),
         None => Patch::Remove,
+    }
+}
+
+/// `AppliedObjectStyle` is not an ordinary optional attribute: IDML has
+/// no "no object style", it has the reserved
+/// [`NONE_OBJECT_STYLE`] sentinel, which InDesign writes on every page
+/// item. So a CLEARED reference restores that sentinel rather than
+/// dropping the attribute.
+///
+/// The parser reads this value RAW (`util::attr`, no entity decoding),
+/// so an untouched reference IS the on-disk bytes — `Keep` them instead
+/// of round-tripping them through `escape_attr`, which would turn a
+/// source `&amp;` into `&amp;amp;` and break byte-identity.
+fn applied_object_style_patch(raw: &[u8], v: &Option<String>) -> Patch {
+    match v {
+        Some(s) if s.as_bytes() == raw => Patch::Keep,
+        Some(s) => Patch::Set(s.clone()),
+        None => Patch::Set(NONE_OBJECT_STYLE.to_string()),
     }
 }
 
@@ -4571,5 +4643,120 @@ mod tests {
             vec!["r1".to_string(), "p1".to_string(), "g1".to_string()],
             "the pre-scan must see only the spread's top-level items"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Object-style REFERENCES on page items (the other half of the
+    // object-style save-back: `resources::patch_styles` writes the
+    // definition, this lane writes the `AppliedObjectStyle` pointing at
+    // it).
+    // -----------------------------------------------------------------
+
+    /// InDesign writes `AppliedObjectStyle` on every page item — the
+    /// reserved `ObjectStyle/$ID/[None]` when nothing is applied. The
+    /// polygon here deliberately carries NO such attribute (the shape a
+    /// leaner generator writes), so the "newly set on an element that
+    /// never had the key" lane is covered too.
+    const OBJSTYLE_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><Rectangle Self="r1" AppliedObjectStyle="ObjectStyle/$ID/[None]" ItemTransform="1 0 0 1 10 10" GeometricBounds="0 0 50 50" FillColor="Color/Black"/><TextFrame Self="tf1" AppliedObjectStyle="ObjectStyle/Callout" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 40 90"/><Polygon Self="p1" ItemTransform="1 0 0 1 20 20" GeometricBounds="0 0 30 30" FillColor="Color/Paper"/></Spread>
+</idPkg:Spread>"#;
+
+    fn objstyled() -> idml_import::Spread {
+        idml_import::parse_spread(OBJSTYLE_SPREAD).expect("parse")
+    }
+
+    /// Byte-identity still holds with the reference lane live: an
+    /// unmutated `AppliedObjectStyle` reproduces its source bytes (both
+    /// the reserved `[None]` spelling and a real applied style).
+    #[test]
+    fn unmutated_applied_object_style_round_trips_byte_identically() {
+        let out = rewrite_spread(OBJSTYLE_SPREAD, &objstyled()).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(OBJSTYLE_SPREAD),
+            "an unmutated object-style reference must stay byte-identical"
+        );
+    }
+
+    /// Applying a style to a SOURCE item patches the attribute in place
+    /// — the definition `patch_styles` writes is useless if the item
+    /// that should point at it still says `$ID/[None]`.
+    #[test]
+    fn applied_object_style_set_on_a_source_item_is_saved() {
+        let mut spread = objstyled();
+        spread.rectangles[0].applied_object_style = Some("ObjectStyle/u0".to_string());
+        let out = rewrite_spread(OBJSTYLE_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Rectangle Self="r1" AppliedObjectStyle="ObjectStyle/u0""#),
+            "{s}"
+        );
+        // The neighbours are untouched.
+        assert!(
+            s.contains(r#"<TextFrame Self="tf1" AppliedObjectStyle="ObjectStyle/Callout""#),
+            "{s}"
+        );
+    }
+
+    /// Applying a style to an item whose source element never carried
+    /// the attribute APPENDS it (the extras lane), rather than dropping
+    /// the application on the floor.
+    #[test]
+    fn applied_object_style_is_appended_when_the_source_lacked_the_key() {
+        let mut spread = objstyled();
+        spread.polygons[0].applied_object_style = Some("ObjectStyle/u0".to_string());
+        let out = rewrite_spread(OBJSTYLE_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(r#"Self="p1""#), "{s}");
+        assert!(s.contains(r#"AppliedObjectStyle="ObjectStyle/u0""#), "{s}");
+    }
+
+    /// Clearing an applied style restores IDML's reserved `[None]`
+    /// rather than dropping the attribute — an item with no
+    /// `AppliedObjectStyle` at all is legal, but InDesign always writes
+    /// the reserved value, and dropping it would read as "removed by
+    /// the writer" on a diff.
+    #[test]
+    fn cleared_applied_object_style_falls_back_to_the_reserved_none() {
+        let mut spread = objstyled();
+        spread.text_frames[0].applied_object_style = None;
+        let out = rewrite_spread(OBJSTYLE_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<TextFrame Self="tf1" AppliedObjectStyle="ObjectStyle/$ID/[None]""#),
+            "{s}"
+        );
+    }
+
+    /// An item CREATED since load carries the style it was given — the
+    /// inserted-item lane used to hard-code `ObjectStyle/$ID/[None]`,
+    /// so a styled new frame saved as unstyled.
+    #[test]
+    fn inserted_item_carries_its_applied_object_style() {
+        let mut spread = objstyled();
+        let mut p = spread.polygons[0].clone();
+        p.self_id = Some("unew".to_string());
+        p.applied_object_style = Some("ObjectStyle/u0".to_string());
+        spread.polygons.push(p);
+        spread
+            .frames_in_order
+            .push(idml_import::FrameRef::Polygon(spread.polygons.len() - 1));
+
+        let out = rewrite_spread(OBJSTYLE_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out.clone()).unwrap();
+        let at = s.find(r#"Self="unew""#).expect("inserted item emitted");
+        assert!(
+            s[at..].starts_with(r#"Self="unew" AppliedObjectStyle="ObjectStyle/u0""#),
+            "{s}"
+        );
+        // And it re-parses onto the model.
+        let reparsed = idml_import::parse_spread(&out).expect("re-parse");
+        let back = reparsed
+            .polygons
+            .iter()
+            .find(|p| p.self_id.as_deref() == Some("unew"))
+            .expect("survives");
+        assert_eq!(back.applied_object_style.as_deref(), Some("ObjectStyle/u0"));
     }
 }

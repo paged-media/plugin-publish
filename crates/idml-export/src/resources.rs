@@ -16,14 +16,22 @@
 //!
 //! Swatches / gradients created by ops since load live in the model's
 //! `palette` but have no `<Color>` / `<Gradient>` element in
-//! `Resources/Graphic.xml`; paragraph / character styles created by ops
-//! live in `styles` with no `<ParagraphStyle>` / `<CharacterStyle>` in
-//! `Resources/Styles.xml`. A round-trip that leaves them unserialised
-//! re-opens with a *referenced-but-undefined* resource — a frame whose
+//! `Resources/Graphic.xml`; paragraph / character / OBJECT styles
+//! created by ops live in `styles` with no `<ParagraphStyle>` /
+//! `<CharacterStyle>` / `<ObjectStyle>` in `Resources/Styles.xml`. A
+//! round-trip that leaves them unserialised re-opens with a
+//! *referenced-but-undefined* resource — a frame whose
 //! `FillColor="Color/u3"` resolves to nothing. This module closes that
 //! gap by **injecting** the missing entries into the existing resource
 //! XML, just before the matching close tag, in the canonical `paged_gen`
 //! shape so a re-parse reproduces the resolved appearance.
+//!
+//! The object-style lane is the same defect one rung up: page items
+//! carry `AppliedObjectStyle`, `Operation::CreateObjectStyle` mints a
+//! definition into `styles.object_styles`, and until that definition is
+//! written the exported package has an applied style nothing defines.
+//! (The pointer itself is written by the page-item patch lane — see
+//! `rewrite::applied_object_style_patch`.)
 //!
 //! Both patchers are pure pass-throughs when the model carries nothing
 //! the source XML lacks — they re-emit the original token stream and
@@ -36,7 +44,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::graphic::{ColorEntry, GradientEntry, GradientKind, Graphic};
-use idml_import::styles::{CharacterStyleDef, ParagraphStyleDef, StyleSheet};
+use idml_import::styles::{CharacterStyleDef, ObjectStyleDef, ParagraphStyleDef, StyleSheet};
 
 use crate::rewrite::{escape_attr, format_f32};
 
@@ -271,10 +279,80 @@ fn write_character_style(
     emit_empty(writer, "CharacterStyle", &attrs)
 }
 
+/// True for an id in IDML's reserved `$ID/[…]` namespace
+/// (`ObjectStyle/$ID/[None]`). These are InDesign's own defaults: it
+/// materialises them itself, so the writer never SYNTHESISES one the
+/// source package didn't carry — emitting a user-shaped `<ObjectStyle>`
+/// for `[None]` would present an application default as an authored
+/// style (and re-open as a duplicate next to the real one).
+fn is_reserved_style_id(id: &str) -> bool {
+    id.contains("/$ID/")
+}
+
+/// Serialise one model `<ObjectStyle>`. Covers the whole field
+/// vocabulary [`ObjectStyleDef`] models — the fill / stroke / corner
+/// defaults a page item inherits when it carries no override — so a
+/// re-parse reproduces the resolved appearance.
+///
+/// `BasedOn` is written as an ATTRIBUTE, matching what
+/// [`push_style_common`] already does for the paragraph / character
+/// lanes. The parser accepts either that or InDesign's
+/// `<Properties><BasedOn type="object">…</BasedOn></Properties>` child
+/// form, so the cascade survives the round trip; the attribute form
+/// keeps this a single self-closing element like its siblings.
+fn write_object_style(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    s: &ObjectStyleDef,
+) -> Result<(), quick_xml::Error> {
+    let mut attrs: Vec<(&str, String)> = vec![("Self", s.self_id.clone())];
+    if let Some(n) = &s.name {
+        attrs.push(("Name", n.clone()));
+    }
+    if let Some(b) = &s.based_on {
+        attrs.push(("BasedOn", b.clone()));
+    }
+    if let Some(c) = &s.fill_color {
+        attrs.push(("FillColor", c.clone()));
+    }
+    if let Some(t) = s.fill_tint {
+        attrs.push(("FillTint", format_f32(t)));
+    }
+    if let Some(c) = &s.stroke_color {
+        attrs.push(("StrokeColor", c.clone()));
+    }
+    if let Some(t) = s.stroke_tint {
+        attrs.push(("StrokeTint", format_f32(t)));
+    }
+    if let Some(w) = s.stroke_weight {
+        attrs.push(("StrokeWeight", format_f32(w)));
+    }
+    if let Some(o) = &s.corner_option {
+        attrs.push(("CornerOption", o.clone()));
+    }
+    if let Some(r) = s.corner_radius {
+        attrs.push(("CornerRadius", format_f32(r)));
+    }
+    emit_empty(writer, "ObjectStyle", &attrs)
+}
+
+/// The object styles `styles` carries that `seen` (the source part)
+/// doesn't define, minus the reserved `$ID/[…]` entries. Empty for an
+/// unmutated document, which is what keeps the part byte-identical.
+fn missing_object_styles<'a>(
+    styles: &'a StyleSheet,
+    seen: &'a std::collections::HashSet<String>,
+) -> impl Iterator<Item = &'a ObjectStyleDef> {
+    styles
+        .object_styles
+        .values()
+        .filter(move |s| !seen.contains(&s.self_id) && !is_reserved_style_id(&s.self_id))
+}
+
 /// Rewrite `Resources/Styles.xml` so every model paragraph / character
-/// style is present. New paragraph styles are injected before
+/// / object style is present. New paragraph styles are injected before
 /// `</RootParagraphStyleGroup>`, character styles before
-/// `</RootCharacterStyleGroup>`. Byte-identical to `original` when
+/// `</RootCharacterStyleGroup>`, object styles before
+/// `</RootObjectStyleGroup>`. Byte-identical to `original` when
 /// nothing new (and when the source has no group, the new styles flush
 /// at `</idPkg:Styles>` so they aren't silently dropped).
 pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, quick_xml::Error> {
@@ -288,13 +366,34 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
 
     let mut seen_para: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_char: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen_object: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut para_group_closed = false;
     let mut char_group_closed = false;
+    let mut object_group_closed = false;
 
     loop {
         let ev = reader.read_event_into(&mut buf)?;
         match ev {
             Event::Eof => break,
+            // An EMPTY `<RootObjectStyleGroup/>` (a document with no
+            // object styles at all) has no close tag to inject before,
+            // so expand it into a real element around the new defs.
+            // Only fires when there is something to write — otherwise
+            // it falls through and passes the empty tag through
+            // verbatim.
+            Event::Empty(ref e)
+                if e.name().as_ref() == b"RootObjectStyleGroup"
+                    && missing_object_styles(styles, &seen_object).next().is_some() =>
+            {
+                writer.write_event(Event::Start(e.borrow()))?;
+                for s in missing_object_styles(styles, &seen_object) {
+                    write_object_style(&mut writer, s)?;
+                }
+                writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                    "RootObjectStyleGroup",
+                )))?;
+                object_group_closed = true;
+            }
             Event::Start(ref e) | Event::Empty(ref e) => {
                 match e.name().as_ref() {
                     b"ParagraphStyle" => {
@@ -305,6 +404,11 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                     b"CharacterStyle" => {
                         if let Some(id) = attr_value(e, b"Self") {
                             seen_char.insert(id);
+                        }
+                    }
+                    b"ObjectStyle" => {
+                        if let Some(id) = attr_value(e, b"Self") {
+                            seen_object.insert(id);
                         }
                     }
                     _ => {}
@@ -329,6 +433,13 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                 char_group_closed = true;
                 writer.write_event(ev.borrow())?;
             }
+            Event::End(ref e) if e.name().as_ref() == b"RootObjectStyleGroup" => {
+                for s in missing_object_styles(styles, &seen_object) {
+                    write_object_style(&mut writer, s)?;
+                }
+                object_group_closed = true;
+                writer.write_event(ev.borrow())?;
+            }
             Event::End(ref e) if e.name().as_ref() == b"idPkg:Styles" => {
                 // Fallback: a source with no Root*StyleGroup (rare) still
                 // gets the new defs so a reference never dangles.
@@ -346,6 +457,21 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                         }
                     }
                 }
+                // Object styles need their group: a bare `<ObjectStyle>`
+                // loose in the part isn't the shape InDesign reads them
+                // from, so synthesise the wrapper rather than flush the
+                // defs on their own.
+                if !object_group_closed
+                    && missing_object_styles(styles, &seen_object).next().is_some()
+                {
+                    writer.write_event(Event::Start(BytesStart::new("RootObjectStyleGroup")))?;
+                    for s in missing_object_styles(styles, &seen_object) {
+                        write_object_style(&mut writer, s)?;
+                    }
+                    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                        "RootObjectStyleGroup",
+                    )))?;
+                }
                 writer.write_event(ev.borrow())?;
             }
             _ => writer.write_event(ev.borrow())?,
@@ -354,4 +480,77 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
     }
 
     Ok(writer.into_inner().into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use idml_import::ObjectStyleDef;
+
+    /// A minimal but REAL-SHAPED `Resources/Styles.xml`: the three root
+    /// groups InDesign always writes, each carrying its reserved
+    /// `$ID/[…]` entry, plus one user-authored object style with the
+    /// full field vocabulary `ObjectStyleDef` models.
+    const STYLES_XML: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+<RootCharacterStyleGroup Self="u9d"><CharacterStyle Self="CharacterStyle/$ID/[No character style]" Name="$ID/[No character style]" Imported="false"/></RootCharacterStyleGroup>
+<RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]" Name="$ID/[No paragraph style]" Imported="false"/></RootParagraphStyleGroup>
+<RootObjectStyleGroup Self="u9f"><ObjectStyle Self="ObjectStyle/$ID/[None]" Name="$ID/[None]" Imported="false"/><ObjectStyle Self="ObjectStyle/Callout" Name="Callout" FillColor="Color/Black" FillTint="20" StrokeColor="Color/Paper" StrokeTint="55" StrokeWeight="1.5" CornerOption="RoundedCorner" CornerRadius="6"/></RootObjectStyleGroup>
+</idPkg:Styles>"#;
+
+    fn sheet() -> StyleSheet {
+        idml_import::parse_stylesheet(STYLES_XML).expect("parse styles")
+    }
+
+    /// Build the def `Operation::CreateObjectStyle` produces: a
+    /// `default()` body carrying only `self_id` / `name` / `based_on`
+    /// (every other field cascades). `paged-mutate` can't be depended
+    /// on from here — core's `paged-scene` / `paged-mutate` dep on
+    /// `idml-import` would make the git dep circular (see the commit
+    /// that re-homed the integration tests) — so this mirrors the
+    /// `style_crud!` create arm exactly.
+    fn created_object_style(self_id: &str, name: &str, based_on: Option<&str>) -> ObjectStyleDef {
+        ObjectStyleDef {
+            self_id: self_id.to_string(),
+            name: Some(name.to_string()),
+            based_on: based_on.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// THE PRIME INVARIANT (the lazy-verbatim posture): a document
+    /// nobody mutated re-emits its `Resources/Styles.xml` byte-for-byte,
+    /// so `write_idml` takes the raw-copy path for that entry.
+    #[test]
+    fn unmutated_styles_resource_round_trips_byte_identically() {
+        let out = patch_styles(STYLES_XML, &sheet()).expect("patch");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(STYLES_XML),
+            "an unmutated style sheet must reproduce its on-disk bytes"
+        );
+    }
+
+    /// An object style created since load is written into
+    /// `<RootObjectStyleGroup>` — the resource part InDesign reads
+    /// object styles from. Without this the exported package carries an
+    /// `AppliedObjectStyle` pointing at a definition that doesn't
+    /// exist.
+    #[test]
+    fn scene_created_object_style_is_written_into_the_root_group() {
+        let mut styles = sheet();
+        let def = created_object_style("ObjectStyle/u0", "Sidebar", Some("ObjectStyle/Callout"));
+        styles.object_styles.insert(def.self_id.clone(), def);
+
+        let out = patch_styles(STYLES_XML, &styles).expect("patch");
+        let s = String::from_utf8(out).expect("utf8");
+        assert!(
+            s.contains(r#"<ObjectStyle Self="ObjectStyle/u0" Name="Sidebar" BasedOn="ObjectStyle/Callout"/>"#),
+            "the new object style must be defined, not just referenced: {s}"
+        );
+        // ...and INSIDE the root group, not loose in the part.
+        let group_close = s.find("</RootObjectStyleGroup>").expect("group close");
+        let def_at = s.find(r#"Self="ObjectStyle/u0""#).expect("emitted");
+        assert!(def_at < group_close, "must land inside the group: {s}");
+    }
 }
