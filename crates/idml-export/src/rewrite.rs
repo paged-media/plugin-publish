@@ -86,7 +86,24 @@
 //!   model bounds, identity `ItemTransform`); an item removed by
 //!   `RemoveNode` is dropped from the XML (element + subtree). See
 //!   [`write_inserted_items`] / the `remove_depth` skip in
-//!   [`rewrite_spread`].
+//!   [`rewrite_spread`]. An inserted item carries its full paint —
+//!   fill + `FillTint`, stroke + weight, and the
+//!   `<TransparencySetting><BlendingSetting>` opacity / blend-mode pair
+//!   (C-19; before that the write_new_* lane emitted fill/stroke only,
+//!   so a tint or an opacity set on a freshly-created item was lost).
+//!   Emission ORDER is the model's own z-table
+//!   (`Spread::frames_in_order`) — the order the renderer paints in —
+//!   not the per-kind vec order, which `InsertNode`'s `position`
+//!   argument can leave reversed relative to creation.
+//! * **Group inserts (C-19).** A group the scene created —
+//!   `CreateGroup`, e.g. paged.draw's appearance bake — emits as a real
+//!   `<Group Self ItemTransform>` with its members NESTED inside it (see
+//!   [`write_new_group`]). Members whose elements the source already
+//!   carried elsewhere are dropped from their old position and re-emitted
+//!   inside the wrapper, so nothing is duplicated; members added to an
+//!   EXISTING `<Group>` flush just before that group's close tag, the
+//!   same shape as the B-18 container flush. Member transforms are
+//!   re-based out of spread space by the group's composed transform.
 //! * **New resources.** Swatches / gradients / paragraph + character
 //!   styles created by ops are injected into `Resources/Graphic.xml` /
 //!   `Resources/Styles.xml` (see the `resources` module), so a frame
@@ -119,6 +136,37 @@
 //!   group transform into member anchors — it stores them raw — so a
 //!   `FramePathPoint` edit on a grouped item is not yet written; the
 //!   transform lane above covers the common move/scale/rotate gesture.)
+//! * **A MOVED source item is re-emitted canonically.** When an item the
+//!   source XML already carried changes parent (pasted into a container,
+//!   or grouped by `CreateGroup`), its original element is dropped and it
+//!   is rebuilt by the `write_new_*` emitters at its new home. Those
+//!   rebuild the attributes + geometry + `<Label>` the model tracks, so
+//!   source-only children (`<Image>`, `<TextWrapPreference>`,
+//!   `<ClippingPathSettings>`, on-element corner / effect attrs the model
+//!   doesn't own) are lost on the move. This is one behaviour shared by
+//!   the B-18 paste-into lane and the C-19 group lane, not two.
+//! * **Group DISSOLVE and `SetGroupTransform`.** Two group lanes C-19
+//!   deliberately left alone. A `<Group>` whose model entry disappeared
+//!   keeps its element, and its members keep their legacy in-place
+//!   treatment — including members the model has REMOVED, which is the
+//!   pre-existing "inside a group, a structural remove doesn't save"
+//!   rule. Concretely: bake → save → reopen → release → save leaves the
+//!   old wrapper and its derived layers in the file. Fixing it means
+//!   deciding what a dissolve does to z-order, which is a lane of its
+//!   own. And a `<Group>`'s own `ItemTransform` is never patched from
+//!   the model, so a `SetGroupTransform` does not save back; the member
+//!   flush therefore re-bases against the SOURCE group transform, which
+//!   is the element the members are actually written inside of.
+//! * **Opacity / blend on a SOURCE item.** `<BlendingSetting Opacity /
+//!   BlendMode>` is an ELEMENT, not an attribute, so the attribute-patch
+//!   lane can't reach it: changing the opacity of an item that already
+//!   exists in the XML still does not save (the INSERTED lane above does
+//!   emit it). Closing this needs a buffered element-patch pass over
+//!   `<TransparencySetting>` in the same style as `<Label>`.
+//! * **Inserted-item Z-SLOT.** Inserted items are appended before
+//!   `</Spread>`, in z-table order relative to each other, but always
+//!   ABOVE everything the source already carried. An insert whose
+//!   `z_slot` puts it below or between existing items comes back on top.
 //! * **Runs with foreign inline markup.** A run whose text body carries
 //!   an `<?ACE?>` page-number marker, a `<TextVariableInstance>`, an
 //!   anchored frame, or an unknown entity passes through verbatim (its
@@ -725,15 +773,59 @@ fn write_contour_path_geometry(
     Ok(())
 }
 
+/// The paint an INSERTED page item carries. Bundled into one struct so
+/// the three `write_new_*` emitters don't each grow another six scalars,
+/// and so a field added here lands on every kind at once. C-19 added
+/// `fill_tint` / `opacity` / `blend_mode`: before that, an item CREATED
+/// since load lost its tint and its `<BlendingSetting>` on save (the
+/// patch lane only reaches items that already exist in the source XML),
+/// which is exactly what paged.draw's per-layer appearance bake needs.
+struct NewItemPaint<'a> {
+    fill_color: &'a Option<String>,
+    /// `FillTint` percent (0..=100). `None` ⇒ no tint override.
+    fill_tint: Option<f32>,
+    stroke_color: &'a Option<String>,
+    stroke_weight: Option<f32>,
+    /// `<BlendingSetting Opacity="…">` percent.
+    opacity: Option<f32>,
+    /// `<BlendingSetting BlendMode="…">`.
+    blend_mode: Option<&'a str>,
+    nonprinting: bool,
+}
+
+/// `Option<String>` has no `const` default that can be borrowed inline,
+/// so the "this kind carries no fill" case points at one shared `None`.
+static NO_COLOR: Option<String> = None;
+
+impl NewItemPaint<'_> {
+    /// True when the item needs a `<TransparencySetting>` sibling after
+    /// its `<Properties>` block.
+    fn has_transparency(&self) -> bool {
+        self.opacity.is_some() || self.blend_mode.is_some()
+    }
+}
+
+impl Default for NewItemPaint<'_> {
+    fn default() -> Self {
+        Self {
+            fill_color: &NO_COLOR,
+            fill_tint: None,
+            stroke_color: &NO_COLOR,
+            stroke_weight: None,
+            opacity: None,
+            blend_mode: None,
+            nonprinting: false,
+        }
+    }
+}
+
 /// Common fill/stroke/transform attributes every inserted page item
 /// carries, in the generator's order. `kind`-specific attrs (ParentStory
 /// etc.) are pushed by the caller before this runs.
 fn push_common_item_attrs(
     attrs: &mut Vec<(&'static str, String)>,
     item_transform: Option<[f32; 6]>,
-    fill_color: &Option<String>,
-    stroke_color: &Option<String>,
-    stroke_weight: Option<f32>,
+    paint: &NewItemPaint<'_>,
 ) {
     attrs.push(("AppliedObjectStyle", "ObjectStyle/$ID/[None]".to_string()));
     attrs.push((
@@ -742,19 +834,59 @@ fn push_common_item_attrs(
     ));
     attrs.push((
         "FillColor",
-        fill_color
+        paint
+            .fill_color
             .clone()
             .unwrap_or_else(|| "Swatch/None".to_string()),
     ));
+    // `FillTint` is an attribute (unlike opacity/blend, which are a
+    // child element) and only emitted when set — absence is IDML's
+    // "swatch at full strength".
+    if let Some(t) = paint.fill_tint {
+        attrs.push(("FillTint", format_f32(t)));
+    }
     attrs.push((
         "StrokeColor",
-        stroke_color
+        paint
+            .stroke_color
             .clone()
             .unwrap_or_else(|| "Swatch/None".to_string()),
     ));
     // Always emit StrokeWeight so the "no stroke" intent survives the
     // object-style cascade (the generator's rationale).
-    attrs.push(("StrokeWeight", format_f32(stroke_weight.unwrap_or(0.0))));
+    attrs.push((
+        "StrokeWeight",
+        format_f32(paint.stroke_weight.unwrap_or(0.0)),
+    ));
+    if paint.nonprinting {
+        attrs.push(("Nonprinting", "true".to_string()));
+    }
+}
+
+/// Emit the `<TransparencySetting><BlendingSetting …/></TransparencySetting>`
+/// block an inserted item's opacity / blend mode live in. It is a
+/// SIBLING of `<Properties>` (see `corpus/generated/transparency.idml`),
+/// so callers write it right after the properties block closes.
+fn write_transparency_setting(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    paint: &NewItemPaint<'_>,
+) -> Result<(), quick_xml::Error> {
+    if !paint.has_transparency() {
+        return Ok(());
+    }
+    writer.write_event(Event::Start(BytesStart::new("TransparencySetting")))?;
+    let mut attrs: Vec<(&str, String)> = Vec::new();
+    if let Some(o) = paint.opacity {
+        attrs.push(("Opacity", format_f32(o)));
+    }
+    if let Some(m) = paint.blend_mode {
+        attrs.push(("BlendMode", m.to_string()));
+    }
+    emit_empty_with_attrs(writer, "BlendingSetting", &attrs)?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+        "TransparencySetting",
+    )))?;
+    Ok(())
 }
 
 /// Build a start/empty tag's `BytesStart` from `(key, value)` pairs
@@ -800,6 +932,37 @@ pub(crate) fn emit_empty_with_attrs(
     Ok(())
 }
 
+/// C-19: emit an item's `Properties/Label` KVPs (IDML's native
+/// extension point — the plugin-metadata carrier) inside the
+/// `<Properties>` block the `write_new_*` emitters build.
+///
+/// This matters beyond fresh inserts: a SOURCE item that MOVES (pasted
+/// into a container, or grouped by `CreateGroup`) is dropped from its
+/// old position and re-emitted through these same emitters, so without
+/// this its plugin metadata would vanish on the move. Other source-only
+/// children of a moved element (`<Image>`, `<TextWrapPreference>`,
+/// on-element corner attrs, …) are still lost — that is the standing
+/// characteristic of the move lanes, shared with B-18's paste-into, and
+/// is listed under "Known losses".
+fn write_item_label(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
+    self_id: &str,
+) -> Result<(), quick_xml::Error> {
+    let Some(entries) = spread.labels.get(self_id).filter(|v| !v.is_empty()) else {
+        return Ok(());
+    };
+    writer.write_event(Event::Start(BytesStart::new("Label")))?;
+    for (k, v) in entries {
+        let mut kvp = BytesStart::new("KeyValuePair");
+        kvp.push_attribute(("Key", k.as_str()));
+        kvp.push_attribute(("Value", v.as_str()));
+        writer.write_event(Event::Empty(kvp))?;
+    }
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Label")))?;
+    Ok(())
+}
+
 /// Serialise an inserted `<TextFrame>`. The model classification is
 /// authoritative — the element is always emitted as `<TextFrame>` so the
 /// re-parse files it back under `Spread::text_frames` (the parser keys
@@ -808,6 +971,7 @@ pub(crate) fn emit_empty_with_attrs(
 /// reads back as a (currently empty) text frame.
 fn write_new_text_frame(
     writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
     f: &TextFrame,
 ) -> Result<(), quick_xml::Error> {
     let Some(self_id) = f.self_id.as_deref() else {
@@ -831,20 +995,22 @@ fn write_new_text_frame(
         f.next_text_frame.clone().unwrap_or_else(|| "n".to_string()),
     ));
     attrs.push(("ContentType", "TextType".to_string()));
-    push_common_item_attrs(
-        &mut attrs,
-        f.item_transform,
-        &f.fill_color,
-        &f.stroke_color,
-        f.stroke_weight,
-    );
-    if f.nonprinting {
-        attrs.push(("Nonprinting", "true".to_string()));
-    }
+    let paint = NewItemPaint {
+        fill_color: &f.fill_color,
+        fill_tint: f.fill_tint,
+        stroke_color: &f.stroke_color,
+        stroke_weight: f.stroke_weight,
+        opacity: f.opacity,
+        blend_mode: f.blend_mode.as_deref(),
+        nonprinting: f.nonprinting,
+    };
+    push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     emit_start_with_attrs(writer, "TextFrame", &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    write_item_label(writer, spread, self_id)?;
     write_box_path_geometry(writer, f.bounds)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    write_transparency_setting(writer, &paint)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("TextFrame")))?;
     Ok(())
 }
@@ -861,28 +1027,18 @@ fn write_new_box_item(
     kind: &str,
     self_id: &str,
     item_transform: Option<[f32; 6]>,
-    fill_color: &Option<String>,
-    stroke_color: &Option<String>,
-    stroke_weight: Option<f32>,
-    nonprinting: bool,
+    paint: &NewItemPaint<'_>,
     bounds: Bounds,
     spread: &Spread,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
-    push_common_item_attrs(
-        &mut attrs,
-        item_transform,
-        fill_color,
-        stroke_color,
-        stroke_weight,
-    );
-    if nonprinting {
-        attrs.push(("Nonprinting", "true".to_string()));
-    }
+    push_common_item_attrs(&mut attrs, item_transform, paint);
     emit_start_with_attrs(writer, kind, &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    write_item_label(writer, spread, self_id)?;
     write_box_path_geometry(writer, bounds)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    write_transparency_setting(writer, paint)?;
     if let Some(children) = spread.nested_children.get(self_id) {
         write_nested_children(
             writer,
@@ -906,10 +1062,7 @@ fn write_new_path_item(
     kind: &str,
     self_id: &str,
     item_transform: Option<[f32; 6]>,
-    fill_color: &Option<String>,
-    stroke_color: &Option<String>,
-    stroke_weight: Option<f32>,
-    nonprinting: bool,
+    paint: &NewItemPaint<'_>,
     bounds: Bounds,
     anchors: &[PathAnchor],
     subpath_starts: &[usize],
@@ -918,27 +1071,20 @@ fn write_new_path_item(
     spread: &Spread,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
-    push_common_item_attrs(
-        &mut attrs,
-        item_transform,
-        fill_color,
-        stroke_color,
-        stroke_weight,
-    );
-    if nonprinting {
-        attrs.push(("Nonprinting", "true".to_string()));
-    }
+    push_common_item_attrs(&mut attrs, item_transform, paint);
     for (k, v) in extra_attrs {
         attrs.push((k, v.clone()));
     }
     emit_start_with_attrs(writer, kind, &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    write_item_label(writer, spread, self_id)?;
     if anchors.is_empty() {
         write_box_path_geometry(writer, bounds)?;
     } else {
         write_contour_path_geometry(writer, anchors, subpath_starts, subpath_open)?;
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    write_transparency_setting(writer, paint)?;
     // B-18: a Polygon container's nested children recurse inside the
     // element (GraphicLine ids never key `nested_children`).
     if let Some(children) = spread.nested_children.get(self_id) {
@@ -1016,206 +1162,103 @@ fn relative_to_parent(
     }
 }
 
-/// B-18: emit a container's nested children (paste-into content)
-/// INSIDE the container element, in model order, skipping the ids the
-/// source already carried in place (`present`). Child transforms are
-/// re-based to the container's space; a child that is itself a
-/// container recurses through the `write_new_*` emitters. A pasted-in
-/// `Group` ref is a residual — the parser never lifts one, so a model
-/// can't carry it here; skipped defensively.
-fn write_nested_children(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    spread: &Spread,
-    parent_model_transform: Option<[f32; 6]>,
-    children: &[idml_import::FrameRef],
-    present: Option<&std::collections::HashSet<String>>,
-) -> Result<(), quick_xml::Error> {
-    use idml_import::FrameRef;
-    for &r in children {
-        let Some(id) = nested_ref_self_id(spread, r) else {
-            continue;
-        };
-        if present.is_some_and(|p| p.contains(id)) {
-            continue;
-        }
-        match r {
-            FrameRef::TextFrame(i) => {
-                if let Some(f) = spread.text_frames.get(i) {
-                    let mut f = f.clone();
-                    f.item_transform = relative_to_parent(parent_model_transform, f.item_transform);
-                    write_new_text_frame(writer, &f)?;
-                }
-            }
-            FrameRef::Rectangle(i) => {
-                if let Some(rect) = spread.rectangles.get(i) {
-                    write_new_box_item(
-                        writer,
-                        "Rectangle",
-                        id,
-                        relative_to_parent(parent_model_transform, rect.item_transform),
-                        &rect.fill_color,
-                        &rect.stroke_color,
-                        rect.stroke_weight,
-                        rect.nonprinting,
-                        rect.bounds,
-                        spread,
-                    )?;
-                }
-            }
-            FrameRef::Oval(i) => {
-                if let Some(o) = spread.ovals.get(i) {
-                    write_new_box_item(
-                        writer,
-                        "Oval",
-                        id,
-                        relative_to_parent(parent_model_transform, o.item_transform),
-                        &o.fill_color,
-                        &o.stroke_color,
-                        o.stroke_weight,
-                        o.nonprinting,
-                        o.bounds,
-                        spread,
-                    )?;
-                }
-            }
-            FrameRef::Polygon(i) => {
-                if let Some(p) = spread.polygons.get(i) {
-                    write_new_path_item(
-                        writer,
-                        "Polygon",
-                        id,
-                        relative_to_parent(parent_model_transform, p.item_transform),
-                        &p.fill_color,
-                        &p.stroke_color,
-                        p.stroke_weight,
-                        p.nonprinting,
-                        p.bounds,
-                        &p.anchors,
-                        &p.subpath_starts,
-                        &p.subpath_open,
-                        &[],
-                        spread,
-                    )?;
-                }
-            }
-            FrameRef::GraphicLine(i) => {
-                if let Some(l) = spread.graphic_lines.get(i) {
-                    let mut extra: Vec<(&'static str, String)> = Vec::new();
-                    for (k, t) in [
-                        ("LeftLineEnd", l.start_arrow),
-                        ("RightLineEnd", l.end_arrow),
-                    ] {
-                        if t.draws() && !t.as_idml().is_empty() {
-                            extra.push((k, t.as_idml().to_string()));
-                        }
-                    }
-                    write_new_path_item(
-                        writer,
-                        "GraphicLine",
-                        id,
-                        relative_to_parent(parent_model_transform, l.item_transform),
-                        &None,
-                        &l.stroke_color,
-                        l.stroke_weight,
-                        l.nonprinting,
-                        l.bounds,
-                        &l.anchors,
-                        &l.subpath_starts,
-                        &l.subpath_open,
-                        &extra,
-                        spread,
-                    )?;
-                }
-            }
-            FrameRef::Group(_) => {}
-        }
+/// Compose two optional matrices the same way the parser's
+/// `effective_item_transform` accumulates a group stack: `a ∘ b`, with
+/// `None` standing for identity.
+fn compose_opt(a: Option<[f32; 6]>, b: Option<[f32; 6]>) -> Option<[f32; 6]> {
+    match (a, b) {
+        (None, x) => x,
+        (Some(x), None) => Some(x),
+        (Some(x), Some(y)) => Some(compose_matrix(&x, &y)),
     }
-    Ok(())
 }
 
-/// Append every model page item whose `Self` id was NOT seen in the
-/// source XML — the inserted nodes. Emitted at the spread's close in
-/// the model's per-kind vec order. Group members are skipped (a group's
-/// own insertion is a separate, deferred lane — see Known losses), and
-/// so are B-18 nested children (paste-into content emits INSIDE its
-/// container — at the container's close for source containers, or via
-/// the `write_new_*` recursion for inserted ones — never top-level).
-pub(crate) fn write_inserted_items(
+/// Emit ONE page item the source XML never carried, resolved through its
+/// `FrameRef`. `parent_accum` is the COMPOSED (spread-space) transform of
+/// everything the item is nested under — a B-18 container, a chain of
+/// groups, or `None` at top level. The model stores every leaf's
+/// `item_transform` composed into spread space (see
+/// `Group::item_transform` / `Spread::nested_children`), so the on-disk
+/// value is recovered by `relative_to_parent`. A `Group` ref recurses
+/// through [`write_new_group`], which is what makes a scene-created group
+/// save (C-19): before, both `write_nested_children` and
+/// `write_inserted_items` dropped `FrameRef::Group` on the floor.
+fn write_new_item(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     spread: &Spread,
-    seen: &std::collections::HashSet<String>,
+    r: idml_import::FrameRef,
+    parent_accum: Option<[f32; 6]>,
 ) -> Result<(), quick_xml::Error> {
-    // Collect the `Self` ids that live inside a group so we don't emit
-    // a group member as a stray top-level item.
-    let mut grouped: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for g in &spread.groups {
-        collect_group_member_ids(spread, g, &mut grouped);
-    }
-    // B-18: ids nested inside a container. Also keeps the children of
-    // a REMOVED container from resurfacing flat (they vanish with it,
-    // matching InDesign's delete semantics).
-    for children in spread.nested_children.values() {
-        for &r in children {
-            if let Some(id) = nested_ref_self_id(spread, r) {
-                grouped.insert(id);
+    use idml_import::FrameRef;
+    let Some(id) = nested_ref_self_id(spread, r) else {
+        return Ok(());
+    };
+    match r {
+        FrameRef::TextFrame(i) => {
+            if let Some(f) = spread.text_frames.get(i) {
+                let mut f = f.clone();
+                f.item_transform = relative_to_parent(parent_accum, f.item_transform);
+                write_new_text_frame(writer, spread, &f)?;
             }
         }
-    }
-    for f in &spread.text_frames {
-        if let Some(id) = f.self_id.as_deref() {
-            if !seen.contains(id) && !grouped.contains(id) {
-                write_new_text_frame(writer, f)?;
-            }
-        }
-    }
-    for r in &spread.rectangles {
-        if let Some(id) = r.self_id.as_deref() {
-            if !seen.contains(id) && !grouped.contains(id) {
+        FrameRef::Rectangle(i) => {
+            if let Some(rect) = spread.rectangles.get(i) {
                 write_new_box_item(
                     writer,
                     "Rectangle",
                     id,
-                    r.item_transform,
-                    &r.fill_color,
-                    &r.stroke_color,
-                    r.stroke_weight,
-                    r.nonprinting,
-                    r.bounds,
+                    relative_to_parent(parent_accum, rect.item_transform),
+                    &NewItemPaint {
+                        fill_color: &rect.fill_color,
+                        fill_tint: rect.fill_tint,
+                        stroke_color: &rect.stroke_color,
+                        stroke_weight: rect.stroke_weight,
+                        opacity: rect.opacity,
+                        blend_mode: rect.blend_mode.as_deref(),
+                        nonprinting: rect.nonprinting,
+                    },
+                    rect.bounds,
                     spread,
                 )?;
             }
         }
-    }
-    for o in &spread.ovals {
-        if let Some(id) = o.self_id.as_deref() {
-            if !seen.contains(id) && !grouped.contains(id) {
+        FrameRef::Oval(i) => {
+            if let Some(o) = spread.ovals.get(i) {
                 write_new_box_item(
                     writer,
                     "Oval",
                     id,
-                    o.item_transform,
-                    &o.fill_color,
-                    &o.stroke_color,
-                    o.stroke_weight,
-                    o.nonprinting,
+                    relative_to_parent(parent_accum, o.item_transform),
+                    &NewItemPaint {
+                        fill_color: &o.fill_color,
+                        fill_tint: o.fill_tint,
+                        stroke_color: &o.stroke_color,
+                        stroke_weight: o.stroke_weight,
+                        opacity: o.opacity,
+                        blend_mode: o.blend_mode.as_deref(),
+                        nonprinting: o.nonprinting,
+                    },
                     o.bounds,
                     spread,
                 )?;
             }
         }
-    }
-    for p in &spread.polygons {
-        if let Some(id) = p.self_id.as_deref() {
-            if !seen.contains(id) && !grouped.contains(id) {
+        FrameRef::Polygon(i) => {
+            if let Some(p) = spread.polygons.get(i) {
                 write_new_path_item(
                     writer,
                     "Polygon",
                     id,
-                    p.item_transform,
-                    &p.fill_color,
-                    &p.stroke_color,
-                    p.stroke_weight,
-                    p.nonprinting,
+                    relative_to_parent(parent_accum, p.item_transform),
+                    &NewItemPaint {
+                        fill_color: &p.fill_color,
+                        fill_tint: p.fill_tint,
+                        stroke_color: &p.stroke_color,
+                        stroke_weight: p.stroke_weight,
+                        opacity: p.opacity,
+                        blend_mode: p.blend_mode.as_deref(),
+                        nonprinting: p.nonprinting,
+                    },
                     p.bounds,
                     &p.anchors,
                     &p.subpath_starts,
@@ -1225,10 +1268,8 @@ pub(crate) fn write_inserted_items(
                 )?;
             }
         }
-    }
-    for l in &spread.graphic_lines {
-        if let Some(id) = l.self_id.as_deref() {
-            if !seen.contains(id) && !grouped.contains(id) {
+        FrameRef::GraphicLine(i) => {
+            if let Some(l) = spread.graphic_lines.get(i) {
                 // v43 — an inserted line that was given arrowheads
                 // before save keeps them (the patch lane only covers
                 // items that exist in the source XML).
@@ -1245,11 +1286,18 @@ pub(crate) fn write_inserted_items(
                     writer,
                     "GraphicLine",
                     id,
-                    l.item_transform,
-                    &None,
-                    &l.stroke_color,
-                    l.stroke_weight,
-                    l.nonprinting,
+                    relative_to_parent(parent_accum, l.item_transform),
+                    // `paged_model::GraphicLine` carries no fill, tint,
+                    // opacity or blend-mode field at all — a line's
+                    // paint is stroke-only, so there is nothing to lose
+                    // here (cf. the C-20 arms core deliberately did not
+                    // add for this kind).
+                    &NewItemPaint {
+                        stroke_color: &l.stroke_color,
+                        stroke_weight: l.stroke_weight,
+                        nonprinting: l.nonprinting,
+                        ..Default::default()
+                    },
                     l.bounds,
                     &l.anchors,
                     &l.subpath_starts,
@@ -1259,12 +1307,279 @@ pub(crate) fn write_inserted_items(
                 )?;
             }
         }
+        FrameRef::Group(i) => {
+            if let Some(g) = spread.groups.get(i) {
+                write_new_group(writer, spread, g, parent_accum, None)?;
+            }
+        }
     }
     Ok(())
 }
 
+/// C-19 — serialise a group the source XML never carried as a real IDML
+/// `<Group>` with its members NESTED inside it.
+///
+/// Two conventions make this work without inventing a third code path:
+///
+/// * `Group::item_transform` is the RAW on-disk matrix (the parser keeps
+///   it un-composed with its ancestors), so it is written verbatim.
+/// * every MEMBER's `item_transform` is stored COMPOSED into spread
+///   space, so it is re-based against the group's composed transform by
+///   the same [`relative_to_parent`] the B-18 nested-content lane uses.
+///   Member path anchors are stored raw (the parser never composes the
+///   group transform into them), so they emit unchanged.
+///
+/// `present` names the member ids the SOURCE already carries inside this
+/// group — used when an EXISTING `<Group>` gained members, so the close
+/// flush emits only the missing ones. It is `None` for a wholly new
+/// group (nothing of it is in the source yet). Group-level transparency
+/// (`<TransparencySetting>` on the `<Group>` itself) is not emitted: no
+/// operation authors it, so a scene-created group never carries one.
+fn write_new_group(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
+    group: &idml_import::Group,
+    ancestor_accum: Option<[f32; 6]>,
+    present: Option<&std::collections::HashSet<String>>,
+) -> Result<(), quick_xml::Error> {
+    // A group with no `Self` id can't be matched against the source, so
+    // emitting it risks duplicating one that is already there.
+    let Some(self_id) = group.self_id.as_deref() else {
+        return Ok(());
+    };
+    emit_start_with_attrs(
+        writer,
+        "Group",
+        &[
+            ("Self", self_id.to_string()),
+            (
+                "ItemTransform",
+                format_matrix(
+                    &group
+                        .item_transform
+                        .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                ),
+            ),
+        ],
+    )?;
+    let accum = compose_opt(ancestor_accum, group.item_transform);
+    for &m in &group.members {
+        let Some(id) = nested_ref_self_id(spread, m) else {
+            continue;
+        };
+        if present.is_some_and(|p| p.contains(id)) {
+            continue;
+        }
+        write_new_item(writer, spread, m, accum)?;
+    }
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Group")))?;
+    Ok(())
+}
+
+/// B-18: emit a container's nested children (paste-into content)
+/// INSIDE the container element, in model order, skipping the ids the
+/// source already carried in place (`present`). Child transforms are
+/// re-based to the container's space; a child that is itself a
+/// container recurses through the `write_new_*` emitters.
+fn write_nested_children(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
+    parent_model_transform: Option<[f32; 6]>,
+    children: &[idml_import::FrameRef],
+    present: Option<&std::collections::HashSet<String>>,
+) -> Result<(), quick_xml::Error> {
+    for &r in children {
+        let Some(id) = nested_ref_self_id(spread, r) else {
+            continue;
+        };
+        if present.is_some_and(|p| p.contains(id)) {
+            continue;
+        }
+        write_new_item(writer, spread, r, parent_model_transform)?;
+    }
+    Ok(())
+}
+
+/// The order inserted top-level items are emitted in: the model's own
+/// z-table (`Spread::frames_in_order`), which is exactly the order the
+/// RENDERER paints in — so a saved file reopens with the stacking the
+/// user saw.
+///
+/// C-19 sibling fix: this used to be the per-kind vec concatenation, and
+/// the two orders are NOT the same. `InsertNode` takes a `position` into
+/// the kind vec and a separate `z_slot` into the z-table, so a caller
+/// that inserts each new item at `position: 0` (paged.draw's bake does)
+/// builds a kind vec in REVERSE creation order while the z-table stays
+/// correct — the saved XML came out back-to-front. Driving off the
+/// z-table removes the discrepancy by construction.
+///
+/// The per-kind sweep that follows mirrors the renderer's own legacy
+/// fallback (see `paged-renderer`'s `frames_ordered`): text → rect →
+/// oval → line → polygon, then groups. It IS the whole order for a
+/// spread whose z-table is empty (`register_frame_ref` deliberately
+/// no-ops on an empty table, so a document built entirely by
+/// `InsertNode` has none), and a safety net otherwise — an item present
+/// in its kind vec but missing from the z-table must still be written,
+/// or the writer would silently swallow it.
+fn insert_emission_order(spread: &Spread) -> Vec<idml_import::FrameRef> {
+    use idml_import::FrameRef;
+    let mut v: Vec<FrameRef> = spread.frames_in_order.clone();
+    // `FrameRef` is `Eq` but not `Hash`, and a spread's item count is
+    // small, so a linear membership check is the honest tool here.
+    let push_missing = |r: FrameRef, v: &mut Vec<FrameRef>| {
+        if !spread.frames_in_order.contains(&r) {
+            v.push(r);
+        }
+    };
+    for i in 0..spread.text_frames.len() {
+        push_missing(FrameRef::TextFrame(i), &mut v);
+    }
+    for i in 0..spread.rectangles.len() {
+        push_missing(FrameRef::Rectangle(i), &mut v);
+    }
+    for i in 0..spread.ovals.len() {
+        push_missing(FrameRef::Oval(i), &mut v);
+    }
+    for i in 0..spread.graphic_lines.len() {
+        push_missing(FrameRef::GraphicLine(i), &mut v);
+    }
+    for i in 0..spread.polygons.len() {
+        push_missing(FrameRef::Polygon(i), &mut v);
+    }
+    for i in 0..spread.groups.len() {
+        push_missing(FrameRef::Group(i), &mut v);
+    }
+    v
+}
+
+/// Append every model page item whose `Self` id was NOT seen in the
+/// source XML — the inserted nodes — at the spread's close, in
+/// [`insert_emission_order`].
+///
+/// A `FrameRef::Group` entry emits the whole group (wrapper + members)
+/// via [`write_new_group`]; its members are therefore skipped as
+/// top-level items, as are B-18 nested children (paste-into content
+/// emits INSIDE its container — at the container's close for source
+/// containers, or via the `write_new_*` recursion for inserted ones —
+/// never top-level). Keeping the children of a REMOVED container out of
+/// the flat lane also matches InDesign's delete semantics: they vanish
+/// with it.
+pub(crate) fn write_inserted_items(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
+    seen: &std::collections::HashSet<String>,
+) -> Result<(), quick_xml::Error> {
+    // Ids that belong INSIDE something else: group members (emitted by
+    // the group's own recursion) and B-18 nested children.
+    let mut owned: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for g in &spread.groups {
+        collect_group_member_ids(spread, g, &mut owned);
+    }
+    for children in spread.nested_children.values() {
+        for &r in children {
+            if let Some(id) = nested_ref_self_id(spread, r) {
+                owned.insert(id);
+            }
+        }
+    }
+    for r in insert_emission_order(spread) {
+        let Some(id) = nested_ref_self_id(spread, r) else {
+            continue;
+        };
+        if seen.contains(id) || owned.contains(id) {
+            continue;
+        }
+        write_new_item(writer, spread, r, None)?;
+    }
+    Ok(())
+}
+
+/// Where a page-item element sits in the SOURCE XML versus where the
+/// MODEL wants it. Filled in by [`rewrite_spread`] for each page-item
+/// start tag and resolved by [`triage_placement`].
+struct Placement<'a> {
+    /// Innermost eligible B-18 container open in the source.
+    source_host: Option<&'a str>,
+    /// The B-18 container the model nests this item under.
+    model_host: Option<&'a str>,
+    /// Innermost open `<Group>` in the source whose `Self` id the MODEL
+    /// still knows. `None` at top level — or when the enclosing group is
+    /// id-less / no longer in the model, in which case
+    /// `source_group_opaque` is set and the group lane stands down.
+    source_group: Option<&'a str>,
+    /// An enclosing source `<Group>` that can't be matched to a model
+    /// group (no `Self`, or dissolved away). Its members keep the
+    /// legacy in-place treatment — a group DISSOLVE is still a deferred
+    /// lane, and guessing here would silently reorder the file.
+    source_group_opaque: bool,
+    /// The group the model lists this item under.
+    model_group: Option<&'a str>,
+    /// The model still carries this item somewhere.
+    in_model: bool,
+}
+
+/// What to do with a page-item element the reader just opened.
+enum ItemVerdict {
+    /// Keep the element where it is; mark it seen.
+    Keep,
+    /// Keep it and record it as present inside the named B-18 container.
+    KeepInHost(String),
+    /// C-19: keep it and record it as present inside the named group, so
+    /// that group's close flush doesn't re-emit it.
+    KeepInGroup(String),
+    /// Drop the element (and its subtree); it is re-emitted elsewhere —
+    /// inside its model container / group, or by the top-level insert
+    /// lane. NOT marked seen.
+    Drop,
+}
+
+/// Resolve a [`Placement`]. The B-18 container lanes are decided first
+/// (they own the container relationship); what used to be their
+/// catch-all is now the C-19 group lane, with the pre-C-19 behaviour
+/// preserved verbatim for the "no container, no group" case.
+fn triage_placement(p: &Placement<'_>) -> ItemVerdict {
+    match (p.source_host, p.model_host) {
+        // Kept in place inside its container.
+        (Some(sh), Some(mh)) if sh == mh => return ItemVerdict::KeepInHost(mh.to_string()),
+        // PasteInto: top-level in source, nested in the model.
+        (None, Some(_)) if p.source_group.is_none() && !p.source_group_opaque => {
+            return ItemVerdict::Drop
+        }
+        // Re-pasted: nested in source under A, under B in the model.
+        (Some(_), Some(_)) => return ItemVerdict::Drop,
+        // ReleaseFrom: nested in source, top-level in the model.
+        (Some(_), None) if p.in_model => return ItemVerdict::Drop,
+        _ => {}
+    }
+    if p.source_group_opaque {
+        // Legacy: an item inside an unmatchable group is left alone.
+        return ItemVerdict::Keep;
+    }
+    match (p.source_group, p.model_group) {
+        // Grouped in source, same group in the model — stays put.
+        (Some(sg), Some(mg)) if sg == mg => ItemVerdict::KeepInGroup(mg.to_string()),
+        // Joins a group (CreateGroup over SOURCE items) or is regrouped:
+        // drop here, re-emitted inside the model's group.
+        (_, Some(_)) => ItemVerdict::Drop,
+        // Left its group (dissolve of THIS item's membership) or was
+        // removed outright: drop; the insert lane re-emits it if the
+        // model still carries it.
+        (Some(_), None) => ItemVerdict::Drop,
+        // Top level in both: the pre-C-19 rule.
+        (None, None) => {
+            if p.in_model {
+                ItemVerdict::Keep
+            } else {
+                ItemVerdict::Drop
+            }
+        }
+    }
+}
+
 /// Recursively gather the `Self` ids of every page item referenced by a
-/// group (and its sub-groups) so inserted-item emission skips them.
+/// group (and its sub-groups — including the sub-groups' OWN ids) so
+/// inserted-item emission skips them: everything in here is emitted by
+/// [`write_new_group`]'s recursion instead, nested where it belongs.
 fn collect_group_member_ids<'a>(
     spread: &'a Spread,
     group: &'a idml_import::Group,
@@ -1304,6 +1619,9 @@ fn collect_group_member_ids<'a>(
             }
             FrameRef::Group(i) => {
                 if let Some(sub) = spread.groups.get(i) {
+                    if let Some(id) = sub.self_id.as_deref() {
+                        out.insert(id);
+                    }
                     collect_group_member_ids(spread, sub, out);
                 }
             }
@@ -1394,6 +1712,29 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     let mut present_in: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
 
+    // ---- C-19 group-membership state ----
+    // Model-side group index: member `Self` id → owning group's `Self`
+    // id (sub-groups included — `nested_ref_self_id` resolves a
+    // `FrameRef::Group` to the group's own id). Only groups WITH an id
+    // participate: an id-less `<Group>` can't be matched against the
+    // source, so its members keep the legacy in-place treatment.
+    let mut group_owner: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for g in &spread.groups {
+        let Some(gid) = g.self_id.as_deref() else {
+            continue;
+        };
+        for &m in &g.members {
+            if let Some(id) = nested_ref_self_id(spread, m) {
+                group_owner.insert(id, gid);
+            }
+        }
+    }
+    // Per source `<Group Self=…>`: the member ids the source already
+    // carries inside it, so the `</Group>` flush emits only the ones
+    // the model added (a nested `CreateGroup`, or an item moved in).
+    let mut present_in_group: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -1416,6 +1757,10 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     // RAW `<Group ItemTransform>` per open group, outermost first. `None`
     // for a group with no ItemTransform (identity).
     let mut group_xforms: Vec<Option<[f32; 6]>> = Vec::new();
+    // C-19: `Self` per open group, parallel to `group_xforms` (`None`
+    // for an id-less group — see `group_owner`). The innermost entry is
+    // the SOURCE-side answer to "which group is this item in?".
+    let mut group_ids: Vec<Option<String>> = Vec::new();
 
     // ---- plugin-metadata Label patching state ----
     // Element-name stack (depth tracking) + the innermost open page
@@ -1514,54 +1859,34 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                             .last()
                             .filter(|it| it.eligible && it.groups_at_open == group_depth)
                             .and_then(|it| it.self_id.clone());
-                        let model_host = nested_owner.get(id.as_str()).copied();
-                        match (source_host.as_deref(), model_host) {
-                            (Some(sh), Some(mh)) if sh == mh => {
-                                // Kept in place — patched below with
-                                // the host-composed accum; the
-                                // container flush won't re-emit it.
+                        let innermost_group = group_ids.last().cloned().flatten();
+                        let placement = Placement {
+                            source_host: source_host.as_deref(),
+                            model_host: nested_owner.get(id.as_str()).copied(),
+                            source_group: innermost_group.as_deref(),
+                            source_group_opaque: group_depth > 0 && innermost_group.is_none(),
+                            model_group: group_owner.get(id.as_str()).copied(),
+                            in_model: model_ids.contains(id.as_str()),
+                        };
+                        match triage_placement(&placement) {
+                            ItemVerdict::Keep => {
                                 seen_ids.insert(id.clone());
-                                present_in
-                                    .entry(mh.to_string())
-                                    .or_default()
-                                    .insert(id.clone());
                             }
-
-                            (None, Some(_)) if group_depth == 0 => {
-                                // PasteInto: top-level in source,
-                                // nested in the model — drop the
-                                // element here; it re-emits inside its
-                                // model container at that container's
-                                // close. NOT marked seen.
-                                remove_depth = depth;
-                                buf.clear();
-                                continue;
-                            }
-                            (Some(_), Some(_)) => {
-                                // Re-pasted: nested in source under A,
-                                // nested in the model under B — drop
-                                // here; B's flush re-emits it. NOT
-                                // marked seen.
-                                remove_depth = depth;
-                                buf.clear();
-                                continue;
-                            }
-                            (Some(_), None) if model_ids.contains(id.as_str()) => {
-                                // ReleaseFrom: nested in source,
-                                // top-level in the model — drop here;
-                                // the top-level insert lane re-emits
-                                // it before `</Spread>`. NOT seen.
-                                remove_depth = depth;
-                                buf.clear();
-                                continue;
-                            }
-                            _ => {
+                            ItemVerdict::KeepInHost(host) => {
+                                // Patched below with the host-composed
+                                // accum; the container flush won't
+                                // re-emit it.
                                 seen_ids.insert(id.clone());
-                                if group_depth == 0 && !model_ids.contains(id.as_str()) {
-                                    remove_depth = depth;
-                                    buf.clear();
-                                    continue;
-                                }
+                                present_in.entry(host).or_default().insert(id.clone());
+                            }
+                            ItemVerdict::KeepInGroup(gid) => {
+                                seen_ids.insert(id.clone());
+                                present_in_group.entry(gid).or_default().insert(id.clone());
+                            }
+                            ItemVerdict::Drop => {
+                                remove_depth = depth;
+                                buf.clear();
+                                continue;
                             }
                         }
                     }
@@ -1645,6 +1970,22 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     group_depth += 1;
                     group_xforms
                         .push(attr_value(&e, b"ItemTransform").and_then(|s| parse_matrix(&s)));
+                    // C-19: a group the MODEL still knows takes part in
+                    // the membership triage; anything else (no `Self`,
+                    // or dissolved out of the model) stays opaque and
+                    // its members keep the legacy in-place treatment.
+                    let gid = attr_value(&e, b"Self").filter(|id| {
+                        spread
+                            .groups
+                            .iter()
+                            .any(|g| g.self_id.as_deref() == Some(id.as_str()))
+                    });
+                    // Seen either way, so the insert lane never emits a
+                    // second copy of a group the source already carries.
+                    if let Some(id) = attr_value(&e, b"Self") {
+                        seen_ids.insert(id);
+                    }
+                    group_ids.push(gid);
                 }
                 if ITEM_KINDS.contains(&name_owned.as_slice()) {
                     let self_id = attr_value(&e, b"Self");
@@ -1719,40 +2060,40 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                             .last()
                             .filter(|it| it.eligible && it.groups_at_open == group_depth)
                             .and_then(|it| it.self_id.clone());
-                        let model_host = nested_owner.get(id.as_str()).copied();
-                        match (source_host.as_deref(), model_host) {
-                            (Some(sh), Some(mh)) if sh == mh => {
+                        let innermost_group = group_ids.last().cloned().flatten();
+                        let placement = Placement {
+                            source_host: source_host.as_deref(),
+                            model_host: nested_owner.get(id.as_str()).copied(),
+                            source_group: innermost_group.as_deref(),
+                            source_group_opaque: group_depth > 0 && innermost_group.is_none(),
+                            model_group: group_owner.get(id.as_str()).copied(),
+                            in_model: model_ids.contains(id.as_str()),
+                        };
+                        match triage_placement(&placement) {
+                            ItemVerdict::Keep => {
                                 seen_ids.insert(id.clone());
-                                present_in
-                                    .entry(mh.to_string())
-                                    .or_default()
-                                    .insert(id.clone());
                             }
-                            (None, Some(_)) if group_depth == 0 => {
-                                // PasteInto — re-emitted inside its
-                                // container at the container's close.
-                                buf.clear();
-                                continue;
-                            }
-                            (Some(_), Some(_)) => {
-                                // Re-pasted under a different host.
-                                buf.clear();
-                                continue;
-                            }
-                            (Some(_), None) if model_ids.contains(id.as_str()) => {
-                                // ReleaseFrom — re-emitted top-level
-                                // by the insert lane.
-                                buf.clear();
-                                continue;
-                            }
-                            _ => {
+                            ItemVerdict::KeepInHost(host) => {
                                 seen_ids.insert(id.clone());
-                                if group_depth == 0 && !model_ids.contains(id.as_str()) {
-                                    buf.clear();
-                                    continue;
-                                }
+                                present_in.entry(host).or_default().insert(id.clone());
+                            }
+                            ItemVerdict::KeepInGroup(gid) => {
+                                seen_ids.insert(id.clone());
+                                present_in_group.entry(gid).or_default().insert(id.clone());
+                            }
+                            ItemVerdict::Drop => {
+                                buf.clear();
+                                continue;
                             }
                         }
+                    }
+                }
+                // C-19: a self-closing `<Group/>` (a group the source
+                // carries with no members) is still "seen", so the
+                // insert lane never mints a second copy of it.
+                if e.name().as_ref() == b"Group" {
+                    if let Some(id) = attr_value(&e, b"Self") {
+                        seen_ids.insert(id);
                     }
                 }
                 // Buffer a `<PathPointType>` (or any empty element)
@@ -1986,7 +2327,42 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 }
                 if name_owned == b"Group" {
                     group_depth = group_depth.saturating_sub(1);
-                    group_xforms.pop();
+                    let own_xform = group_xforms.pop().flatten();
+                    let gid = group_ids.pop().flatten();
+                    // C-19: an EXISTING group that gained members (a
+                    // nested `CreateGroup`, or an item moved into it)
+                    // flushes the missing ones just before its close —
+                    // the same shape as the B-18 container flush above.
+                    // An unmutated group flushes nothing, so its bytes
+                    // are untouched.
+                    if let Some(gid) = gid.as_deref() {
+                        if let Some(g) = spread
+                            .groups
+                            .iter()
+                            .find(|g| g.self_id.as_deref() == Some(gid))
+                        {
+                            // Members re-base against the SOURCE group's
+                            // composed transform — that is the element
+                            // they are being written inside of. (The
+                            // group's own `<Group ItemTransform>` is not
+                            // patched from the model; a `SetGroupTransform`
+                            // save-back is a separate lane.)
+                            let accum =
+                                compose_opt(accumulate_group_xforms(&group_xforms), own_xform);
+                            let present = present_in_group.get(gid);
+                            for &m in &g.members {
+                                let Some(mid) = nested_ref_self_id(spread, m) else {
+                                    continue;
+                                };
+                                if present.is_some_and(|p| p.contains(mid))
+                                    || seen_ids.contains(mid)
+                                {
+                                    continue;
+                                }
+                                write_new_item(&mut writer, spread, m, accum)?;
+                            }
+                        }
+                    }
                 }
                 depth = depth.saturating_sub(1);
                 writer.write_event(Event::End(e))?;
@@ -2128,6 +2504,7 @@ fn patch_spread_item(
                     patch_tx,
                     item_transform,
                     &fill,
+                    fill_tint,
                     &stroke,
                     stroke_weight,
                     next.as_deref(),
@@ -2428,6 +2805,7 @@ fn patch_vector_item(
             patch_tx,
             item.item_transform,
             &item.fill_color,
+            item.fill_tint,
             &item.stroke_color,
             item.stroke_weight,
             None,
@@ -2512,6 +2890,7 @@ fn frame_attr_extras(
     patch_tx: bool,
     item_transform: Option<[f32; 6]>,
     fill: &Option<String>,
+    fill_tint: Option<f32>,
     stroke: &Option<String>,
     stroke_weight: Option<f32>,
     next: Option<&str>,
@@ -2528,6 +2907,12 @@ fn frame_attr_extras(
     }
     if let Some(c) = fill {
         out.push(("FillColor", c.clone()));
+    }
+    // C-19: a tint SET on an item whose source element never carried a
+    // `FillTint` attribute used to fall off here (the patch lane only
+    // rewrites keys the source already has).
+    if let Some(t) = fill_tint {
+        out.push(("FillTint", format_f32(t)));
     }
     if let Some(c) = stroke {
         out.push(("StrokeColor", c.clone()));
@@ -3269,5 +3654,386 @@ mod tests {
             "{s}"
         );
         assert!(s.contains(r#"BottomLeftCornerRadius="9""#), "{s}");
+    }
+
+    // -----------------------------------------------------------------
+    // C-19 — scene-created groups + inserted-item z-order
+    // -----------------------------------------------------------------
+
+    /// A top-level rectangle, a top-level polygon, and a `<Group>` (with
+    /// its own `ItemTransform`) wrapping one rectangle. Enough shape to
+    /// exercise: the byte-identity invariant, source items joining a new
+    /// group, a source group gaining a member, and the transform re-base.
+    const GROUP_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><Rectangle Self="r1" ItemTransform="1 0 0 1 10 10" GeometricBounds="0 0 50 50" FillColor="Color/Black"/><Polygon Self="p1" ItemTransform="1 0 0 1 20 20" GeometricBounds="0 0 30 30" FillColor="Color/Paper"/><Group Self="g1" ItemTransform="1 0 0 1 100 0"><Rectangle Self="r2" ItemTransform="1 0 0 1 5 5" GeometricBounds="0 0 20 20" FillColor="Color/Paper"/></Group></Spread>
+</idPkg:Spread>"#;
+
+    fn grouped() -> idml_import::Spread {
+        idml_import::parse_spread(GROUP_SPREAD).expect("parse")
+    }
+
+    /// Clone the fixture polygon into a model-only ("inserted") one.
+    fn inserted_polygon(
+        spread: &idml_import::Spread,
+        self_id: &str,
+        item_transform: Option<[f32; 6]>,
+    ) -> idml_import::Polygon {
+        let mut p = spread.polygons[0].clone();
+        p.self_id = Some(self_id.to_string());
+        p.item_transform = item_transform;
+        p
+    }
+
+    fn new_group(
+        self_id: &str,
+        members: Vec<idml_import::FrameRef>,
+        item_transform: Option<[f32; 6]>,
+    ) -> idml_import::Group {
+        idml_import::Group {
+            self_id: Some(self_id.to_string()),
+            members,
+            transparency: Default::default(),
+            item_transform,
+        }
+    }
+
+    /// Count non-overlapping occurrences of `needle` in `hay`.
+    fn count(hay: &str, needle: &str) -> usize {
+        hay.matches(needle).count()
+    }
+
+    /// THE PRIME INVARIANT. Every C-19 lane (group triage, the
+    /// `</Group>` member flush, the z-table-driven insert order) runs on
+    /// this document, and an unmutated model must still reproduce the
+    /// source bytes exactly.
+    #[test]
+    fn c19_unmutated_group_spread_round_trips_byte_identically() {
+        let out = rewrite_spread(GROUP_SPREAD, &grouped()).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(GROUP_SPREAD),
+            "an unmutated document must stay byte-identical"
+        );
+    }
+
+    /// A group the scene created over items the scene ALSO created (the
+    /// paged.draw appearance bake) emits as a real `<Group>` with every
+    /// member nested inside it. Before C-19 the wrapper AND all its
+    /// members were dropped.
+    #[test]
+    fn c19_inserted_group_over_inserted_items_emits_a_real_group() {
+        let mut spread = grouped();
+        let base = spread.polygons[0].clone();
+        for (i, id) in ["u1", "u2", "u3"].iter().enumerate() {
+            let mut p = base.clone();
+            p.self_id = Some((*id).to_string());
+            p.item_transform = Some([1.0, 0.0, 0.0, 1.0, i as f32, 0.0]);
+            spread.polygons.push(p);
+        }
+        let members = vec![
+            idml_import::FrameRef::Polygon(1),
+            idml_import::FrameRef::Polygon(2),
+            idml_import::FrameRef::Polygon(3),
+        ];
+        spread.groups.push(new_group("gbake", members, None));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        spread.frames_in_order.push(gref);
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(r#"<Group Self="gbake""#), "{s}");
+        // Every member is present exactly once, and INSIDE the wrapper.
+        let open = s.find(r#"<Group Self="gbake""#).unwrap();
+        let close = s[open..].find("</Group>").unwrap() + open;
+        for id in ["u1", "u2", "u3"] {
+            let needle = format!(r#"Self="{id}""#);
+            assert_eq!(count(&s, &needle), 1, "{id} emitted once: {s}");
+            let at = s.find(&needle).unwrap();
+            assert!(at > open && at < close, "{id} must sit inside gbake: {s}");
+        }
+        // Members keep their creation order inside the wrapper.
+        assert!(s.find(r#"Self="u1""#) < s.find(r#"Self="u2""#));
+        assert!(s.find(r#"Self="u2""#) < s.find(r#"Self="u3""#));
+    }
+
+    /// A group created over items the SOURCE already carries: the
+    /// members leave their original top-level slots and re-emit inside
+    /// the new wrapper — each exactly once. Before C-19 the members
+    /// stayed where they were and the wrapper vanished.
+    #[test]
+    fn c19_group_over_source_items_moves_them_inside_the_wrapper() {
+        let mut spread = grouped();
+        spread.groups.push(new_group(
+            "gnew",
+            vec![
+                idml_import::FrameRef::Rectangle(0),
+                idml_import::FrameRef::Polygon(0),
+            ],
+            None,
+        ));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        // The z-table swaps the two members for the wrapper at the
+        // earliest member's slot (what `CreateGroup` does).
+        spread.frames_in_order = vec![gref, idml_import::FrameRef::Group(0)];
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(r#"<Group Self="gnew""#), "{s}");
+        for id in ["r1", "p1"] {
+            let needle = format!(r#"Self="{id}""#);
+            assert_eq!(
+                count(&s, &needle),
+                1,
+                "{id} must not be duplicated by the move: {s}"
+            );
+        }
+        let open = s.find(r#"<Group Self="gnew""#).unwrap();
+        assert!(s.find(r#"Self="r1""#).unwrap() > open, "{s}");
+        assert!(s.find(r#"Self="p1""#).unwrap() > open, "{s}");
+        // The untouched source group is still there, once.
+        assert_eq!(count(&s, r#"Self="g1""#), 1, "{s}");
+        assert_eq!(count(&s, r#"Self="r2""#), 1, "{s}");
+    }
+
+    /// A member's `item_transform` is stored COMPOSED into spread space,
+    /// so emitting it inside a group with its own `ItemTransform` must
+    /// re-base it: `on_disk = inverse(group) ∘ composed`.
+    #[test]
+    fn c19_group_members_rebase_against_the_group_transform() {
+        let mut spread = grouped();
+        // Composed = group(1 0 0 1 100 0) ∘ member(1 0 0 1 30 20).
+        spread.polygons.push(inserted_polygon(
+            &spread,
+            "u9",
+            Some([1.0, 0.0, 0.0, 1.0, 130.0, 20.0]),
+        ));
+        spread.groups.push(new_group(
+            "gtx",
+            vec![idml_import::FrameRef::Polygon(1)],
+            Some([1.0, 0.0, 0.0, 1.0, 100.0, 0.0]),
+        ));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        spread.frames_in_order.push(gref);
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Group Self="gtx" ItemTransform="1 0 0 1 100 0">"#),
+            "the group writes its own raw transform: {s}"
+        );
+        let member = &s[s.find(r#"Self="u9""#).unwrap()..];
+        assert!(
+            member.starts_with(r#"Self="u9" AppliedObjectStyle="ObjectStyle/$ID/[None]" ItemTransform="1 0 0 1 30 20""#),
+            "member transform must be re-based into group space: {member}"
+        );
+    }
+
+    /// An EXISTING source group that gained a member flushes it just
+    /// before its own close tag, re-based against the group's transform.
+    #[test]
+    fn c19_source_group_that_gains_a_member_flushes_it_at_the_close() {
+        let mut spread = grouped();
+        // Composed = g1(1 0 0 1 100 0) ∘ member(1 0 0 1 7 3).
+        spread.polygons.push(inserted_polygon(
+            &spread,
+            "u7",
+            Some([1.0, 0.0, 0.0, 1.0, 107.0, 3.0]),
+        ));
+        spread.groups[0]
+            .members
+            .push(idml_import::FrameRef::Polygon(1));
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(count(&s, r#"Self="u7""#), 1, "{s}");
+        let member = s.find(r#"Self="u7""#).unwrap();
+        let group_close = s.find("</Group>").unwrap();
+        let r2 = s.find(r#"Self="r2""#).unwrap();
+        assert!(
+            r2 < member && member < group_close,
+            "the new member lands after the existing one, inside g1: {s}"
+        );
+        assert!(
+            s[member..].starts_with(r#"Self="u7" AppliedObjectStyle="ObjectStyle/$ID/[None]" ItemTransform="1 0 0 1 7 3""#),
+            "{s}"
+        );
+    }
+
+    /// C-19 sibling — inserted items emit in the model's Z-TABLE order,
+    /// not its per-kind vec order. `InsertNode` takes a `position` into
+    /// the kind vec independently of the z-slot, so a caller that
+    /// inserts each new item at `position: 0` builds a REVERSED kind vec
+    /// while `frames_in_order` stays right; the writer used to serialise
+    /// that reversal into the file.
+    #[test]
+    fn c19_inserted_items_emit_in_z_table_order_not_kind_vec_order() {
+        let mut spread = grouped();
+        let base = spread.polygons[0].clone();
+        // Kind vec ends up [p1, u3, u2, u1] — creation order reversed,
+        // exactly what repeated `position: 0` inserts produce.
+        for id in ["u3", "u2", "u1"] {
+            let mut p = base.clone();
+            p.self_id = Some(id.to_string());
+            spread.polygons.push(p);
+        }
+        // The z-table carries the truth: u1 bottom-most of the three.
+        spread
+            .frames_in_order
+            .extend([3, 2, 1].map(idml_import::FrameRef::Polygon));
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        let at = |id: &str| s.find(&format!(r#"Self="{id}""#)).expect("emitted");
+        assert!(at("u1") < at("u2"), "u1 must paint before u2: {s}");
+        assert!(at("u2") < at("u3"), "u2 must paint before u3: {s}");
+    }
+
+    /// The `write_new_*` lane used to emit only fill/stroke/weight, so a
+    /// tint, an opacity, or a blend mode set on an item CREATED since
+    /// load was silently lost on save (the patch lane only reaches items
+    /// that exist in the source XML). All three now ride along — the
+    /// per-layer paint a paged.draw appearance bake needs.
+    #[test]
+    fn c19_inserted_item_carries_tint_opacity_and_blend_mode() {
+        let mut spread = grouped();
+        let mut p = inserted_polygon(&spread, "u5", None);
+        p.fill_tint = Some(40.0);
+        p.opacity = Some(60.0);
+        p.blend_mode = Some("Multiply".to_string());
+        spread.polygons.push(p);
+        spread
+            .frames_in_order
+            .push(idml_import::FrameRef::Polygon(1));
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out.clone()).unwrap();
+        assert!(
+            s.contains(r#"FillColor="Color/Paper" FillTint="40""#),
+            "{s}"
+        );
+        assert!(
+            s.contains(r#"<TransparencySetting><BlendingSetting Opacity="60" BlendMode="Multiply"/></TransparencySetting>"#),
+            "{s}"
+        );
+        // And it re-parses: opacity / blend land back on the model.
+        let reparsed = idml_import::parse_spread(&out).expect("re-parse");
+        let back = reparsed
+            .polygons
+            .iter()
+            .find(|p| p.self_id.as_deref() == Some("u5"))
+            .expect("inserted polygon survives the round trip");
+        assert_eq!(back.fill_tint, Some(40.0));
+        assert_eq!(back.opacity, Some(60.0));
+        assert_eq!(back.blend_mode.as_deref(), Some("Multiply"));
+    }
+
+    /// THE BAKE SHAPE: a group over one SOURCE carrier (paint cleared,
+    /// plugin metadata intact) plus N inserted derived paths. The
+    /// carrier moves into the wrapper and keeps its `<Label>` — the
+    /// metadata is what lets the editor re-open the editable stack, so
+    /// losing it on the move would defeat the bake as thoroughly as
+    /// losing the group did.
+    #[test]
+    fn c19_mixed_group_moves_a_labelled_source_carrier_and_keeps_its_metadata() {
+        let mut spread = grouped();
+        spread.labels.insert(
+            "r1".to_string(),
+            vec![("paged.draw".to_string(), r#"{"fills":[]}"#.to_string())],
+        );
+        let base = spread.polygons[0].clone();
+        for id in ["ufill", "ustroke"] {
+            let mut p = base.clone();
+            p.self_id = Some(id.to_string());
+            spread.polygons.push(p);
+        }
+        spread.groups.push(new_group(
+            "gbake",
+            vec![
+                idml_import::FrameRef::Rectangle(0), // the source carrier
+                idml_import::FrameRef::Polygon(1),
+                idml_import::FrameRef::Polygon(2),
+            ],
+            None,
+        ));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        spread.frames_in_order = vec![
+            gref,
+            idml_import::FrameRef::Polygon(0),
+            idml_import::FrameRef::Group(0),
+        ];
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out.clone()).unwrap();
+        assert_eq!(count(&s, r#"Self="r1""#), 1, "carrier not duplicated: {s}");
+        assert!(
+            s.contains(r#"<KeyValuePair Key="paged.draw" Value="{&quot;fills&quot;:[]}"/>"#),
+            "the carrier's plugin metadata rides the move: {s}"
+        );
+
+        let reparsed = idml_import::parse_spread(&out).expect("re-parse");
+        let g = reparsed
+            .groups
+            .iter()
+            .find(|g| g.self_id.as_deref() == Some("gbake"))
+            .expect("wrapper survives");
+        assert_eq!(g.members.len(), 3, "carrier + both derived layers");
+        assert_eq!(
+            reparsed.labels.get("r1").map(|v| v.len()),
+            Some(1),
+            "and the metadata re-parses off the moved carrier"
+        );
+    }
+
+    /// The whole point, end to end: a baked group survives a save and a
+    /// re-parse with its wrapper, its members, and their per-layer paint
+    /// intact.
+    #[test]
+    fn c19_baked_group_survives_a_reparse() {
+        let mut spread = grouped();
+        let base = spread.polygons[0].clone();
+        for (i, id) in ["ufill", "ustroke"].iter().enumerate() {
+            let mut p = base.clone();
+            p.self_id = Some((*id).to_string());
+            p.opacity = Some(50.0 + i as f32 * 10.0);
+            spread.polygons.push(p);
+        }
+        spread.groups.push(new_group(
+            "gbake",
+            vec![
+                idml_import::FrameRef::Polygon(1),
+                idml_import::FrameRef::Polygon(2),
+            ],
+            None,
+        ));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        spread.frames_in_order.push(gref);
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let reparsed = idml_import::parse_spread(&out).expect("re-parse");
+        let g = reparsed
+            .groups
+            .iter()
+            .find(|g| g.self_id.as_deref() == Some("gbake"))
+            .expect("the baked group is a real <Group> on reopen");
+        assert_eq!(g.members.len(), 2, "both derived layers are members");
+        let ids: Vec<&str> = g
+            .members
+            .iter()
+            .filter_map(|&m| match m {
+                idml_import::FrameRef::Polygon(i) => reparsed.polygons[i].self_id.as_deref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["ufill", "ustroke"]);
+        let opacities: Vec<Option<f32>> = g
+            .members
+            .iter()
+            .filter_map(|&m| match m {
+                idml_import::FrameRef::Polygon(i) => Some(reparsed.polygons[i].opacity),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(opacities, vec![Some(50.0), Some(60.0)]);
     }
 }
