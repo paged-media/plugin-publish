@@ -72,6 +72,7 @@ use paged_scene::Document;
 
 mod emit;
 mod paged;
+mod reorder;
 pub mod resources;
 pub mod rewrite;
 

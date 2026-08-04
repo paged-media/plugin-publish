@@ -109,6 +109,15 @@
 //!   EXISTING `<Group>` flush just before that group's close tag, the
 //!   same shape as the B-18 container flush. Member transforms are
 //!   re-based out of spread space by the group's composed transform.
+//! * **Z-ORDER (C-23).** Core's v59 `ReorderNode` — Arrange — permutes
+//!   the sibling list a node lives in (`Spread::frames_in_order`, a
+//!   `Group::members`, a `Spread::nested_children` entry). IDML spells
+//!   that order as ELEMENT order, so the [`crate::reorder`] post-pass
+//!   splices each serialised page item into the slot the model asks for,
+//!   over this pass's output. Whole elements move, subtree included —
+//!   nothing is re-minted, so a moved item keeps the children and
+//!   attributes the model never modeled. A no-op (returning the input
+//!   buffer) unless the order actually diverged.
 //! * **New resources.** Swatches / gradients / paragraph + character
 //!   styles created by ops are injected into `Resources/Graphic.xml` /
 //!   `Resources/Styles.xml` (see the `resources` module), so a frame
@@ -149,7 +158,9 @@
 //!   source-only children (`<Image>`, `<TextWrapPreference>`,
 //!   `<ClippingPathSettings>`, on-element corner / effect attrs the model
 //!   doesn't own) are lost on the move. This is one behaviour shared by
-//!   the B-18 paste-into lane and the C-19 group lane, not two.
+//!   the B-18 paste-into lane and the C-19 group lane, not two. It is
+//!   REPARENTING only: a pure z-order move (C-23) relocates the original
+//!   bytes and loses nothing.
 //! * **Group DISSOLVE and `SetGroupTransform`.** Two group lanes C-19
 //!   deliberately left alone. A `<Group>` whose model entry disappeared
 //!   keeps its element, and its members keep their legacy in-place
@@ -168,10 +179,9 @@
 //!   exists in the XML still does not save (the INSERTED lane above does
 //!   emit it). Closing this needs a buffered element-patch pass over
 //!   `<TransparencySetting>` in the same style as `<Label>`.
-//! * **Inserted-item Z-SLOT.** Inserted items are appended before
-//!   `</Spread>`, in z-table order relative to each other, but always
-//!   ABOVE everything the source already carried. An insert whose
-//!   `z_slot` puts it below or between existing items comes back on top.
+//! * ~~**Inserted-item Z-SLOT.**~~ CLOSED — an insert is written at its
+//!   anchor among the source items (C-22), and any residual order
+//!   difference is settled by the z-order post-pass (C-23).
 //! * **Runs with foreign inline markup.** A run whose text body carries
 //!   an `<?ACE?>` page-number marker, a `<TextVariableInstance>`, an
 //!   anchored frame, or an unknown entity passes through verbatim (its
@@ -1128,7 +1138,7 @@ fn write_new_path_item(
 
 /// B-18: resolve a `FrameRef` (a `nested_children` entry) to its `Self`
 /// id against the spread's backing vecs.
-fn nested_ref_self_id(spread: &Spread, r: idml_import::FrameRef) -> Option<&str> {
+pub(crate) fn nested_ref_self_id(spread: &Spread, r: idml_import::FrameRef) -> Option<&str> {
     use idml_import::FrameRef;
     match r {
         FrameRef::TextFrame(i) => spread.text_frames.get(i)?.self_id.as_deref(),
@@ -1485,7 +1495,7 @@ fn insert_emission_order(spread: &Spread) -> Vec<idml_import::FrameRef> {
 /// Ids that belong INSIDE something else: group members (emitted by the
 /// group's own recursion) and B-18 nested children. Everything else in
 /// [`insert_emission_order`] is a TOP-LEVEL item.
-fn owned_ids(spread: &Spread) -> std::collections::HashSet<&str> {
+pub(crate) fn owned_ids(spread: &Spread) -> std::collections::HashSet<&str> {
     let mut owned: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for g in &spread.groups {
         collect_group_member_ids(spread, g, &mut owned);
@@ -1503,7 +1513,7 @@ fn owned_ids(spread: &Spread) -> std::collections::HashSet<&str> {
 /// True for the six element names that are page items. `<Group>` counts:
 /// it is a page item too, just a container one, and it occupies a z-slot
 /// among its siblings exactly like a rectangle does.
-fn is_page_item_name(name: &[u8]) -> bool {
+pub(crate) fn is_page_item_name(name: &[u8]) -> bool {
     matches!(
         name,
         b"TextFrame" | b"Rectangle" | b"Oval" | b"GraphicLine" | b"Polygon" | b"Group"
@@ -1580,10 +1590,15 @@ fn source_top_level_ids(original: &[u8]) -> Result<Vec<String>, quick_xml::Error
 /// IS its z-order, and for an UNMUTATED document it equals
 /// `frames_in_order` element for element (the parser appends to that vec
 /// as it walks). So an unmutated spread produces an empty plan, nothing
-/// moves, and byte-identity holds by construction. A document whose z
-/// was RESHUFFLED is deliberately left alone: re-ordering existing source
-/// elements is a different lane (z-reorder save-back), and guessing here
-/// would rewrite bytes the user never touched.
+/// moves, and byte-identity holds by construction.
+///
+/// A document whose z was RESHUFFLED is not this lane's business, and it
+/// is no longer left alone either: re-ordering elements the SOURCE
+/// carried is C-23's [`crate::reorder`] post-pass, which runs over this
+/// pass's output and permutes whole serialised elements. This plan stays
+/// as it is — it decides where a NEW element is first written, and the
+/// two compose (an insert lands at its anchor, then both source and
+/// inserted elements are dealt into the model's order).
 ///
 /// Returns `before` — `before[anchor_id]` is the run of refs to write
 /// just before that source element, in model z-order. The TAIL is not
@@ -2666,7 +2681,12 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
         buf.clear();
     }
 
-    Ok(writer.into_inner().into_inner())
+    // C-23 — z-order save-back. The streaming pass above cannot emit an
+    // element it has not read yet, so the ORDER question is answered
+    // afterwards, by splicing whole serialised elements into the slots
+    // the model's z table asks for. A no-op unless the order diverged
+    // (see [`crate::reorder`]).
+    crate::reorder::apply(spread, writer.into_inner().into_inner())
 }
 
 /// Decide whether to patch a page item's `ItemTransform`, and with what
@@ -3887,7 +3907,7 @@ fn opt_bool_patch(v: Option<bool>) -> Patch {
 }
 
 /// Read an attribute's decoded value off a start tag.
-fn attr_value(e: &BytesStart, key: &[u8]) -> Option<String> {
+pub(crate) fn attr_value(e: &BytesStart, key: &[u8]) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.as_ref() == key)
