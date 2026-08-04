@@ -1452,9 +1452,194 @@ fn insert_emission_order(spread: &Spread) -> Vec<idml_import::FrameRef> {
     v
 }
 
+/// Ids that belong INSIDE something else: group members (emitted by the
+/// group's own recursion) and B-18 nested children. Everything else in
+/// [`insert_emission_order`] is a TOP-LEVEL item.
+fn owned_ids(spread: &Spread) -> std::collections::HashSet<&str> {
+    let mut owned: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for g in &spread.groups {
+        collect_group_member_ids(spread, g, &mut owned);
+    }
+    for children in spread.nested_children.values() {
+        for &r in children {
+            if let Some(id) = nested_ref_self_id(spread, r) {
+                owned.insert(id);
+            }
+        }
+    }
+    owned
+}
+
+/// True for the six element names that are page items. `<Group>` counts:
+/// it is a page item too, just a container one, and it occupies a z-slot
+/// among its siblings exactly like a rectangle does.
+fn is_page_item_name(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"TextFrame" | b"Rectangle" | b"Oval" | b"GraphicLine" | b"Polygon" | b"Group"
+    )
+}
+
+/// C-22 — the `Self` ids of every page item the SOURCE XML carries at the
+/// spread's TOP level, in document order.
+///
+/// A cheap read-only pre-pass. The rewrite itself is a single streaming
+/// pass and cannot know, at the moment it reaches a source element,
+/// whether a model item that sorts BEFORE it will show up later in the
+/// file — which is exactly the question "where does this inserted item
+/// go?" needs answered. One pre-pass answers it for the whole spread.
+///
+/// "Top level" means: not inside a `<Group>` and not inside another page
+/// item (a B-18 paste-into container). Both cases are tracked by the one
+/// depth counter because [`is_page_item_name`] covers `<Group>` too.
+fn source_top_level_ids(original: &[u8]) -> Result<Vec<String>, quick_xml::Error> {
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut buf = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    let mut item_depth: usize = 0;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(e) => {
+                if is_page_item_name(e.name().as_ref()) {
+                    if item_depth == 0 {
+                        if let Some(id) = attr_value(&e, b"Self") {
+                            out.push(id);
+                        }
+                    }
+                    item_depth += 1;
+                }
+            }
+            Event::End(e) => {
+                if is_page_item_name(e.name().as_ref()) {
+                    item_depth = item_depth.saturating_sub(1);
+                }
+            }
+            Event::Empty(e) => {
+                if is_page_item_name(e.name().as_ref()) && item_depth == 0 {
+                    if let Some(id) = attr_value(&e, b"Self") {
+                        out.push(id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+/// C-22 — decide WHERE each inserted top-level item is written, instead
+/// of dumping all of them at the spread's close.
+///
+/// The z-order among inserted items was fixed by C-19 (emission walks
+/// `frames_in_order`). This is their position relative to the items the
+/// SOURCE document already carried: a group the appearance bake dropped
+/// into the carrier's z-slot used to reopen ABOVE every source item,
+/// because the only emission point was the `</Spread>` flush.
+///
+/// The rule: an inserted item is written immediately BEFORE the first
+/// item that follows it in the model's z-table and is present at the
+/// source's top level. That item is its ANCHOR. Anything with no such
+/// follower still goes at the close — it belongs on top.
+///
+/// Why anchor forward rather than reorder: the source's document order
+/// IS its z-order, and for an UNMUTATED document it equals
+/// `frames_in_order` element for element (the parser appends to that vec
+/// as it walks). So an unmutated spread produces an empty plan, nothing
+/// moves, and byte-identity holds by construction. A document whose z
+/// was RESHUFFLED is deliberately left alone: re-ordering existing source
+/// elements is a different lane (z-reorder save-back), and guessing here
+/// would rewrite bytes the user never touched.
+///
+/// Returns `before` — `before[anchor_id]` is the run of refs to write
+/// just before that source element, in model z-order. The TAIL is not
+/// returned: an insert with no anchor is simply absent from the map, so
+/// it is still unseen when [`write_inserted_items`] runs at the close and
+/// lands there. That also makes the whole lane self-healing — anything
+/// the plan fails to place is written by the close pass rather than
+/// dropped.
+fn plan_insert_positions(
+    spread: &Spread,
+    source_top_level: &[String],
+    owned: &std::collections::HashSet<&str>,
+) -> std::collections::HashMap<String, Vec<idml_import::FrameRef>> {
+    let mut before: std::collections::HashMap<String, Vec<idml_import::FrameRef>> =
+        std::collections::HashMap::new();
+    let mut next_anchor: Option<String> = None;
+    // Walk the model's top-level z-order BACKWARDS so each insert sees
+    // the nearest source item that follows it.
+    for r in insert_emission_order(spread).into_iter().rev() {
+        let Some(id) = nested_ref_self_id(spread, r) else {
+            continue;
+        };
+        if owned.contains(id) {
+            continue;
+        }
+        if source_top_level.iter().any(|s| s == id) {
+            next_anchor = Some(id.to_string());
+        } else if let Some(a) = &next_anchor {
+            before.entry(a.clone()).or_default().push(r);
+        }
+    }
+    // The reverse walk collected each run back-to-front; flip them so
+    // emission is in model z-order.
+    for v in before.values_mut() {
+        v.reverse();
+    }
+    before
+}
+
+/// C-22 — write the inserted items anchored to the page-item element the
+/// reader just opened, if any.
+///
+/// Fires only for a TOP-LEVEL page item (`group_depth == 0` and no
+/// enclosing page item), which is the only place the plan anchors to —
+/// `open_items` has not yet been pushed for this element, so
+/// `no_open_item` is the enclosing-container answer. Each flushed id
+/// joins `seen`, which is what stops the close-of-spread pass writing a
+/// second copy.
+#[allow(clippy::too_many_arguments)]
+fn flush_inserts_before(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    spread: &Spread,
+    e: &BytesStart,
+    name: &[u8],
+    group_depth: usize,
+    no_open_item: bool,
+    insert_before: &mut std::collections::HashMap<String, Vec<idml_import::FrameRef>>,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<(), quick_xml::Error> {
+    if insert_before.is_empty() || group_depth != 0 || !no_open_item || !is_page_item_name(name) {
+        return Ok(());
+    }
+    let Some(id) = attr_value(e, b"Self") else {
+        return Ok(());
+    };
+    let Some(pending) = insert_before.remove(&id) else {
+        return Ok(());
+    };
+    for r in pending {
+        write_new_item(writer, spread, r, None)?;
+        if let Some(mid) = nested_ref_self_id(spread, r) {
+            seen.insert(mid.to_string());
+        }
+    }
+    Ok(())
+}
+
 /// Append every model page item whose `Self` id was NOT seen in the
 /// source XML — the inserted nodes — at the spread's close, in
 /// [`insert_emission_order`].
+///
+/// C-22: most inserts are now written earlier, at their real z position
+/// among the source items (see [`plan_insert_positions`]); their ids go
+/// into `seen` as they are flushed, so this pass skips them. What still
+/// lands here is the genuine tail — inserts with no source item above
+/// them — plus the safety net for anything the plan could not place.
 ///
 /// A `FrameRef::Group` entry emits the whole group (wrapper + members)
 /// via [`write_new_group`]; its members are therefore skipped as
@@ -1469,19 +1654,7 @@ pub(crate) fn write_inserted_items(
     spread: &Spread,
     seen: &std::collections::HashSet<String>,
 ) -> Result<(), quick_xml::Error> {
-    // Ids that belong INSIDE something else: group members (emitted by
-    // the group's own recursion) and B-18 nested children.
-    let mut owned: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for g in &spread.groups {
-        collect_group_member_ids(spread, g, &mut owned);
-    }
-    for children in spread.nested_children.values() {
-        for &r in children {
-            if let Some(id) = nested_ref_self_id(spread, r) {
-                owned.insert(id);
-            }
-        }
-    }
+    let owned = owned_ids(spread);
     for r in insert_emission_order(spread) {
         let Some(id) = nested_ref_self_id(spread, r) else {
             continue;
@@ -1735,6 +1908,16 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     let mut present_in_group: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
 
+    // ---- C-22 inserted-item placement ----
+    // Which inserted items go immediately before which SOURCE element,
+    // and which are the genuine tail. Entries are drained as their
+    // anchor is reached; the flushed ids join `seen_ids` so the
+    // close-of-spread pass never writes a second copy.
+    let mut insert_before = {
+        let owned = owned_ids(spread);
+        plan_insert_positions(spread, &source_top_level_ids(original)?, &owned)
+    };
+
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -1847,6 +2030,23 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     buf.clear();
                     continue;
                 }
+                // C-22: this element may be the ANCHOR for one or more
+                // inserted items — the ones whose model z-slot sits just
+                // below it. Flush them BEFORE the triage below, so they
+                // still land in the right place when the anchor itself
+                // turns out to be dropped (a source item moving into a
+                // new group is exactly that case: the appearance bake's
+                // carrier).
+                flush_inserts_before(
+                    &mut writer,
+                    spread,
+                    &e,
+                    &name_owned,
+                    group_depth,
+                    open_items.is_empty(),
+                    &mut insert_before,
+                    &mut seen_ids,
+                )?;
                 // Page-item triage: the legacy structural REMOVE (a
                 // top-level item whose `Self` left the model) plus the
                 // B-18 paste-into lanes — comparing where the element
@@ -1960,6 +2160,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     &spread.ovals,
                     &spread.polygons,
                     &spread.graphic_lines,
+                    &spread.groups,
                     group_accum,
                 )?;
                 match patched {
@@ -2049,6 +2250,21 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 if remove_depth != 0 {
                     buf.clear();
                     continue;
+                }
+                // C-22: a self-closing page item anchors inserts exactly
+                // like an open one does.
+                {
+                    let name_owned = e.name().as_ref().to_vec();
+                    flush_inserts_before(
+                        &mut writer,
+                        spread,
+                        &e,
+                        &name_owned,
+                        group_depth,
+                        open_items.is_empty(),
+                        &mut insert_before,
+                        &mut seen_ids,
+                    )?;
                 }
                 // A self-closing page item: the same triage as the
                 // Start arm (legacy REMOVE + the B-18 paste-into
@@ -2141,6 +2357,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     &spread.ovals,
                     &spread.polygons,
                     &spread.graphic_lines,
+                    &spread.groups,
                     group_accum,
                 )?;
                 // A labelled item serialised as an EMPTY tag must grow
@@ -2455,6 +2672,7 @@ fn patch_spread_item(
     ovals: &[idml_import::Oval],
     polygons: &[idml_import::Polygon],
     graphic_lines: &[idml_import::GraphicLine],
+    groups: &[idml_import::Group],
     group_accum: Option<Option<[f32; 6]>>,
 ) -> Result<Option<BytesStart<'static>>, quick_xml::Error> {
     let name = e.name();
@@ -2477,6 +2695,12 @@ fn patch_spread_item(
             let next = frame.next_text_frame.clone();
             let nonprinting = frame.nonprinting;
             let bounds = frame.bounds;
+            // C-18: the B-23 residual is closed — a `TextFrame` carries
+            // the corner fields and RENDERS them (its body is the same
+            // outline a rectangle paints), so they patch back
+            // byte-preservingly like a rectangle's.
+            let corners =
+                corner_attrs_of(frame.corner_radius, &frame.corner_option, &frame.corners);
             let start = patch_start(
                 e,
                 |k, raw| {
@@ -2494,10 +2718,7 @@ fn patch_spread_item(
                         bounds,
                         None,
                         None,
-                        // TextFrame carries the corner attrs on disk but
-                        // has no model fields (B-23 residual) — `None`
-                        // passes every corner attribute through verbatim.
-                        None,
+                        Some(&corners),
                     )
                 },
                 &frame_attr_extras(
@@ -2511,7 +2732,7 @@ fn patch_spread_item(
                     nonprinting,
                     None,
                     None,
-                    None,
+                    Some(&corners),
                 ),
             )?;
             Ok(Some(start.into_owned()))
@@ -2562,9 +2783,16 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     start_arrow: None,
                     end_arrow: None,
-                    // B-23 residual: Oval carries the corner attrs on
-                    // disk but has no model fields — pass verbatim.
-                    corners: None,
+                    // C-18: the B-23 residual is closed — `Oval` now
+                    // carries the corner fields, so they patch back
+                    // byte-preservingly like a rectangle's. (The values
+                    // never shape an ellipse's geometry; see
+                    // `paged_model::Oval::corner_radius`.)
+                    corners: Some(corner_attrs_of(
+                        r.corner_radius,
+                        &r.corner_option,
+                        &r.corners,
+                    )),
                 }),
             )
         }
@@ -2614,11 +2842,39 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     start_arrow: Some(r.start_arrow),
                     end_arrow: Some(r.end_arrow),
-                    // B-23 residual: GraphicLine carries the corner
-                    // attrs on disk but has no model fields.
-                    corners: None,
+                    // C-18: the B-23 residual is closed — `GraphicLine`
+                    // now carries the corner fields (the corpus's 21
+                    // lines all have real radii), so they patch back
+                    // byte-preservingly. See
+                    // `paged_model::GraphicLine::corner_radius`.
+                    corners: Some(corner_attrs_of(
+                        r.corner_radius,
+                        &r.corner_option,
+                        &r.corners,
+                    )),
                 }),
             )
+        }
+        // C-18 — a `<Group>` gets a corner-ONLY patch lane. It is not a
+        // `VectorItem`: it has no bounds, fill, stroke or arrowheads, and
+        // its own `ItemTransform` is deliberately NOT patched from the
+        // model (a `SetGroupTransform` save-back is a separate lane —
+        // see the known-losses list). So the lookup answers only for the
+        // ten corner keys; everything else passes through verbatim.
+        b"Group" => {
+            let Some(g) = groups
+                .iter()
+                .find(|g| g.self_id.as_deref() == Some(self_id.as_str()))
+            else {
+                return Ok(None);
+            };
+            let corners = corner_attrs_of(g.corner_radius, &g.corner_option, &g.corners);
+            let start = patch_start(
+                e,
+                |k, raw| corner_attr_patch(k, raw, &corners),
+                &corner_attr_extras(&corners),
+            )?;
+            Ok(Some(start.into_owned()))
         }
         _ => Ok(None),
     }
@@ -3574,6 +3830,20 @@ fn attr_value(e: &BytesStart, key: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The `f32` you get from parsing a corpus spelling.
+    ///
+    /// The corner radii InDesign writes carry f64-grade precision
+    /// (`99.21259842519686`), which an `f32` cannot hold — so comparing
+    /// against the literal trips clippy's `excessive_precision`, and
+    /// hand-truncating it to `99.212_6` would hide WHICH corpus value is
+    /// under test. Parsing the real spelling keeps the evidence visible
+    /// and the comparison exact. (That the SOURCE STRING survives
+    /// unrounded is a separate guarantee, pinned by the byte-identity
+    /// test.)
+    fn f(spelling: &str) -> Option<f32> {
+        Some(spelling.parse::<f32>().expect("corpus float"))
+    }
+
     /// A spread carrying one polygon with the corner vocabulary spelled
     /// the way InDesign writes it: long floats and the `BevelCorner`
     /// token (which the model's enum normalises to `Bevel`).
@@ -3695,6 +3965,9 @@ mod tests {
             members,
             transparency: Default::default(),
             item_transform,
+            corner_radius: None,
+            corner_option: None,
+            corners: Default::default(),
         }
     }
 
@@ -4035,5 +4308,268 @@ mod tests {
             })
             .collect();
         assert_eq!(opacities, vec![Some(50.0), Some(60.0)]);
+    }
+
+    // -----------------------------------------------------------------
+    // C-18 — the corner vocabulary on the remaining page-item kinds
+    // -----------------------------------------------------------------
+
+    /// One of every kind that C-18 added, each carrying the corner
+    /// vocabulary spelled the way InDesign writes it: long floats, the
+    /// `BevelCorner` token (which the model's enum normalises to
+    /// `Bevel`, losing the source spelling), and — on the GraphicLine —
+    /// radii with NO option, which is the only shape the real corpus
+    /// ever puts on a line.
+    ///
+    /// The group's member carries an explicit `ItemTransform` so this
+    /// fixture isolates the CORNER lane: a group member without one gets
+    /// it appended by the pre-existing W1.15 transform-recovery lane
+    /// (the parser composes the group transform into the member, so the
+    /// model always has a value), which would otherwise show up as a
+    /// byte diff that has nothing to do with C-18.
+    const C18_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><TextFrame Self="tf1" GeometricBounds="0 0 100 200" CornerOption="BevelCorner" CornerRadius="14.740157480314963" TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="14.740157480314963"/><Oval Self="ov1" GeometricBounds="0 0 80 80" CornerOption="RoundedCorner" CornerRadius="42.51968503937008" TopLeftCornerRadius="42.51968503937008"/><GraphicLine Self="gl1" GeometricBounds="0 0 10 10" CornerRadius="99.21259842519686" TopLeftCornerRadius="99.21259842519686"/><Group Self="g9" ItemTransform="1 0 0 1 0 0" CornerOption="RoundedCorner" CornerRadius="70.86614173228347" TopLeftCornerOption="RoundedCorner"><Rectangle Self="rg" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 5 5"/></Group></Spread>
+</idPkg:Spread>"#;
+
+    fn c18_parsed() -> idml_import::Spread {
+        idml_import::parse_spread(C18_SPREAD).expect("parse")
+    }
+
+    /// C-18 — the parse half. Every kind reads its own corner
+    /// vocabulary; before this only Rectangle and Polygon did.
+    #[test]
+    fn c18_every_kind_parses_its_corner_attributes() {
+        let s = c18_parsed();
+        assert_eq!(s.text_frames[0].corner_radius, f("14.740157480314963"));
+        assert_eq!(
+            s.text_frames[0].corners[0].option,
+            Some(idml_import::CornerOption::Bevel)
+        );
+        assert_eq!(s.ovals[0].corner_radius, f("42.51968503937008"));
+        assert_eq!(s.ovals[0].corners[0].radius, f("42.51968503937008"));
+        // A line carries radii and no option — the corpus shape.
+        assert_eq!(s.graphic_lines[0].corner_radius, f("99.21259842519686"));
+        assert_eq!(s.graphic_lines[0].corner_option, None);
+        assert_eq!(s.groups[0].corner_radius, f("70.86614173228347"));
+        assert_eq!(
+            s.groups[0].corners[0].option,
+            Some(idml_import::CornerOption::Rounded)
+        );
+    }
+
+    /// C-18 — the byte-identity invariant, the same one B-23 pinned for
+    /// polygons, now for the four kinds it left behind.
+    ///
+    /// This is the load-bearing test for the whole write half: every
+    /// corner value on every kind now flows through the patch path, and
+    /// `format_f32` rounds to 4 decimals while the option enum loses the
+    /// source spelling. Without `preserving_f32_patch` /
+    /// `preserving_option_patch`, `14.740157480314963` would come back
+    /// `14.7402` and `BevelCorner` would become `BeveledCorner`.
+    #[test]
+    fn c18_unmutated_corner_attrs_round_trip_byte_identically_on_every_kind() {
+        let out = rewrite_spread(C18_SPREAD, &c18_parsed()).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(C18_SPREAD),
+            "unmutated corner attributes must reproduce their on-disk bytes \
+             on TextFrame / Oval / GraphicLine / Group too"
+        );
+    }
+
+    /// C-18 — and a MUTATED corner patches in place on each kind, with
+    /// its neighbours' exact source spelling untouched.
+    #[test]
+    fn c18_mutated_corner_attrs_patch_in_place_on_every_kind() {
+        let mut s = c18_parsed();
+        s.text_frames[0].corners[0].radius = Some(12.5);
+        s.ovals[0].corner_option = Some("InverseRoundedCorner".to_string());
+        s.graphic_lines[0].corners[0].radius = Some(3.0);
+        s.groups[0].corner_radius = Some(8.25);
+        let out = rewrite_spread(C18_SPREAD, &s).expect("rewrite");
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains(r#"TopLeftCornerRadius="12.5""#), "{out}");
+        assert!(
+            out.contains(r#"CornerOption="InverseRoundedCorner""#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"TopLeftCornerRadius="3""#),
+            "line radius: {out}"
+        );
+        assert!(out.contains(r#"CornerRadius="8.25""#), "group: {out}");
+        // The text frame's UNTOUCHED global radius keeps its full
+        // precision, proving the patch is per-attribute rather than a
+        // whole-element re-serialisation.
+        assert!(
+            out.contains(r#"CornerRadius="14.740157480314963""#),
+            "{out}"
+        );
+    }
+
+    /// C-18 — a `<Group>`'s corner-only patch lane must not start
+    /// patching anything else. In particular its own `ItemTransform` is
+    /// a documented known loss (a `SetGroupTransform` save-back is a
+    /// separate lane), so a model transform that differs from the source
+    /// must NOT be written.
+    #[test]
+    fn c18_group_patch_lane_touches_corners_only() {
+        let mut s = c18_parsed();
+        s.groups[0].item_transform = Some([2.0, 0.0, 0.0, 2.0, 99.0, 99.0]);
+        s.groups[0].corner_radius = Some(1.5);
+        let out = rewrite_spread(C18_SPREAD, &s).expect("rewrite");
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains(r#"CornerRadius="1.5""#), "corner: {out}");
+        assert!(
+            out.contains(r#"<Group Self="g9" ItemTransform="1 0 0 1 0 0""#),
+            "the group's own transform must pass through verbatim: {out}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // C-22 — an inserted item lands at its real z position
+    // -----------------------------------------------------------------
+
+    /// C-22 — the headline case, and the exact shape paged.draw's
+    /// appearance bake produces: a new `<Group>` takes the z-slot of a
+    /// SOURCE rectangle that moves inside it. Before this fix the group
+    /// emitted at `</Spread>`, so it reopened ABOVE the polygon the
+    /// source already carried; its file z-slot contradicted its canvas
+    /// one.
+    #[test]
+    fn c22_inserted_group_lands_in_the_carriers_z_slot_not_at_the_close() {
+        let mut spread = grouped();
+        // A new group wrapping the SOURCE rectangle r1 (which currently
+        // sits first in the file, below p1).
+        spread.groups.push(new_group(
+            "gbake",
+            vec![idml_import::FrameRef::Rectangle(0)],
+            None,
+        ));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        // Model z-order: the bake group takes r1's slot — bottom-most.
+        spread
+            .frames_in_order
+            .retain(|r| *r != idml_import::FrameRef::Rectangle(0));
+        spread.frames_in_order.insert(0, gref);
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        let at = |id: &str| s.find(&format!(r#"Self="{id}""#)).expect("emitted");
+        assert!(
+            at("gbake") < at("p1"),
+            "the inserted group must emit BELOW the source polygon it \
+             sits under on canvas, not at the spread's close: {s}"
+        );
+        // …and the carrier really did move inside it.
+        assert!(at("gbake") < at("r1"), "r1 must be inside gbake: {s}");
+    }
+
+    /// C-22 — the byte-identity invariant for the placement lane: a
+    /// document with NOTHING inserted must be untouched. The plan is
+    /// empty because the source's document order equals
+    /// `frames_in_order` element for element, so no anchor ever fires.
+    #[test]
+    fn c22_unmutated_spread_is_untouched_by_the_placement_lane() {
+        let out = rewrite_spread(GROUP_SPREAD, &grouped()).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(GROUP_SPREAD),
+            "the C-22 placement pass must not move a byte of an \
+             unmutated spread"
+        );
+    }
+
+    /// C-22 — an insert whose z-slot sits BETWEEN two source items lands
+    /// between them, not after both.
+    #[test]
+    fn c22_insert_between_two_source_items_lands_between_them() {
+        let mut spread = grouped();
+        spread
+            .polygons
+            .push(inserted_polygon(&spread, "umid", None));
+        let pref = idml_import::FrameRef::Polygon(spread.polygons.len() - 1);
+        // Source order is r1, p1, g1. Put the new polygon between r1 and
+        // p1 in the z-table.
+        let at = spread
+            .frames_in_order
+            .iter()
+            .position(|r| *r == idml_import::FrameRef::Polygon(0))
+            .expect("p1 in z-table");
+        spread.frames_in_order.insert(at, pref);
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        let at = |id: &str| s.find(&format!(r#"Self="{id}""#)).expect("emitted");
+        assert!(at("r1") < at("umid"), "umid must follow r1: {s}");
+        assert!(at("umid") < at("p1"), "umid must precede p1: {s}");
+    }
+
+    /// C-22 — an insert with NO source item above it still goes at the
+    /// close. That is not a fallback, it is the correct answer: it
+    /// belongs on top of everything.
+    #[test]
+    fn c22_topmost_insert_still_emits_at_the_close() {
+        let mut spread = grouped();
+        spread
+            .polygons
+            .push(inserted_polygon(&spread, "utop", None));
+        spread
+            .frames_in_order
+            .push(idml_import::FrameRef::Polygon(spread.polygons.len() - 1));
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        let at = |id: &str| s.find(&format!(r#"Self="{id}""#)).expect("emitted");
+        assert!(
+            at("g1") < at("utop"),
+            "utop must follow every source item: {s}"
+        );
+    }
+
+    /// C-22 × C-19 — the order AMONG several inserts sharing one anchor
+    /// stays the z-table order C-19 established.
+    #[test]
+    fn c22_multiple_inserts_sharing_an_anchor_keep_z_order() {
+        let mut spread = grouped();
+        for id in ["ua", "ub", "uc"] {
+            let p = inserted_polygon(&spread, id, None);
+            spread.polygons.push(p);
+        }
+        let n = spread.polygons.len();
+        // All three sit below p1, in creation order ua, ub, uc.
+        let at = spread
+            .frames_in_order
+            .iter()
+            .position(|r| *r == idml_import::FrameRef::Polygon(0))
+            .expect("p1 in z-table");
+        for (k, idx) in (n - 3..n).enumerate() {
+            spread
+                .frames_in_order
+                .insert(at + k, idml_import::FrameRef::Polygon(idx));
+        }
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        let at = |id: &str| s.find(&format!(r#"Self="{id}""#)).expect("emitted");
+        assert!(at("r1") < at("ua"), "{s}");
+        assert!(at("ua") < at("ub"), "{s}");
+        assert!(at("ub") < at("uc"), "{s}");
+        assert!(at("uc") < at("p1"), "{s}");
+    }
+
+    /// C-22 — the placement pass must not confuse a NESTED source item
+    /// (inside a group) for a top-level anchor. `r2` lives inside `g1`;
+    /// an insert can never anchor to it, or it would be written inside
+    /// the group.
+    #[test]
+    fn c22_nested_source_item_is_not_a_top_level_anchor() {
+        let ids = source_top_level_ids(GROUP_SPREAD).expect("prescan");
+        assert_eq!(
+            ids,
+            vec!["r1".to_string(), "p1".to_string(), "g1".to_string()],
+            "the pre-scan must see only the spread's top-level items"
+        );
     }
 }

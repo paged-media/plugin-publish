@@ -455,6 +455,10 @@ fn blank_text_frame(self_id: String, parent_story: String, bounds: Bounds) -> Te
         nonprinting: false,
         visible: true,
         locked: false,
+        // C-18: a PDF page has no IDML corner vocabulary to carry over.
+        corner_radius: None,
+        corner_option: None,
+        corners: Default::default(),
     }
 }
 

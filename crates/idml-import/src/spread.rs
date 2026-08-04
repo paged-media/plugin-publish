@@ -87,6 +87,10 @@ struct GroupBuilder {
     item_transform: Option<[f32; 6]>,
     members: Vec<FrameRef>,
     transparency: GroupTransparency,
+    /// C-18 — the corner vocabulary read off the `<Group>` start tag.
+    /// Parked here because the `Group` record is only built at the close
+    /// tag (its `members` aren't known until then).
+    corner: CornerAttrs,
     /// Depth counter for nested `<StrokeTransparencySetting>` /
     /// `<ContentTransparencySetting>` containers seen *while no inner
     /// page-item is open*. Routes child `<DropShadowSetting>` blocks
@@ -870,6 +874,12 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         item_transform: t,
                         members: Vec::new(),
                         transparency: GroupTransparency::default(),
+                        // C-18: a group paints no outline of its own, but
+                        // 37 corpus `<Group>`s carry real corner values
+                        // (11 of them `RoundedCorner`), so they are read
+                        // to survive a save-back. See
+                        // `paged_model::Group::corner_radius`.
+                        corner: read_corner_attrs(&e),
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
                     });
@@ -955,6 +965,10 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    // C-18: a text frame's body is the same outline a
+                    // `<Rectangle>` paints, so its corner vocabulary is
+                    // read (and rendered) identically.
+                    let corner = read_corner_attrs(&e);
                     let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
@@ -1006,6 +1020,9 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         nonprinting: common.nonprinting,
                         visible: common.visible,
                         locked: common.locked,
+                        corner_radius: corner.corner_radius,
+                        corner_option: corner.corner_option,
+                        corners: corner.corners,
                     });
                     let idx = out.text_frames.len() - 1;
                     register_frame(
@@ -1173,6 +1190,12 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    // C-18: an ellipse has no corner to cut, but IDML
+                    // writes the vocabulary on `<Oval>` with real values
+                    // (16 in the corpus, every one non-zero), so it is
+                    // read to survive a save-back. See
+                    // `paged_model::Oval::corner_radius`.
+                    let corner = read_corner_attrs(&e);
                     let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
@@ -1212,6 +1235,9 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         nonprinting: common.nonprinting,
                         visible: common.visible,
                         locked: common.locked,
+                        corner_radius: corner.corner_radius,
+                        corner_option: corner.corner_option,
+                        corners: corner.corners,
                     });
                     let idx = out.ovals.len() - 1;
                     register_frame(
@@ -2141,6 +2167,12 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     );
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
+                    // C-18: 21 corpus `<GraphicLine>`s carry real corner
+                    // RADII (and never a `CornerOption`), so the values
+                    // are read to survive a save-back even though an open
+                    // stroke-only contour has no corner to cut. See
+                    // `paged_model::GraphicLine::corner_radius`.
+                    let corner = read_corner_attrs(&e);
                     let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
@@ -2180,6 +2212,9 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         end_arrow_scale: attr(&e, b"RightArrowHeadScale")
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(100.0),
+                        corner_radius: corner.corner_radius,
+                        corner_option: corner.corner_option,
+                        corners: corner.corners,
                     });
                     let idx = out.graphic_lines.len() - 1;
                     register_frame(
@@ -2337,6 +2372,9 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                             item_transform: builder.item_transform,
                             members: builder.members,
                             transparency: builder.transparency,
+                            corner_radius: builder.corner.corner_radius,
+                            corner_option: builder.corner.corner_option,
+                            corners: builder.corner.corners,
                         };
                         let group_idx = out.groups.len();
                         out.groups.push(group);
@@ -2681,6 +2719,20 @@ fn effective_item_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `f32` you get from parsing a corpus spelling.
+    ///
+    /// The corner radii InDesign writes carry f64-grade precision
+    /// (`99.21259842519686`), which an `f32` cannot hold — so comparing
+    /// against the literal trips clippy's `excessive_precision`, and
+    /// hand-truncating it to `99.212_6` would hide WHICH corpus value is
+    /// under test. Parsing the real spelling keeps the evidence visible
+    /// and the comparison exact. (That the SOURCE STRING survives
+    /// unrounded is a separate guarantee, pinned by the byte-identity
+    /// test.)
+    fn f(spelling: &str) -> Option<f32> {
+        Some(spelling.parse::<f32>().expect("corpus float"))
+    }
 
     const TWO_PAGE_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
@@ -3276,6 +3328,90 @@ mod tests {
         assert_eq!(q.corners[0].option, Some(CornerOption::Bevel));
         assert_eq!(q.corners[0].radius, Some(16.0625));
         assert!(q.corners[0].option.unwrap().rounds());
+    }
+
+    /// C-18 — the four kinds B-23 left behind. IDML writes the SAME
+    /// corner vocabulary on `<TextFrame>` / `<Oval>` / `<GraphicLine>` /
+    /// `<Group>`, and the 61-file real-export corpus carries non-default
+    /// values on all of them (`CornerRadius` on 37 groups, 21 lines, 17
+    /// text frames, 16 ovals), so the parser lifts it on every kind.
+    ///
+    /// The spellings below are the measured corpus shapes, not invented
+    /// symmetry:
+    ///   * TextFrame — `indesign-magazine`'s genuinely per-corner case
+    ///     (one non-zero slot, all four options `BevelCorner`).
+    ///   * Oval — `RoundedCorner` with a real radius.
+    ///   * GraphicLine — radii and NO option, which is the only shape
+    ///     the corpus ever puts on a line (0 `*CornerOption` on any of
+    ///     the 1 467 lines).
+    ///   * Group — `RoundedCorner` with a real radius.
+    #[test]
+    fn c18_parses_corner_attributes_on_the_remaining_kinds() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="tf" GeometricBounds="0 0 100 200"
+                       CornerOption="BevelCorner" CornerRadius="0"
+                       TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="14.740157480314963"
+                       TopRightCornerOption="BevelCorner" TopRightCornerRadius="0"
+                       BottomRightCornerOption="BevelCorner" BottomRightCornerRadius="0"
+                       BottomLeftCornerOption="BevelCorner" BottomLeftCornerRadius="0"/>
+            <Oval Self="ov" GeometricBounds="0 0 80 80"
+                  CornerOption="RoundedCorner" CornerRadius="42.51968503937008"
+                  TopLeftCornerOption="RoundedCorner" TopLeftCornerRadius="42.51968503937008"/>
+            <GraphicLine Self="gl" GeometricBounds="0 0 10 10"
+                         CornerRadius="99.21259842519686"
+                         TopLeftCornerRadius="99.21259842519686"
+                         TopRightCornerRadius="99.21259842519686"/>
+            <Group Self="g" ItemTransform="1 0 0 1 0 0"
+                   CornerOption="RoundedCorner" CornerRadius="70.86614173228347"
+                   TopLeftCornerOption="RoundedCorner" TopLeftCornerRadius="70.86614173228347">
+              <Rectangle Self="rg" GeometricBounds="0 0 5 5"/>
+            </Group>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+
+        // TextFrame — the one kind of the four whose corners RENDER, and
+        // the only corpus case with real per-corner asymmetry.
+        let tf = &s.text_frames[0];
+        assert_eq!(tf.corner_option.as_deref(), Some("BevelCorner"));
+        assert_eq!(tf.corner_radius, Some(0.0));
+        assert_eq!(tf.corners[0].option, Some(CornerOption::Bevel));
+        assert_eq!(tf.corners[0].radius, f("14.740157480314963"));
+        assert_eq!(tf.corners[1].radius, Some(0.0));
+
+        // Oval — stored and round-tripped; never rendered.
+        let ov = &s.ovals[0];
+        assert_eq!(ov.corner_option.as_deref(), Some("RoundedCorner"));
+        assert_eq!(ov.corner_radius, f("42.51968503937008"));
+        assert_eq!(ov.corners[0].option, Some(CornerOption::Rounded));
+        assert_eq!(ov.corners[0].radius, f("42.51968503937008"));
+
+        // GraphicLine — radii present, option absent. The parse must NOT
+        // invent an option: the effective one is the inherited default,
+        // which every corpus object style spells `None`.
+        let gl = &s.graphic_lines[0];
+        assert_eq!(gl.corner_option, None);
+        assert_eq!(gl.corner_radius, f("99.21259842519686"));
+        assert_eq!(gl.corners[0].option, None);
+        assert_eq!(gl.corners[0].radius, f("99.21259842519686"));
+        assert_eq!(gl.corners[1].radius, f("99.21259842519686"));
+        // …and the two unset slots stay unset rather than defaulting.
+        assert_eq!(gl.corners[2].radius, None);
+        assert_eq!(gl.corners[3].radius, None);
+
+        // Group — read off the START tag but stored on the record the
+        // parser only builds at the CLOSE tag (members aren't known
+        // until then), so this also pins the `GroupBuilder` hand-off.
+        let g = &s.groups[0];
+        assert_eq!(g.corner_option.as_deref(), Some("RoundedCorner"));
+        assert_eq!(g.corner_radius, f("70.86614173228347"));
+        assert_eq!(g.corners[0].option, Some(CornerOption::Rounded));
+        assert_eq!(g.corners[0].radius, f("70.86614173228347"));
+        // The group still parsed its member — the corner read must not
+        // have disturbed the builder.
+        assert_eq!(g.members.len(), 1);
     }
 
     #[test]
