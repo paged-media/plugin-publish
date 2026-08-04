@@ -43,6 +43,11 @@
 //! Spread page items (`TextFrame` / `Rectangle` / `Oval` / `Polygon` /
 //! `GraphicLine`), patched on the element start tag:
 //!   - `ItemTransform`     (FrameTransform / rotate / scale / flip / move)
+//!     — but only when it actually MOVED. IDML spells a transform at full
+//!     decimal precision and the model stores `f32`, so re-deriving an
+//!     untouched one truncated it (`-1021.8897637779996` →
+//!     `-1021.8898`). An untouched transform now passes through verbatim;
+//!     see [`TransformPlan`].
 //!   - `FillColor`         (FrameFillColor)
 //!   - `FillTint`          (FrameFillTint)
 //!   - `StrokeColor`       (FrameStrokeColor)
@@ -129,7 +134,12 @@
 //! * **Group-member transforms.** The composed group∘member
 //!   `item_transform` is de-composed back to the on-disk member
 //!   transform by inverting the group-transform accumulation (see
-//!   [`recover_member_transform`]).
+//!   [`recover_member_transform`]). That inversion is only reached for a
+//!   member that actually moved: an untouched one is recognised by
+//!   replaying the composition FORWARD against the source bytes and keeps
+//!   them (see [`TransformPlan`]) — which matters most exactly where the
+//!   inversion is least trustworthy, since `f32` composition at
+//!   pasteboard magnitudes loses more than the writer's printed precision.
 //!
 //! # Known losses (documented, not silent)
 //!
@@ -2812,24 +2822,104 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     crate::reorder::apply(spread, writer.into_inner().into_inner())
 }
 
-/// Decide whether to patch a page item's `ItemTransform`, and with what
-/// value. `group_accum` is `None` for a top-level item (the model
-/// transform IS the on-disk transform → patch it). For a group member it
-/// is `Some(accumulated_group_transform)`; the on-disk transform is
-/// recovered by inverting the group accumulation (W1.15 lane 4). When the
-/// group transform is singular the recovery fails and the patch is
-/// suppressed (the attribute passes through verbatim — a documented loss
-/// for that degenerate case).
-fn resolve_item_transform(
-    group_accum: Option<Option<[f32; 6]>>,
-    model_transform: Option<[f32; 6]>,
-) -> (bool, Option<[f32; 6]>) {
-    match group_accum {
-        None => (true, model_transform),
-        Some(accum) => match recover_member_transform(accum, model_transform) {
-            Some(on_disk) => (true, on_disk),
-            None => (false, model_transform),
-        },
+/// The `ItemTransform` decision for one page item.
+///
+/// Kept as the two INPUTS rather than a pre-derived string, because the
+/// question that decides byte-identity is not "what does the model say"
+/// but "did the model value come from these very bytes?".
+///
+/// IDML spells a transform at full decimal precision
+/// (`ItemTransform="1 0 0 1 0 -1021.8897637779996"`); the model stores
+/// `f32`, and `format_f32` rounds to 4 decimals. So re-emitting an
+/// UNTOUCHED transform truncates it — the single largest source of
+/// save-back byte gaps in the corpus. [`TransformPlan::is_source`] re-runs
+/// the parser's own forward derivation (`compose(accum, on_disk)`, i.e.
+/// `idml_import`'s `effective_item_transform`) against the source
+/// spelling; when it reproduces the model matrix bit-for-bit the
+/// transform is untouched and the source bytes pass through verbatim.
+/// The same insight that made the z-order save-back non-lossy: splice the
+/// bytes you were given rather than re-deriving them.
+///
+/// A transform that WAS edited fails that check and is written from the
+/// model at `format_f32` precision exactly as before — the derived value
+/// is the truth there, and verbatim would be wrong.
+#[derive(Clone, Copy)]
+struct TransformPlan {
+    /// The accumulated group transform this item sits under. `None` at
+    /// top level — and also for a group stack that is all-identity, which
+    /// behaves identically here and in the parser.
+    accum: Option<[f32; 6]>,
+    /// The model's matrix: raw for a top-level item, COMPOSED into spread
+    /// space for a group member (see `effective_item_transform`).
+    model: Option<[f32; 6]>,
+    /// `false` ⇒ the group transform is singular, the on-disk value can't
+    /// be recovered, and the attribute passes through untouched.
+    patch: bool,
+}
+
+impl TransformPlan {
+    /// Decide the plan. `group_accum` is `None` for a top-level item (the
+    /// model transform IS the on-disk transform → patch it). For a group
+    /// member it is `Some(accumulated_group_transform)`; the on-disk
+    /// transform is recovered by inverting the group accumulation (W1.15
+    /// lane 4). When the group transform is singular the recovery fails
+    /// and the patch is suppressed (the attribute passes through verbatim
+    /// — a documented loss for that degenerate case).
+    fn resolve(group_accum: Option<Option<[f32; 6]>>, model: Option<[f32; 6]>) -> Self {
+        let accum = group_accum.flatten();
+        // Only a genuine group accumulation can be singular; `None`
+        // recovers trivially.
+        let patch = recover_member_transform(accum, model).is_some();
+        Self {
+            accum,
+            model,
+            patch,
+        }
+    }
+
+    /// The on-disk matrix to WRITE, or `None` to drop the attribute.
+    /// Only meaningful when `patch`.
+    fn on_disk(&self) -> Option<[f32; 6]> {
+        recover_member_transform(self.accum, self.model).unwrap_or(self.model)
+    }
+
+    /// Does the SOURCE spelling `raw` derive the model matrix exactly?
+    /// `None` ⇒ the element carried no `ItemTransform` at all (identity).
+    /// An unparseable spelling is never claimed as the source.
+    fn is_source(&self, raw: Option<&[u8]>) -> bool {
+        let on_disk = match raw {
+            None => None,
+            Some(r) => match std::str::from_utf8(r).ok().and_then(parse_matrix) {
+                Some(m) => Some(m),
+                None => return false,
+            },
+        };
+        compose_opt(self.accum, on_disk) == self.model
+    }
+
+    /// The patch for an `ItemTransform` attribute the source carries.
+    fn patch_for(&self, raw: &[u8]) -> Option<Patch> {
+        if !self.patch {
+            return None;
+        }
+        if self.is_source(Some(raw)) {
+            return Some(Patch::Keep);
+        }
+        Some(match self.on_disk() {
+            Some(m) => Patch::Set(format_matrix(&m)),
+            None => Patch::Remove,
+        })
+    }
+
+    /// The value to APPEND when the source element carried no
+    /// `ItemTransform`. `None` when there is nothing to add — including
+    /// the case where the model matrix is exactly what an ABSENT
+    /// attribute already derives, which must stay absent.
+    fn extra(&self) -> Option<String> {
+        if !self.patch || self.is_source(None) {
+            return None;
+        }
+        self.on_disk().map(|m| format_matrix(&m))
     }
 }
 
@@ -2859,8 +2949,7 @@ fn patch_spread_item(
             let Some(frame) = frames.get(self_id.as_str()) else {
                 return Ok(None);
             };
-            let (patch_tx, item_transform) =
-                resolve_item_transform(group_accum, frame.item_transform);
+            let tx = TransformPlan::resolve(group_accum, frame.item_transform);
             let fill = frame.fill_color.clone();
             let fill_tint = frame.fill_tint;
             let stroke = frame.stroke_color.clone();
@@ -2881,8 +2970,7 @@ fn patch_spread_item(
                     frame_attr_patch(
                         k,
                         raw,
-                        patch_tx,
-                        item_transform,
+                        tx,
                         &fill,
                         fill_tint,
                         &stroke,
@@ -2897,8 +2985,7 @@ fn patch_spread_item(
                     )
                 },
                 &frame_attr_extras(
-                    patch_tx,
-                    item_transform,
+                    tx,
                     &fill,
                     fill_tint,
                     &stroke,
@@ -2917,13 +3004,11 @@ fn patch_spread_item(
             let item = rectangles
                 .iter()
                 .find(|r| r.self_id.as_deref() == Some(self_id.as_str()));
-            let (patch_tx, tx) =
-                resolve_item_transform(group_accum, item.and_then(|r| r.item_transform));
+            let tx = TransformPlan::resolve(group_accum, item.and_then(|r| r.item_transform));
             patch_vector_item(
                 e,
-                patch_tx,
+                tx,
                 item.map(|r| VectorItem {
-                    item_transform: tx,
                     fill_color: r.fill_color.clone(),
                     fill_tint: r.fill_tint,
                     stroke_color: r.stroke_color.clone(),
@@ -2945,13 +3030,11 @@ fn patch_spread_item(
             let item = ovals
                 .iter()
                 .find(|r| r.self_id.as_deref() == Some(self_id.as_str()));
-            let (patch_tx, tx) =
-                resolve_item_transform(group_accum, item.and_then(|r| r.item_transform));
+            let tx = TransformPlan::resolve(group_accum, item.and_then(|r| r.item_transform));
             patch_vector_item(
                 e,
-                patch_tx,
+                tx,
                 item.map(|r| VectorItem {
-                    item_transform: tx,
                     fill_color: r.fill_color.clone(),
                     fill_tint: r.fill_tint,
                     stroke_color: r.stroke_color.clone(),
@@ -2978,13 +3061,11 @@ fn patch_spread_item(
             let item = polygons
                 .iter()
                 .find(|r| r.self_id.as_deref() == Some(self_id.as_str()));
-            let (patch_tx, tx) =
-                resolve_item_transform(group_accum, item.and_then(|r| r.item_transform));
+            let tx = TransformPlan::resolve(group_accum, item.and_then(|r| r.item_transform));
             patch_vector_item(
                 e,
-                patch_tx,
+                tx,
                 item.map(|r| VectorItem {
-                    item_transform: tx,
                     fill_color: r.fill_color.clone(),
                     fill_tint: r.fill_tint,
                     stroke_color: r.stroke_color.clone(),
@@ -3006,13 +3087,11 @@ fn patch_spread_item(
             let item = graphic_lines
                 .iter()
                 .find(|r| r.self_id.as_deref() == Some(self_id.as_str()));
-            let (patch_tx, tx) =
-                resolve_item_transform(group_accum, item.and_then(|r| r.item_transform));
+            let tx = TransformPlan::resolve(group_accum, item.and_then(|r| r.item_transform));
             patch_vector_item(
                 e,
-                patch_tx,
+                tx,
                 item.map(|r| VectorItem {
-                    item_transform: tx,
                     fill_color: None,
                     fill_tint: None,
                     stroke_color: r.stroke_color.clone(),
@@ -3064,7 +3143,6 @@ fn patch_spread_item(
 /// shape so a single patch routine covers Rectangle / Oval / Polygon /
 /// GraphicLine.
 struct VectorItem {
-    item_transform: Option<[f32; 6]>,
     fill_color: Option<String>,
     fill_tint: Option<f32>,
     stroke_color: Option<String>,
@@ -3216,7 +3294,7 @@ fn preserving_option_patch(raw: Option<&str>, v: Option<idml_import::CornerOptio
 
 fn patch_vector_item(
     e: &BytesStart,
-    patch_tx: bool,
+    tx: TransformPlan,
     item: Option<VectorItem>,
 ) -> Result<Option<BytesStart<'static>>, quick_xml::Error> {
     let Some(item) = item else {
@@ -3228,8 +3306,7 @@ fn patch_vector_item(
             frame_attr_patch(
                 k,
                 raw,
-                patch_tx,
-                item.item_transform,
+                tx,
                 &item.fill_color,
                 item.fill_tint,
                 &item.stroke_color,
@@ -3244,8 +3321,7 @@ fn patch_vector_item(
             )
         },
         &frame_attr_extras(
-            patch_tx,
-            item.item_transform,
+            tx,
             &item.fill_color,
             item.fill_tint,
             &item.stroke_color,
@@ -3264,15 +3340,15 @@ fn patch_vector_item(
 /// Patch decision for one frame attribute key. `next` is `Some` only for
 /// TextFrame (`NextTextFrame` lives there); `None` skips that key for
 /// other kinds. Bounds patch only fires for a `GeometricBounds`
-/// attribute that the source element already carries. `patch_tx` false
-/// passes `ItemTransform` through verbatim (group member — see
-/// [`rewrite_spread`]).
+/// attribute that the source element already carries. `tx` decides
+/// `ItemTransform` — including passing it through verbatim, which is both
+/// the degenerate-group case and (far more commonly) an untouched
+/// high-precision transform; see [`TransformPlan`].
 #[allow(clippy::too_many_arguments)]
 fn frame_attr_patch(
     key: &[u8],
     raw: &[u8],
-    patch_tx: bool,
-    item_transform: Option<[f32; 6]>,
+    tx: TransformPlan,
     fill: &Option<String>,
     fill_tint: Option<f32>,
     stroke: &Option<String>,
@@ -3293,11 +3369,7 @@ fn frame_attr_patch(
     }
     match key {
         b"AppliedObjectStyle" => Some(applied_object_style_patch(raw, applied_object_style)),
-        b"ItemTransform" if !patch_tx => None,
-        b"ItemTransform" => Some(match item_transform {
-            Some(m) => Patch::Set(format_matrix(&m)),
-            None => Patch::Remove,
-        }),
+        b"ItemTransform" => tx.patch_for(raw),
         b"FillColor" => Some(opt_string_patch(fill)),
         b"FillTint" => Some(opt_f32_patch(fill_tint)),
         b"StrokeColor" => Some(opt_string_patch(stroke)),
@@ -3332,8 +3404,7 @@ fn frame_attr_patch(
 /// attribute the source never had.
 #[allow(clippy::too_many_arguments)]
 fn frame_attr_extras(
-    patch_tx: bool,
-    item_transform: Option<[f32; 6]>,
+    tx: TransformPlan,
     fill: &Option<String>,
     fill_tint: Option<f32>,
     stroke: &Option<String>,
@@ -3353,10 +3424,8 @@ fn frame_attr_extras(
     if let Some(s) = applied_object_style {
         out.push(("AppliedObjectStyle", s.to_string()));
     }
-    if patch_tx {
-        if let Some(m) = item_transform {
-            out.push(("ItemTransform", format_matrix(&m)));
-        }
+    if let Some(m) = tx.extra() {
+        out.push(("ItemTransform", m));
     }
     if let Some(c) = fill {
         out.push(("FillColor", c.clone()));
