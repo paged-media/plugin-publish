@@ -536,6 +536,12 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
     // `<Contents>` only appears under image-bearing elements in
     // spread.xml so we don't need to filter by parent tag.
     let mut current_image_contents_target: Option<CurrentFrameKind> = None;
+    // True between `<EPS>` and `</EPS>`. An EPS carries its artwork as a
+    // base64 PostScript stream in the same `<Properties><Contents>` shape
+    // a raster `<Image>` uses for embedded pixels — so without this the
+    // Q-03 capture below would decode PostScript and hand it to the image
+    // decoder as if it were a JPEG.
+    let mut in_eps_element = false;
     let mut current_contents_buf: Vec<u8> = Vec::new();
     let mut buf = Vec::new();
 
@@ -1100,6 +1106,7 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         image_clip: None,
                         has_image_element: false,
                         has_inline_pdf: false,
+                        has_inline_eps: false,
                         image_item_transform: None,
                         applied_object_style: common.applied_object_style,
                         text_wrap: None,
@@ -1228,6 +1235,7 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         image_clip: None,
                         has_image_element: false,
                         has_inline_pdf: false,
+                        has_inline_eps: false,
                         image_item_transform: None,
                         effects: None,
                         overprint_fill: common.overprint_fill,
@@ -1938,7 +1946,7 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         }
                     }
                 }
-                b"Image" | b"EPSImage" | b"PDF" | b"ImportedPage" | b"Link" => {
+                b"Image" | b"EPS" | b"PDF" | b"ImportedPage" | b"Link" => {
                     // IDML's image-bearing frame nests an
                     // <Image> with a LinkResourceURI on the
                     // element itself or on its <Link> child.
@@ -1956,6 +1964,16 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     // instead of falling back to raw fill.
                     let is_image_element = !matches!(e.name().as_ref(), b"Link");
                     let is_pdf_element = matches!(e.name().as_ref(), b"PDF");
+                    // The real IDML tag is `<EPS>` — there is no
+                    // `<EPSImage>`, which is what this arm named until
+                    // 2026-08-04, so every EPS placement fell through
+                    // to the catch-all and the frame read as a plain
+                    // colour swatch. Verified against the one
+                    // EPS-bearing corpus fixture (annual-report-template:
+                    // 1 × `<EPS>`, 0 × `<EPSImage>`).
+                    if matches!(e.name().as_ref(), b"EPS") && event_is_start {
+                        in_eps_element = true;
+                    }
                     // W1.21: entering an image container — its own
                     // `<PathGeometry>` is the picture box, not the
                     // frame outline, so suppress frame-anchor
@@ -2095,10 +2113,18 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     // path when we're nested inside a frame.
                     // `<Contents>` only appears under image-bearing
                     // tags in spread.xml so this branch is safe
-                    // without a parent-tag filter.
+                    // without a parent-tag filter — EXCEPT for `<EPS>`,
+                    // whose payload is PostScript, not pixels. Decoding
+                    // it here would hand a `%!PS-Adobe` stream to the
+                    // raster decoder; flag the frame instead so the
+                    // renderer falls back to its intrinsic fill.
                     if let Some(kind) = current_frame.as_ref().map(|cf| cf.kind) {
-                        current_image_contents_target = Some(kind);
-                        current_contents_buf.clear();
+                        if in_eps_element {
+                            mark_inline_eps(&mut out, kind);
+                        } else {
+                            current_image_contents_target = Some(kind);
+                            current_contents_buf.clear();
+                        }
                     }
                 }
                 b"FrameFittingOption" => {
@@ -2307,6 +2333,7 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         image_clip: None,
                         has_image_element: false,
                         has_inline_pdf: false,
+                        has_inline_eps: false,
                         image_item_transform: None,
                         effects: None,
                         overprint_fill: common.overprint_fill,
@@ -2426,12 +2453,15 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                         cf.in_clipping_path = false;
                     }
                 }
-                b"Image" | b"EPSImage" | b"ImportedPage" | b"PDF" => {
+                b"Image" | b"EPS" | b"ImportedPage" | b"PDF" => {
                     // W1.21: leaving the image container restores
                     // frame-anchor accumulation. Saturating so a
                     // malformed/mismatched stream can't underflow.
                     if let Some(cf) = current_frame.as_mut() {
                         cf.in_image_depth = cf.in_image_depth.saturating_sub(1);
+                    }
+                    if e.name().as_ref() == b"EPS" {
+                        in_eps_element = false;
                     }
                 }
                 b"StrokeTransparencySetting" => {
@@ -2597,6 +2627,30 @@ fn effects_slot_mut(out: &mut Spread, kind: CurrentFrameKind) -> Option<&mut Opt
 /// Q-03: stash decoded image bytes on the frame the just-closed
 /// `<Contents>` element was nested under. Centralised here so the
 /// per-shape match doesn't clutter the parser's main loop.
+/// Flag the host frame as carrying an inline `<EPS>` payload.
+///
+/// The counterpart to [`set_image_bytes`]: where a raster `<Image>`'s
+/// inline `<Contents>` becomes decodable bytes, an EPS's becomes only a
+/// flag, because the payload is PostScript and we have no interpreter.
+/// The renderer reads it to suppress the missing-image placeholder —
+/// the artwork is embedded, so "link missing" would be the wrong story.
+fn mark_inline_eps(out: &mut Spread, kind: CurrentFrameKind) {
+    match kind {
+        CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
+            out.rectangles[i].has_inline_eps = true;
+        }
+        CurrentFrameKind::Oval(i) if i < out.ovals.len() => {
+            out.ovals[i].has_inline_eps = true;
+        }
+        CurrentFrameKind::Polygon(i) if i < out.polygons.len() => {
+            out.polygons[i].has_inline_eps = true;
+        }
+        // Same shape as `set_image_bytes`: TextFrame / GraphicLine host
+        // no image-bearing child, so there is nothing to flag.
+        _ => {}
+    }
+}
+
 fn set_image_bytes(out: &mut Spread, kind: CurrentFrameKind, bytes: Vec<u8>) {
     match kind {
         CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
@@ -3450,6 +3504,55 @@ mod tests {
             "link-only rect carries no inline bytes"
         );
         assert_eq!(r2.image_link.as_deref(), Some("file:///link.jpg"));
+    }
+
+    #[test]
+    fn eps_placement_is_recognised_as_an_image_element() {
+        // The real tag is `<EPS>`, not `<EPSImage>` — verified against
+        // corpus/envato/packs/annual-report-template/template.idml, the
+        // only EPS-bearing fixture we have: 1 × `<EPS>`, 0 × `<EPSImage>`.
+        // Shape copied from it: a `<Link>` child carrying the URI AND an
+        // inline `<Properties><Contents>` PostScript payload.
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="r1" GeometricBounds="0 0 50 50">
+              <EPS Self="e1" ItemTransform="1 0 0 1 0 0">
+                <Properties>
+                  <Contents><![CDATA[JSFQUy1BZG9iZS0zLjEgRVBTRi0zLjAK]]></Contents>
+                </Properties>
+                <Link Self="l1" LinkResourceURI="file:///art.eps"/>
+              </EPS>
+            </Rectangle>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.rectangles.len(), 1);
+        let r = &s.rectangles[0];
+
+        assert!(
+            r.has_image_element,
+            "an <EPS> placement IS an image-bearing element; without this \
+             the renderer treats the frame as a plain colour swatch",
+        );
+        assert_eq!(
+            r.image_link.as_deref(),
+            Some("file:///art.eps"),
+            "the <Link> child's URI must reach the frame",
+        );
+        // We have no PostScript interpreter, so the inline payload is not
+        // decodable pixels. It must NOT masquerade as image bytes — the
+        // raster decoder would be handed a PostScript stream.
+        assert!(
+            r.image_bytes.is_none(),
+            "inline EPS PostScript must not be stashed as image bytes",
+        );
+        assert!(
+            r.has_inline_eps,
+            "flag it so the renderer draws the frame fill rather than \
+             InDesign's missing-image placeholder (same posture as Q-06's \
+             inline <PDF>)",
+        );
     }
 
     #[test]
