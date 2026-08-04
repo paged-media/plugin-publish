@@ -51,7 +51,12 @@
 //!   - `FillColor`         (FrameFillColor)
 //!   - `FillTint`          (FrameFillTint)
 //!   - `StrokeColor`       (FrameStrokeColor)
-//!   - `StrokeWeight`      (FrameStrokeWeight)
+//!   - `StrokeWeight`      (FrameStrokeWeight) — the same rule as the
+//!     corner radii: an untouched weight keeps its source spelling,
+//!     because IDML writes a hairline as `0.7086614173228347` (0.25 mm in
+//!     points) and `format_f32` would re-derive it as `0.7087`. Unlike
+//!     `ItemTransform` there is nothing to de-compose — see
+//!     [`preserving_f32_patch`].
 //!   - `NextTextFrame`     (LinkFrames / UnlinkFrames; TextFrame only)
 //!   - `Nonprinting`       (FrameNonprinting)
 //!   - `AppliedObjectStyle` (AppliedObjectStyle) — the reference into
@@ -3373,7 +3378,19 @@ fn frame_attr_patch(
         b"FillColor" => Some(opt_string_patch(fill)),
         b"FillTint" => Some(opt_f32_patch(fill_tint)),
         b"StrokeColor" => Some(opt_string_patch(stroke)),
-        b"StrokeWeight" => Some(opt_f32_patch(stroke_weight)),
+        // Preserved, not re-derived. The parser stores this attribute as
+        // a plain `"…".parse::<f32>()` — no composition, no unit
+        // conversion, and object styles are resolved by consumers out of
+        // their own registry rather than folded back into the item — so
+        // replaying that derivation against the source spelling is just
+        // parsing it, and `preserving_f32_patch` is the whole check.
+        // Without it the hairlines InDesign writes at full precision
+        // (`0.7086614173228347`) came back as `0.7087` on a save that
+        // changed nothing.
+        b"StrokeWeight" => Some(preserving_f32_patch(
+            std::str::from_utf8(raw).ok(),
+            stroke_weight,
+        )),
         b"Nonprinting" => Some(if nonprinting {
             Patch::Set("true".to_string())
         } else {
