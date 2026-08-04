@@ -222,8 +222,32 @@ use idml_import::{Bounds, CharacterRun, PathAnchor, Spread, Story, TableCell, Te
 /// crate that pulls clap/anyhow) so this runtime crate stays minimal +
 /// wasm-clean. InDesign serialises floats this way, so patched values
 /// match the surrounding hand-written / exported numbers.
+///
+/// # Why the rounding step is `f64`
+///
+/// `paged-gen`'s original rounds in `f32` — `(v * 10_000.0).round()` —
+/// and that multiply is never exact: an `f32` significand is 24 bits and
+/// the product needs up to 34, so the value `.round()` sees has already
+/// slipped. Below `2^24 / 10_000 = 1677.7216` the slip only ever moves
+/// the result across one `.5` boundary, i.e. a wrong LAST decimal
+/// (0.06 % of values around 1 pt, rising to 17 % around 300 pt). At
+/// and above that magnitude the product passes `2^24`, its own spacing
+/// exceeds 1, and `.round()` stops rounding anything at all: the
+/// documented "4 decimals" silently becomes coarser, by up to 3
+/// ten-thousandths at 2–4 kpt and 79 at 65–131 kpt. Real documents run
+/// there — an InDesign pasteboard coordinate is routinely five figures —
+/// and this function emits MUTATED values, so it is not only a
+/// byte-identity concern.
+///
+/// Widening to `f64` first makes the multiply exact (34 bits fits
+/// comfortably in 53), so the digits printed are the correctly-rounded
+/// ones at every magnitude. It buys precision the OUTPUT was throwing
+/// away, not precision the `f32` never had: above 1677.7216 pt the
+/// input's own ULP is already coarser than the 1e-4 being printed, and
+/// below it 4 decimals still discards most of what an `f32` holds. See
+/// `tests/format_f32_precision.rs`.
 pub(crate) fn format_f32(v: f32) -> String {
-    let rounded = (v * 10_000.0).round() / 10_000.0;
+    let rounded = (f64::from(v) * 10_000.0).round() / 10_000.0;
     if rounded == 0.0 {
         return "0".to_string();
     }
