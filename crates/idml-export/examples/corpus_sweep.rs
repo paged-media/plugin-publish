@@ -62,9 +62,20 @@
 //! / `dump_anchored`. The regression GUARDS live in
 //! `tests/nested_group_roundtrip.rs`, `tests/path_contour_roundtrip.rs`,
 //! `tests/story_precision.rs`, `tests/run_alignment_roundtrip.rs`,
-//! `tests/styles_group_duplication.rs` and
-//! `tests/master_spread_roundtrip.rs` (opt-in `PAGED_IDML_CORPUS`
-//! lanes); this is what you run to find the next one.
+//! `tests/styles_group_duplication.rs`,
+//! `tests/master_spread_roundtrip.rs`,
+//! `tests/unmodelled_item_roundtrip.rs`,
+//! `tests/tint_sentinel_roundtrip.rs`,
+//! `tests/graphic_line_fill_roundtrip.rs` and `tests/label_roundtrip.rs`
+//! (opt-in `PAGED_IDML_CORPUS` lanes); this is what you run to find the
+//! next one.
+//!
+//! As of the `None`-is-not-absent wave every lane reads 0 over all
+//! 11,876 measured entries and all 99 packages save byte-identically.
+//! That is a floor to hold, not a finish line: the sweep measures only
+//! what the writer TRANSFORMS, so the honest next question is what the
+//! coverage report at the bottom still lists as carried through
+//! verbatim.
 //!
 //! ```text
 //! cargo run --release --example corpus_sweep                 # sibling corpus

@@ -48,8 +48,15 @@
 //!     untouched one truncated it (`-1021.8897637779996` →
 //!     `-1021.8898`). An untouched transform now passes through verbatim;
 //!     see [`TransformPlan`].
-//!   - `FillColor`         (FrameFillColor)
-//!   - `FillTint`          (FrameFillTint)
+//!   - `FillColor`         (FrameFillColor) — on the kinds that MODEL a
+//!     fill. `<GraphicLine>` does not (`paged_model::GraphicLine` has no
+//!     fill field: a line is a stroked open contour), so its source
+//!     `FillColor` / `FillTint` pass through verbatim rather than being
+//!     read as cleared. See [`Fill`].
+//!   - `FillTint`          (FrameFillTint) — `-1` is IDML's "no tint
+//!     override" sentinel, which the parser maps to `None`, so a `None`
+//!     model tint keeps a source `-1` instead of deleting it. See
+//!     [`preserving_tint_patch`].
 //!   - `StrokeColor`       (FrameStrokeColor)
 //!   - `StrokeWeight`      (FrameStrokeWeight) — the same rule as the
 //!     corner radii: an untouched weight keeps its source spelling,
@@ -58,7 +65,10 @@
 //!     `ItemTransform` there is nothing to de-compose — see
 //!     [`preserving_f32_patch`].
 //!   - `NextTextFrame`     (LinkFrames / UnlinkFrames; TextFrame only)
-//!   - `Nonprinting`       (FrameNonprinting)
+//!   - `Nonprinting`       (FrameNonprinting) — absence is the implicit
+//!     `false`, so turning it off drops the attribute; a source that
+//!     already spelled `"false"` keeps its bytes. See
+//!     [`preserving_bool_patch`].
 //!   - `AppliedObjectStyle` (AppliedObjectStyle) — the reference into
 //!     the `<ObjectStyle>` definitions [`crate::resources::patch_styles`]
 //!     writes. IDML has no "no object style", so a CLEARED reference
@@ -449,13 +459,27 @@ where
     Ok(BytesStart::from_content(content, name.len()).into_owned())
 }
 
-/// Escape the five XML entities for an attribute value we synthesise.
-/// Patched values are IDML ids / numbers / colour refs that almost never
-/// contain these, but a style name could — so escape defensively to keep
-/// the output well-formed.
+/// Escape an attribute value we synthesise.
+///
+/// The five XML entities, because a patched value is an IDML id / number
+/// / colour ref that almost never contains them but a style name could.
+///
+/// And TAB / LF / CR as CHARACTER REFERENCES, which is not defensive —
+/// it is the only spelling that survives a round-trip. XML 1.0 §3.3.3
+/// says a parser replaces every literal tab, newline and carriage return
+/// inside an attribute value with a SPACE before the value is reported,
+/// while a character reference is not touched. So writing the newline
+/// literally does not produce the same document: it produces one whose
+/// value has spaces where the original had line breaks, silently, on
+/// every read after the save.
+///
+/// A `<Label>`'s `KeyValuePair Value` is where this bites — plugin
+/// metadata, JSON and (in `samples/sample-3.idml`) an embedded ecscript
+/// document, all of them multi-line, all of them flattened one save at a
+/// time. InDesign writes `&#xa;` there for exactly this reason.
 pub(crate) fn escape_attr(s: &str) -> std::borrow::Cow<'_, str> {
     if s.bytes()
-        .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''))
+        .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\'' | b'\t' | b'\n' | b'\r'))
     {
         let mut out = String::with_capacity(s.len());
         for c in s.chars() {
@@ -465,6 +489,9 @@ pub(crate) fn escape_attr(s: &str) -> std::borrow::Cow<'_, str> {
                 '>' => out.push_str("&gt;"),
                 '"' => out.push_str("&quot;"),
                 '\'' => out.push_str("&apos;"),
+                '\t' => out.push_str("&#x9;"),
+                '\n' => out.push_str("&#xA;"),
+                '\r' => out.push_str("&#xD;"),
                 _ => out.push(c),
             }
         }
@@ -1069,10 +1096,16 @@ fn write_item_label(
     };
     writer.write_event(Event::Start(BytesStart::new("Label")))?;
     for (k, v) in entries {
-        let mut kvp = BytesStart::new("KeyValuePair");
-        kvp.push_attribute(("Key", k.as_str()));
-        kvp.push_attribute(("Value", v.as_str()));
-        writer.write_event(Event::Empty(kvp))?;
+        // Through [`emit_empty_with_attrs`], hence [`escape_attr`].
+        // `BytesStart::push_attribute` escapes the five entities and
+        // nothing else, so a multi-line value came back with spaces
+        // where its newlines were — and this lane is not only fresh
+        // inserts: a SOURCE item that MOVES is re-emitted here.
+        emit_empty_with_attrs(
+            writer,
+            "KeyValuePair",
+            &[("Key", k.clone()), ("Value", v.clone())],
+        )?;
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Label")))?;
     Ok(())
@@ -1864,6 +1897,12 @@ struct Placement<'a> {
     model_group: Option<&'a str>,
     /// The model still carries this item somewhere.
     in_model: bool,
+    /// The PARSER declined to model this element at all — see
+    /// [`idml_import::SpreadProvenance`]. Distinct from `!in_model`,
+    /// which is what the model says about an item it DID once hold, and
+    /// the distinction is the whole point: an element with no model
+    /// counterpart was never the model's to delete.
+    unmodelled: bool,
 }
 
 /// What to do with a page-item element the reader just opened.
@@ -1886,6 +1925,20 @@ enum ItemVerdict {
 /// catch-all is now the C-19 group lane, with the pre-C-19 behaviour
 /// preserved verbatim for the "no container, no group" case.
 fn triage_placement(p: &Placement<'_>) -> ItemVerdict {
+    // An element the PARSER declined to model is not the model's to
+    // move, regroup or delete. Every lane below reads the model's
+    // silence about this id as an intention — nested nowhere, grouped
+    // nowhere, and (fatally) `in_model: false`, which is a REMOVE — and
+    // all of those readings are unfounded, because the model was never
+    // shown the element. `brand-guidelines`' `Spread_u1db62` carries two
+    // `<Polygon>`s with an empty `<PathPointArray>`; they were deleted
+    // out of the user's document on a save that changed nothing.
+    //
+    // First, and unconditionally: the answer does not depend on where
+    // the element sits, so nothing is gained by asking.
+    if p.unmodelled {
+        return ItemVerdict::Keep;
+    }
     match (p.source_host, p.model_host) {
         // Kept in place inside its container.
         (Some(sh), Some(mh)) if sh == mh => return ItemVerdict::KeepInHost(mh.to_string()),
@@ -1984,7 +2037,29 @@ fn collect_group_member_ids<'a>(
 /// Rewrite a `Spread_*.xml` body so its page-item start tags reflect the
 /// current model. Untouched bytes pass through verbatim; the result is
 /// byte-identical to `original` when nothing in `spread` diverged from it.
+///
+/// # Elements with no model counterpart
+///
+/// `spread` does NOT hold one item per source page-item element: the
+/// parser discards a shape that supplies no geometry at all (see
+/// [`idml_import::SpreadProvenance`]). The structural-remove lane below
+/// reads "id not in the model" as "the user deleted it", which for those
+/// is wrong and destructive, so the parser's own record of what it
+/// declined is consulted first and such an element passes through
+/// untouched.
+///
+/// The provenance is derived from `original` here rather than taken as
+/// an argument, for the same reason [`rewrite_story`]'s is: it cannot
+/// then be computed from different bytes than the ones being streamed.
+/// When the parse fails the record is empty, and every element takes the
+/// pre-existing path — the conservative answer, and the one that keeps
+/// this a pure refinement of the remove lane rather than a new gate in
+/// front of it.
 pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick_xml::Error> {
+    let provenance = idml_import::parse_spread_with_provenance(original)
+        .map(|(_, p)| p)
+        .unwrap_or_default();
+
     // Index every page item by its `Self` id so a start tag can find its
     // model counterpart regardless of element ordering.
     let mut frames: std::collections::HashMap<&str, &TextFrame> = std::collections::HashMap::new();
@@ -2127,6 +2202,15 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     // with the model entries; a labelled item whose source has no
     // `<Properties>`/`<Label>` gets the block synthesised; an item the
     // model no longer labels has its `<Label>` dropped.
+    //
+    // "Replaced wholesale" is decided at the `</Label>`, not at the
+    // `<Label>`, so an UNCHANGED label can keep its source bytes — the
+    // same stance `patch_start` takes attribute by attribute and
+    // `<PathPointArray>` takes point by point. Rebuilding one that
+    // nobody edited reformats it: the source's indentation goes, and
+    // (before [`escape_attr`] learned the character references) its
+    // `&#xa;`s came back as literal newlines, which is a different
+    // document.
     let mut depth: usize = 0;
     struct LabelCtx {
         /// Depth of the item element itself.
@@ -2135,8 +2219,15 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
         entries: Option<Vec<(String, String)>>,
         /// A direct `<Properties>` child is currently open.
         in_direct_properties: bool,
-        /// We are inside the item's `<Label>` (original KVPs drop).
+        /// We are inside the item's `<Label>` (original KVPs are held
+        /// back until the close decides).
         in_label: bool,
+        /// Byte offset of the open `<Label>` start tag in `original`.
+        label_start: usize,
+        /// The `KeyValuePair`s the SOURCE label carries, decoded the way
+        /// the parser decodes them, in document order — so they compare
+        /// against the model entries like for like.
+        source_entries: Vec<(String, String)>,
         /// The model entries have been written.
         handled: bool,
     }
@@ -2154,10 +2245,17 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     ) -> Result<(), quick_xml::Error> {
         writer.write_event(Event::Start(BytesStart::new("Label")))?;
         for (k, v) in entries {
-            let mut kvp = BytesStart::new("KeyValuePair");
-            kvp.push_attribute(("Key", k.as_str()));
-            kvp.push_attribute(("Value", v.as_str()));
-            writer.write_event(Event::Empty(kvp))?;
+            // Through [`emit_empty_with_attrs`], hence [`escape_attr`] —
+            // the same escaper `write_item_label` uses, and the one that
+            // knows tab / LF / CR need character references.
+            // `BytesStart::push_attribute`, which this used to call,
+            // escapes the five entities and nothing else, so a value
+            // holding a newline came back with a space in its place.
+            emit_empty_with_attrs(
+                writer,
+                "KeyValuePair",
+                &[("Key", k.clone()), ("Value", v.clone())],
+            )?;
         }
         writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Label")))?;
         Ok(())
@@ -2211,6 +2309,11 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     let mut path_ctx: Vec<PathCtx> = Vec::new();
 
     loop {
+        // Where this event's markup begins in `original`. Taken BEFORE
+        // the read, exactly as `parse_story_with_provenance` takes it,
+        // so a `<Label>` that turns out to be unchanged can be copied
+        // out of the source rather than re-serialised.
+        let event_start = reader.buffer_position() as usize;
         match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
             Event::Start(e) => {
@@ -2259,6 +2362,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                             source_group_opaque: group_depth > 0 && innermost_group.is_none(),
                             model_group: group_owner.get(id.as_str()).copied(),
                             in_model: model_ids.contains(id.as_str()),
+                            unmodelled: provenance.is_unmodelled(&id),
                         };
                         match triage_placement(&placement) {
                             ItemVerdict::Keep => {
@@ -2327,17 +2431,23 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         && ctx.in_direct_properties
                         && depth == ctx.item_depth + 2
                     {
-                        // Replace (or drop) the Label wholesale.
+                        // Hold the Label back. Whether it is replaced,
+                        // dropped or kept verbatim is decided at the
+                        // `</Label>`, once its source entries are known.
                         ctx.in_label = true;
-                        if let Some(entries) = ctx.entries.as_deref() {
-                            write_label_entries(&mut writer, entries)?;
-                        }
+                        ctx.label_start = event_start;
+                        ctx.source_entries.clear();
                         ctx.handled = true;
                         buf.clear();
                         continue; // original <Label> start not written
                     } else if ctx.in_label {
-                        // Unexpected child inside a replaced Label —
-                        // drop it with the rest of the Label body.
+                        // A `<KeyValuePair>` can also arrive as a Start
+                        // (with a separate End) rather than an Empty.
+                        if name_owned == b"KeyValuePair" {
+                            if let Some(kv) = key_value_pair(&e) {
+                                ctx.source_entries.push(kv);
+                            }
+                        }
                         buf.clear();
                         continue;
                     }
@@ -2405,6 +2515,8 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         entries,
                         in_direct_properties: false,
                         in_label: false,
+                        label_start: 0,
+                        source_entries: Vec::new(),
                         handled: false,
                     });
                     // Group-member geometry is composed into the model's
@@ -2491,6 +2603,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                             source_group_opaque: group_depth > 0 && innermost_group.is_none(),
                             model_group: group_owner.get(id.as_str()).copied(),
                             in_model: model_ids.contains(id.as_str()),
+                            unmodelled: provenance.is_unmodelled(&id),
                         };
                         match triage_placement(&placement) {
                             ItemVerdict::Keep => {
@@ -2533,10 +2646,15 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         continue;
                     }
                 }
-                // KeyValuePairs inside a replaced Label drop (the
-                // model entries were already written).
-                if let Some(ctx) = label_ctx.last() {
+                // KeyValuePairs inside a held-back Label are recorded,
+                // not written — the `</Label>` decides.
+                if let Some(ctx) = label_ctx.last_mut() {
                     if ctx.in_label {
+                        if e.name().as_ref() == b"KeyValuePair" {
+                            if let Some(kv) = key_value_pair(&e) {
+                                ctx.source_entries.push(kv);
+                            }
+                        }
                         buf.clear();
                         continue;
                     }
@@ -2694,15 +2812,34 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 }
                 if let Some(ctx) = label_ctx.last_mut() {
                     if ctx.in_label && name_owned == b"Label" && depth == ctx.item_depth + 2 {
-                        // Closing the replaced Label — the new entries
-                        // (with their own End) were already written.
+                        // The whole `<Label>…</Label>` has been read.
+                        // Unchanged ⇒ copy the SOURCE bytes; anything
+                        // else ⇒ the wholesale replace / drop as before.
+                        let unchanged = ctx
+                            .entries
+                            .as_deref()
+                            .is_some_and(|model| model == ctx.source_entries.as_slice());
+                        if unchanged {
+                            // Through the cursor's `Write`, not its
+                            // backing `Vec` — the writer emits at the
+                            // cursor's POSITION, so bytes pushed onto
+                            // the end of the vec sit past it and the
+                            // next `write_event` overwrites them.
+                            let end = reader.buffer_position() as usize;
+                            std::io::Write::write_all(
+                                writer.get_mut(),
+                                &original[ctx.label_start..end],
+                            )?;
+                        } else if let Some(entries) = ctx.entries.as_deref() {
+                            write_label_entries(&mut writer, entries)?;
+                        }
                         ctx.in_label = false;
                         depth = depth.saturating_sub(1);
                         buf.clear();
                         continue;
                     }
                     if ctx.in_label {
-                        // Closing a dropped child inside the Label.
+                        // Closing a held-back child inside the Label.
                         depth = depth.saturating_sub(1);
                         buf.clear();
                         continue;
@@ -2984,8 +3121,10 @@ fn patch_spread_item(
                 return Ok(None);
             };
             let tx = TransformPlan::resolve(group_accum, frame.item_transform);
-            let fill = frame.fill_color.clone();
-            let fill_tint = frame.fill_tint;
+            let fill = Fill {
+                color: frame.fill_color.clone(),
+                tint: frame.fill_tint,
+            };
             let stroke = frame.stroke_color.clone();
             let stroke_weight = frame.stroke_weight;
             let next = frame.next_text_frame.clone();
@@ -3005,8 +3144,7 @@ fn patch_spread_item(
                         k,
                         raw,
                         tx,
-                        &fill,
-                        fill_tint,
+                        Some(&fill),
                         &stroke,
                         stroke_weight,
                         Some(&next),
@@ -3020,8 +3158,7 @@ fn patch_spread_item(
                 },
                 &frame_attr_extras(
                     tx,
-                    &fill,
-                    fill_tint,
+                    Some(&fill),
                     &stroke,
                     stroke_weight,
                     next.as_deref(),
@@ -3043,8 +3180,10 @@ fn patch_spread_item(
                 e,
                 tx,
                 item.map(|r| VectorItem {
-                    fill_color: r.fill_color.clone(),
-                    fill_tint: r.fill_tint,
+                    fill: Some(Fill {
+                        color: r.fill_color.clone(),
+                        tint: r.fill_tint,
+                    }),
                     stroke_color: r.stroke_color.clone(),
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
@@ -3069,8 +3208,10 @@ fn patch_spread_item(
                 e,
                 tx,
                 item.map(|r| VectorItem {
-                    fill_color: r.fill_color.clone(),
-                    fill_tint: r.fill_tint,
+                    fill: Some(Fill {
+                        color: r.fill_color.clone(),
+                        tint: r.fill_tint,
+                    }),
                     stroke_color: r.stroke_color.clone(),
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
@@ -3100,8 +3241,10 @@ fn patch_spread_item(
                 e,
                 tx,
                 item.map(|r| VectorItem {
-                    fill_color: r.fill_color.clone(),
-                    fill_tint: r.fill_tint,
+                    fill: Some(Fill {
+                        color: r.fill_color.clone(),
+                        tint: r.fill_tint,
+                    }),
                     stroke_color: r.stroke_color.clone(),
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
@@ -3126,8 +3269,9 @@ fn patch_spread_item(
                 e,
                 tx,
                 item.map(|r| VectorItem {
-                    fill_color: None,
-                    fill_tint: None,
+                    // `paged_model::GraphicLine` has no fill field at
+                    // all; see [`Fill`].
+                    fill: None,
                     stroke_color: r.stroke_color.clone(),
                     stroke_weight: r.stroke_weight,
                     nonprinting: r.nonprinting,
@@ -3177,8 +3321,9 @@ fn patch_spread_item(
 /// shape so a single patch routine covers Rectangle / Oval / Polygon /
 /// GraphicLine.
 struct VectorItem {
-    fill_color: Option<String>,
-    fill_tint: Option<f32>,
+    /// `FillColor` + `FillTint`, or `None` for a kind that models NO
+    /// fill — see [`Fill`].
+    fill: Option<Fill>,
     stroke_color: Option<String>,
     stroke_weight: Option<f32>,
     nonprinting: bool,
@@ -3199,6 +3344,29 @@ struct VectorItem {
     /// on-disk corner attributes pass through verbatim because there is
     /// no model field that could have changed them.
     corners: Option<CornerAttrs>,
+}
+
+/// The fill a page-item kind MODELS: its `FillColor` swatch reference
+/// and its `FillTint` percent.
+///
+/// Wrapped in an `Option` at every use site, because the distinction
+/// that matters is one level up from either field: `Some(Fill { color:
+/// None, .. })` is "the model carries a fill and it is unset", and
+/// `None` is "this kind has no fill in the model at all".
+///
+/// `<GraphicLine>` is the `None` case. `paged_model::GraphicLine` has no
+/// fill field — a line is a stroked open contour, and the model says so
+/// in as many words ("Lines carry no fill"). The writer used to pass
+/// `fill_color: None` for it, which reads identically to a cleared fill
+/// and deleted the attribute: 191 `FillColor`s across 48 corpus spreads,
+/// including `FillColor="Color/c25m15y77k0"` on lines InDesign itself
+/// wrote. Nothing in the model can ever have changed them, so there is
+/// nothing for the writer to say and it now says nothing — the same
+/// stance `next` takes for the kinds with no `NextTextFrame` field, and
+/// `corners` for the kinds with no corner fields.
+struct Fill {
+    color: Option<String>,
+    tint: Option<f32>,
 }
 
 /// B-23 — the corner vocabulary IDML writes on a page item, lifted out
@@ -3310,6 +3478,51 @@ fn preserving_f32_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
     }
 }
 
+/// Same rule for an IDML tint percentage, whose parse is lossy in a way
+/// `f32` alone is not: `FillTint="-1"` is IDML's sentinel for *no tint
+/// override*, so [`idml_import::parse_tint`] maps it to `None` — the
+/// same `None` an absent attribute gives, because they are the same
+/// document.
+///
+/// [`preserving_f32_patch`] answers `Remove` for `None`, which is
+/// correct only when the source spelled a REAL tint that the model has
+/// since cleared. Against a `-1` it deletes an attribute nobody touched:
+/// 156 corpus stories and 6 spreads, 288 attributes, on a save that
+/// changed nothing. So ask the source spelling what IT means first, and
+/// keep the bytes when the two agree.
+///
+/// The rule is not restated here — [`idml_import::parse_tint`] is the
+/// one the parser reads through, called directly.
+fn preserving_tint_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
+    if raw.and_then(idml_import::parse_tint) == v {
+        return Patch::Keep;
+    }
+    match v {
+        Some(n) => Patch::Set(format_f32(n)),
+        None => Patch::Remove,
+    }
+}
+
+/// The same shape once more for a flag with an IMPLICIT default:
+/// `Nonprinting`, which the parser reads as
+/// `attr.and_then(parse::<bool>).unwrap_or(false)`.
+///
+/// The writer used to spell `false` as `Remove` unconditionally — sound
+/// reasoning (absence restores the default) with a byte cost, because a
+/// source that spells `Nonprinting="false"` explicitly means exactly
+/// what the model holds and loses the attribute anyway. `Remove` is
+/// right only for a source that spelled the NON-default and has since
+/// been changed back.
+fn preserving_bool_patch(raw: Option<&str>, v: bool, default: bool) -> Patch {
+    if raw.and_then(|s| s.parse::<bool>().ok()).unwrap_or(default) == v {
+        Patch::Keep
+    } else if v == default {
+        Patch::Remove
+    } else {
+        Patch::Set(v.to_string())
+    }
+}
+
 /// Same rule for a `CornerOption` enum: the parse is lossy across
 /// spellings (`BevelCorner` / `BeveledCorner` both mean `Bevel`), so an
 /// unmutated value must keep its source token.
@@ -3341,8 +3554,7 @@ fn patch_vector_item(
                 k,
                 raw,
                 tx,
-                &item.fill_color,
-                item.fill_tint,
+                item.fill.as_ref(),
                 &item.stroke_color,
                 item.stroke_weight,
                 None,
@@ -3356,8 +3568,7 @@ fn patch_vector_item(
         },
         &frame_attr_extras(
             tx,
-            &item.fill_color,
-            item.fill_tint,
+            item.fill.as_ref(),
             &item.stroke_color,
             item.stroke_weight,
             None,
@@ -3383,8 +3594,7 @@ fn frame_attr_patch(
     key: &[u8],
     raw: &[u8],
     tx: TransformPlan,
-    fill: &Option<String>,
-    fill_tint: Option<f32>,
+    fill: Option<&Fill>,
     stroke: &Option<String>,
     stroke_weight: Option<f32>,
     next: Option<&Option<String>>,
@@ -3404,8 +3614,12 @@ fn frame_attr_patch(
     match key {
         b"AppliedObjectStyle" => Some(applied_object_style_patch(raw, applied_object_style)),
         b"ItemTransform" => tx.patch_for(raw),
-        b"FillColor" => Some(opt_string_patch(fill)),
-        b"FillTint" => Some(opt_f32_patch(fill_tint)),
+        // `fill: None` ⇒ this KIND models no fill (see [`Fill`]); the
+        // source attribute is nobody's to rewrite and passes through,
+        // the same way `next` does for the kinds with no
+        // `NextTextFrame` field.
+        b"FillColor" => fill.map(|f| opt_string_patch(&f.color)),
+        b"FillTint" => fill.map(|f| preserving_tint_patch(std::str::from_utf8(raw).ok(), f.tint)),
         b"StrokeColor" => Some(opt_string_patch(stroke)),
         // Preserved, not re-derived. The parser stores this attribute as
         // a plain `"…".parse::<f32>()` — no composition, no unit
@@ -3420,13 +3634,15 @@ fn frame_attr_patch(
             std::str::from_utf8(raw).ok(),
             stroke_weight,
         )),
-        b"Nonprinting" => Some(if nonprinting {
-            Patch::Set("true".to_string())
-        } else {
-            // The parser defaults absent → false; drop the attribute to
-            // restore the implicit default rather than write "false".
-            Patch::Remove
-        }),
+        // The parser defaults absent → false. Dropping the attribute
+        // restores that default — but only when the source spelled
+        // something else; a source `Nonprinting="false"` already says
+        // what the model holds. See [`preserving_bool_patch`].
+        b"Nonprinting" => Some(preserving_bool_patch(
+            std::str::from_utf8(raw).ok(),
+            nonprinting,
+            false,
+        )),
         b"NextTextFrame" => next.map(opt_string_patch),
         b"LeftLineEnd" => arrow_patch(start_arrow),
         b"RightLineEnd" => arrow_patch(end_arrow),
@@ -3451,8 +3667,7 @@ fn frame_attr_patch(
 #[allow(clippy::too_many_arguments)]
 fn frame_attr_extras(
     tx: TransformPlan,
-    fill: &Option<String>,
-    fill_tint: Option<f32>,
+    fill: Option<&Fill>,
     stroke: &Option<String>,
     stroke_weight: Option<f32>,
     next: Option<&str>,
@@ -3473,14 +3688,18 @@ fn frame_attr_extras(
     if let Some(m) = tx.extra() {
         out.push(("ItemTransform", m));
     }
-    if let Some(c) = fill {
-        out.push(("FillColor", c.clone()));
-    }
-    // C-19: a tint SET on an item whose source element never carried a
-    // `FillTint` attribute used to fall off here (the patch lane only
-    // rewrites keys the source already has).
-    if let Some(t) = fill_tint {
-        out.push(("FillTint", format_f32(t)));
+    // A kind that models no fill (see [`Fill`]) appends neither key —
+    // it has nothing to say about them.
+    if let Some(f) = fill {
+        if let Some(c) = &f.color {
+            out.push(("FillColor", c.clone()));
+        }
+        // C-19: a tint SET on an item whose source element never carried
+        // a `FillTint` attribute used to fall off here (the patch lane
+        // only rewrites keys the source already has).
+        if let Some(t) = f.tint {
+            out.push(("FillTint", format_f32(t)));
+        }
     }
     if let Some(c) = stroke {
         out.push(("StrokeColor", c.clone()));
@@ -3546,13 +3765,6 @@ fn applied_object_style_patch(raw: &[u8], v: &Option<String>) -> Patch {
         Some(s) if s.as_bytes() == raw => Patch::Keep,
         Some(s) => Patch::Set(s.clone()),
         None => Patch::Set(NONE_OBJECT_STYLE.to_string()),
-    }
-}
-
-fn opt_f32_patch(v: Option<f32>) -> Patch {
-    match v {
-        Some(n) => Patch::Set(format_f32(n)),
-        None => Patch::Remove,
     }
 }
 
@@ -4260,12 +4472,13 @@ fn character_attr_patch(key: &[u8], raw: &[u8], r: &CharacterRun) -> Option<Patc
         b"FontStyle" => Some(opt_string_patch(&r.font_style)),
         b"PointSize" => Some(preserving_f32_patch(raw, r.point_size)),
         b"FillColor" => Some(opt_string_patch(&r.fill_color)),
-        // The `-1` spelling parses to `None` (the documented "no tint
-        // override" normalisation, `util::parse_tint_attr`), so this
-        // still drops the attribute for it — the preserving rule only
-        // changes the `Some` case, where a long source spelling now
-        // survives instead of being rounded to 4 decimals.
-        b"FillTint" => Some(preserving_f32_patch(raw, r.fill_tint)),
+        // NOT the plain preserving-f32 rule: `FillTint="-1"` parses to
+        // `None` (IDML's "no tint override" sentinel,
+        // `idml_import::parse_tint`), and spelling that `None` as
+        // "delete the attribute" rewrote 156 corpus stories — 288
+        // attributes — on a save that changed nothing. See
+        // [`preserving_tint_patch`].
+        b"FillTint" => Some(preserving_tint_patch(raw, r.fill_tint)),
         b"StrokeColor" => Some(opt_string_patch(&r.stroke_color)),
         b"StrokeWeight" => Some(preserving_f32_patch(raw, r.stroke_weight)),
         b"Leading" => Some(preserving_f32_patch(raw, r.leading)),
@@ -4308,6 +4521,29 @@ fn opt_bool_patch(v: Option<bool>) -> Patch {
         Some(b) => Patch::Set(b.to_string()),
         None => Patch::Remove,
     }
+}
+
+/// A `<KeyValuePair Key=… Value=…>`'s pair, decoded the way the PARSER
+/// decodes it (`util::attr_unescaped`: XML attribute-value
+/// normalization, so `&quot;` → `"` and `&#xa;` → a newline). Read
+/// through the same normalization on both sides, a source label and a
+/// model label compare like for like — which is what lets an unedited
+/// `<Label>` keep its source bytes.
+///
+/// `None` when either attribute is missing or undecodable; such a pair
+/// can't be compared, so the label is not treated as unchanged.
+fn key_value_pair(e: &BytesStart) -> Option<(String, String)> {
+    fn normalized(e: &BytesStart, key: &[u8]) -> Option<String> {
+        e.attributes()
+            .flatten()
+            .find(|a| a.key.as_ref() == key)
+            .and_then(|a| {
+                a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .ok()
+                    .map(|v| v.into_owned())
+            })
+    }
+    Some((normalized(e, b"Key")?, normalized(e, b"Value")?))
 }
 
 /// Read an attribute's decoded value off a start tag.

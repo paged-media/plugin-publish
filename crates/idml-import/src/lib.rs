@@ -45,13 +45,14 @@ pub use graphic::{
     GradientStopRef, Graphic, SwatchEntry,
 };
 pub use spread::{
-    parse_spread, ArrowheadType, AutoSizingReferencePoint, AutoSizingType, BevelEmbossParams,
-    Bounds, ClippingPathSettings, ClippingType, ContourOptionType, CornerOption, CornerSpec,
-    DirectionalFeatherParams, DropShadowSetting, FeatherParams, FirstBaselineOffset, FrameEffects,
-    FrameFittingOption, FrameRef, GradientFeatherParams, GradientFeatherStop, GraphicLine, Group,
-    GroupTransparency, GuideOrientation, ImageMetadata, InnerGlowParams, InnerShadowParams,
-    MarginPreference, OuterGlowParams, Oval, Page, PathAnchor, Polygon, Rectangle, RulerGuide,
-    SatinParams, Spread, TextFrame, TextPath, TextWrap, TextWrapMode, VerticalJustification,
+    parse_spread, parse_spread_with_provenance, ArrowheadType, AutoSizingReferencePoint,
+    AutoSizingType, BevelEmbossParams, Bounds, ClippingPathSettings, ClippingType,
+    ContourOptionType, CornerOption, CornerSpec, DirectionalFeatherParams, DropShadowSetting,
+    FeatherParams, FirstBaselineOffset, FrameEffects, FrameFittingOption, FrameRef,
+    GradientFeatherParams, GradientFeatherStop, GraphicLine, Group, GroupTransparency,
+    GuideOrientation, ImageMetadata, InnerGlowParams, InnerShadowParams, MarginPreference,
+    OuterGlowParams, Oval, Page, PathAnchor, Polygon, Rectangle, RulerGuide, SatinParams, Spread,
+    SpreadProvenance, TextFrame, TextPath, TextWrap, TextWrapMode, VerticalJustification,
 };
 pub use story::{
     parse_story, parse_story_with_provenance, AnchoredFrame, AnchoredFrameKind,
@@ -65,6 +66,7 @@ pub use styles::{
     ResolvedCell, ResolvedCharacter, ResolvedObject, ResolvedParagraph, ResolvedTable, StripeDef,
     StrokeStyleDef, StrokeStyleKind, StyleSheet, TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
 };
+pub use util::parse_tint;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {

@@ -51,19 +51,36 @@ pub(crate) fn parse_f(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<f
     attr(e, key)?.parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
-/// Parse an IDML tint percentage attribute (FillTint, StrokeTint).
+/// Interpret an IDML tint percentage SPELLING (`FillTint`, `GapTint`,
+/// the table stroke tints).
 ///
 /// Convention:
-///   * absent or `-1`  → `None` (no override; use the swatch as-is).
-///   * `0..=100`       → `Some(pct)`; 100 = full strength.
+///   * `-1` → `None`. IDML's sentinel for "no tint override" — the same
+///     document as writing no attribute at all.
+///   * `0..=100` → `Some(pct)`; 100 = full strength.
+///   * anything else (out of range, unparseable) → `None`, so a
+///     malformed document can't silently distort the renderer's output.
 ///
-/// Out-of-range values return `None` so a malformed document can't
-/// silently distort the renderer's output.
-pub(crate) fn parse_tint_attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<f32> {
-    let raw = attr(e, key)?;
+/// Public, and the ONE place the rule lives, because both directions
+/// need it. The parser reads it through [`parse_tint_attr`]. The
+/// save-back writer replays it to answer a different question: "does the
+/// model's `None` mean the same thing this source spelling does?" It
+/// nearly always does — `FillTint="-1"` is 288 of the corpus's
+/// attributes — and a writer that spells `None` as *delete the
+/// attribute* silently rewrites 162 entries that nobody edited. A copy
+/// of the range check on the writer's side would be two copies of one
+/// decision, which is the defect one level up.
+pub fn parse_tint(raw: &str) -> Option<f32> {
     let v: f32 = raw.parse().ok()?;
     if !(0.0..=100.0).contains(&v) {
         return None;
     }
     Some(v)
+}
+
+/// Parse an IDML tint percentage attribute by key. Absent ⇒ `None`
+/// (no override), the same answer the `-1` sentinel gives; see
+/// [`parse_tint`] for the whole rule.
+pub(crate) fn parse_tint_attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<f32> {
+    parse_tint(&attr(e, key)?)
 }

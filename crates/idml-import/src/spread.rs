@@ -496,10 +496,66 @@ fn bounds_from_anchors(anchors: &[PathAnchor]) -> Bounds {
     }
 }
 
+/// What [`parse_spread`] DECLINED to model — the source-side half of the
+/// answer the save-back writer needs.
+///
+/// # Why this exists
+///
+/// The parser does not keep one model item per page-item element. A
+/// `<Rectangle>` / `<Polygon>` / `<GraphicLine>` / `<Oval>` /
+/// `<TextFrame>` that supplies NO geometry at all — no `GeometricBounds`
+/// attribute *and* no path anchors, which is what an empty
+/// `<PathPointArray>` produces — is discarded at its close tag
+/// (`finalize_page_item`) so downstream code never sees a zero-rect
+/// ghost. `brand-guidelines`' `Spread_u1db62` carries two such polygons.
+///
+/// The writer's structural-remove lane asks "is this element's `Self` id
+/// still in the model?" and reads *no* as "the user deleted it". For an
+/// element the parser never modelled that answer is wrong, and the
+/// consequence is not a formatting difference: `u20048` and `u2004c` are
+/// in the source package and absent from the saved one, −4,532 bytes of
+/// the user's document, on a save that changed nothing.
+///
+/// So the parser says what it declined to model, and the writer looks up
+/// instead of inferring. The alternative — teaching the writer to
+/// recognise the bounds-less shape itself — would put the same rule in
+/// two places, which is exactly the defect that produced the
+/// `Resources/Styles.xml` duplication and the run misalignment before it.
+///
+/// # Why `Self` ids, not byte offsets
+///
+/// [`StoryProvenance`](crate::StoryProvenance) is keyed by byte offset
+/// because IDML puts no id on a style range, so there is nothing else to
+/// key on. A page item always carries `Self`, and `Self` is already the
+/// identity the writer's remove / insert / group lanes are written in
+/// terms of. Same shape of problem, different available facts; keying
+/// this by offset too would buy symmetry and cost the join.
+#[derive(Debug, Default, Clone)]
+pub struct SpreadProvenance {
+    unmodelled: std::collections::HashSet<String>,
+}
+
+impl SpreadProvenance {
+    /// True when a page item with this `Self` id appears in the source
+    /// XML and produced NO model item. Such an element is not the
+    /// model's to remove — or to rewrite — because the model never saw
+    /// it; it passes through verbatim.
+    pub fn is_unmodelled(&self, self_id: &str) -> bool {
+        self.unmodelled.contains(self_id)
+    }
+}
+
 pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
+    parse_spread_with_provenance(xml).map(|(spread, _)| spread)
+}
+
+/// [`parse_spread`] plus the record of which source page items it
+/// declined to model. See [`SpreadProvenance`].
+pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvenance), ParseError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
 
+    let mut provenance = SpreadProvenance::default();
     let mut out = Spread::default();
     // Stack of <Group> ItemTransforms encountered, outermost
     // first. When a frame appears inside one or more groups, its
@@ -715,7 +771,12 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
     // `Event::End` arm and the B-18 self-closing-nested-child path
     // (an `Event::Empty` child inside a container never fires an End
     // event).
-    fn finalize_page_item(out: &mut Spread, group_builders: &mut [GroupBuilder], cf: CurrentFrame) {
+    fn finalize_page_item(
+        out: &mut Spread,
+        group_builders: &mut [GroupBuilder],
+        provenance: &mut SpreadProvenance,
+        cf: CurrentFrame,
+    ) {
         // W1.21: flush the placed image's clipping
         // path onto the host shape. Written before the
         // bounds/drop logic — if the frame is dropped
@@ -738,6 +799,11 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
         }
         if cf.needs_bounds {
             if cf.anchors.is_empty() {
+                // Declined, not deleted. Say so, so the save-back writer
+                // can tell the two apart — see [`SpreadProvenance`].
+                if let Some(id) = cf.self_id.as_deref() {
+                    provenance.unmodelled.insert(id.to_string());
+                }
                 drop_pending(out, cf.kind);
                 // The frame was registered with the open group (or
                 // its B-18 host container) at open time; unregister
@@ -2429,7 +2495,7 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
                     // ghost (matches the previous behaviour of
                     // skipping bounds-less shapes).
                     if let Some(cf) = current_frame.take() {
-                        finalize_page_item(&mut out, &mut group_builders, cf);
+                        finalize_page_item(&mut out, &mut group_builders, &mut provenance, cf);
                         // B-18: restore the parked container (this
                         // frame was paste-into content). The matching
                         // `group_transforms` entry was pushed when
@@ -2523,7 +2589,7 @@ pub fn parse_spread(xml: &[u8]) -> Result<Spread, ParseError> {
         }
         buf.clear();
     }
-    Ok(out)
+    Ok((out, provenance))
 }
 
 fn parse_bounds(s: &str) -> Option<Bounds> {
