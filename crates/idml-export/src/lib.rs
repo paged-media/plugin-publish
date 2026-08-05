@@ -27,11 +27,12 @@
 //! verbatim and **patches only what the model can faithfully express**:
 //!
 //! * **Pass-through (byte-identical).** Every entry except the changed
-//!   Spreads / Stories is copied straight out of the source ZIP with its
-//!   original compressed bytes (via [`zip::write::ZipWriter::raw_copy_file`]),
-//!   so `mimetype` stays first + stored and untouched entries round-trip
-//!   bit-for-bit.
-//! * **Patched (streaming rewrite).** `Spreads/*.xml` and `Stories/*.xml`
+//!   Spreads / MasterSpreads / Stories is copied straight out of the
+//!   source ZIP with its original compressed bytes (via
+//!   [`zip::write::ZipWriter::raw_copy_file`]), so `mimetype` stays
+//!   first + stored and untouched entries round-trip bit-for-bit.
+//! * **Patched (streaming rewrite).** `Spreads/*.xml`,
+//!   `MasterSpreads/*.xml` and `Stories/*.xml`
 //!   are rewritten with a quick-xml reader→writer pass that copies the
 //!   original token stream and overwrites only the attributes / text the
 //!   model owns (see [`rewrite`]). Unknown attributes, child elements,
@@ -100,12 +101,12 @@ pub enum WriteError {
 /// `original` must be the IDML byte stream `doc` was parsed from (or one
 /// structurally equivalent to it — same entries, same `Self` ids). The
 /// returned `Vec<u8>` is a valid `.idml` package: `mimetype` first +
-/// stored, every other source entry preserved, the Spreads / Stories
-/// reflecting the current model state.
+/// stored, every other source entry preserved, the Spreads /
+/// MasterSpreads / Stories reflecting the current model state.
 ///
 /// An unmutated document round-trips byte-identically. A mutated
-/// document differs only in the Spreads / Stories whose model the
-/// mutation touched.
+/// document differs only in the Spreads / MasterSpreads / Stories whose
+/// model the mutation touched.
 pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError> {
     let mut src = zip::ZipArchive::new(Cursor::new(original))?;
     let out = Cursor::new(Vec::<u8>::new());
@@ -161,6 +162,38 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
                 .map(|prev| prev.src.clone());
             new_spread_refs.push((anchor, spread.src.clone()));
             new_entries.push((spread.src.clone(), body));
+        }
+    }
+    // MASTER spreads. They parse with the same `parse_spread` into
+    // `Document::master_spreads` and rewrite with the same
+    // `rewrite_spread` — but until this loop existed the writer iterated
+    // `doc.spreads` only, so every master part took the verbatim copy
+    // path below. That made byte-identity trivially safe and made an
+    // EDIT TO A MASTER PAGE VANISH: the user changed a master, saved,
+    // reopened, and the change was gone with no error anywhere.
+    //
+    // A master with no source entry is NOT minted here. `emit` mints
+    // spreads and stories because `InsertPage` / `InsertTextFrame` can
+    // create them; nothing creates a master spread today, so a model
+    // master the archive doesn't carry would be a shape this writer has
+    // never seen. Skipping it keeps that an untouched hole rather than
+    // an untested emitter.
+    //
+    // Iterated in `src` order because `master_spreads` is a `HashMap`
+    // and a save must not depend on hash iteration order.
+    let mut masters: Vec<&paged_scene::ParsedMasterSpread> = doc.master_spreads.values().collect();
+    masters.sort_by(|a, b| a.src.cmp(&b.src));
+    for master in masters {
+        if let Some(orig) = entry_bytes(&mut src, &master.src)? {
+            let new = rewrite::rewrite_spread(&orig, &master.spread).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: master.src.clone(),
+                    source,
+                }
+            })?;
+            if new != orig.as_slice() {
+                patched.insert(master.src.clone(), new);
+            }
         }
     }
     for story in &doc.stories {

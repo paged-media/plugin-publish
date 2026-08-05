@@ -111,9 +111,116 @@ struct TableContext {
     outer_cell: Option<TableCell>,
 }
 
+/// Where the runs a single source `<CharacterStyleRange>` produced live
+/// in its host paragraph's `runs`.
+///
+/// `count` is 1 for the ordinary range. It is >1 when the parser SPLIT
+/// one range — a `<TextVariableInstance>` becomes its own run, so
+/// `<Content>a</Content><TextVariableInstance ResultText="12"/>
+/// <Content>b</Content>` yields three runs from one element. A rewriter
+/// may patch shared attributes off `first` (the split runs are clones of
+/// one style) but must never re-serialise the element's TEXT from a
+/// single run, because no single run holds it all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunSlot {
+    /// Index of the first run this element produced, within its host
+    /// paragraph's `runs`.
+    pub first: usize,
+    /// How many runs it produced (≥1).
+    pub count: usize,
+}
+
+/// Which model item each source `<ParagraphStyleRange>` /
+/// `<CharacterStyleRange>` element became, keyed by the element's
+/// **byte offset** in the story part.
+///
+/// # Why this exists
+///
+/// The parser does not keep one model item per source element. It DROPS
+/// a `<CharacterStyleRange>` whose text came out empty (a range holding
+/// only a `<Table>`, a self-closing `<CharacterStyleRange/>`), drops a
+/// `<ParagraphStyleRange>` that ends up with neither a run nor a table,
+/// and SPLITS a range that contains a `<TextVariableInstance>` into
+/// several runs. A writer that matches ranges to model items by COUNTING
+/// elements therefore drifts: `samples/line-sheet.idml`'s first range
+/// holds a table and no text, so from that point on every later run in
+/// the paragraph was patched one position out and the range's own
+/// `PointSize="10"` / `FontStyle="Bold"` were overwritten with the NEXT
+/// run's values. `samples/sample.idml` lost two `AppliedCharacterStyle`s
+/// the same way, and 99 corpus stories whose every range was empty had
+/// their `AppliedParagraphStyle` deleted outright.
+///
+/// The fix is not for the writer to re-implement the drop rule — that
+/// would be two copies of one decision, which is the defect one level up.
+/// The parser already knows what it dropped and what it split, so it says
+/// so here, and the writer stops guessing.
+///
+/// # Why byte offsets
+///
+/// An ordinal ("the 7th `<CharacterStyleRange>`") only agrees between the
+/// two passes if both walk the tree identically — including the subtrees
+/// the parser suppresses wholesale (`<HiddenText>`, `<Note>`) and the
+/// scopes it re-bases (cells, footnotes). A byte offset is derived from
+/// the bytes themselves, so it needs no such agreement: both sides read
+/// the same part with the same reader configuration, and
+/// `Reader::buffer_position()` taken *before* each `read_event_into` is
+/// the offset at which that event's markup begins. An element the parser
+/// never recorded simply has no entry — which is exactly the "no model
+/// item aligns with this element, pass it through verbatim" answer the
+/// writer wants.
+#[derive(Debug, Default, Clone)]
+pub struct StoryProvenance {
+    paragraphs: std::collections::HashMap<u64, usize>,
+    runs: std::collections::HashMap<u64, RunSlot>,
+}
+
+impl StoryProvenance {
+    /// The model paragraph index the `<ParagraphStyleRange>` at byte
+    /// offset `pos` produced, within whichever list it was pushed to
+    /// (the story's `paragraphs`, a `TableCell`'s, or a `Footnote`'s).
+    /// `None` ⇒ the parser dropped it.
+    pub fn paragraph_at(&self, pos: u64) -> Option<usize> {
+        self.paragraphs.get(&pos).copied()
+    }
+
+    /// The runs the `<CharacterStyleRange>` at byte offset `pos`
+    /// produced, within its host paragraph. `None` ⇒ the parser dropped
+    /// it (no text).
+    pub fn run_at(&self, pos: u64) -> Option<RunSlot> {
+        self.runs.get(&pos).copied()
+    }
+}
+
+/// One open `<CharacterStyleRange>` element's provenance bookkeeping.
+struct OpenRange {
+    /// Byte offset of the element's start tag — the map key.
+    pos: u64,
+    /// Index of the first run it pushed, once it has pushed one.
+    first: Option<usize>,
+    /// How many runs it has pushed (see [`RunSlot::count`]).
+    count: usize,
+}
+
 pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
+    parse_story_with_provenance(xml).map(|(story, _)| story)
+}
+
+/// [`parse_story`] plus the source-element → model-item map the
+/// save-back rewrite needs. See [`StoryProvenance`].
+pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance), ParseError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
+
+    let mut provenance = StoryProvenance::default();
+    // Byte offsets of the `<ParagraphStyleRange>` elements currently
+    // open, innermost last. A stack, not a single slot: a table cell
+    // nests one paragraph range inside another
+    // (`ParagraphStyleRange > CharacterStyleRange > Table > Cell >
+    // ParagraphStyleRange`), and so does a footnote. Pushed on Start,
+    // popped on End, so it needs no parking in the table / footnote
+    // context frames — the XML nesting IS the stack.
+    let mut open_paragraphs: Vec<u64> = Vec::new();
+    let mut open_ranges: Vec<OpenRange> = Vec::new();
 
     let mut out = Story::default();
     let mut current_paragraph: Option<Paragraph> = None;
@@ -268,6 +375,12 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
     }
 
     loop {
+        // `buffer_position()` is the offset just AFTER the previous
+        // event, i.e. the offset at which this event's markup begins —
+        // the key [`StoryProvenance`] is built on. Taken before the read
+        // so the writer, reading the same bytes with the same
+        // configuration, computes the identical number.
+        let event_pos = reader.buffer_position();
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) => {
                 let n = e.name();
@@ -371,6 +484,7 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                         }
                     }
                     b"ParagraphStyleRange" => {
+                        open_paragraphs.push(event_pos);
                         current_paragraph = Some(Paragraph {
                             paragraph_style: attr(&e, b"AppliedParagraphStyle"),
                             justification: attr(&e, b"Justification")
@@ -641,6 +755,11 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                         }
                     }
                     b"CharacterStyleRange" => {
+                        open_ranges.push(OpenRange {
+                            pos: event_pos,
+                            first: None,
+                            count: 0,
+                        });
                         current_run = Some(CharacterRun {
                             character_style: attr(&e, b"AppliedCharacterStyle"),
                             font: attr(&e, b"AppliedFont"),
@@ -802,11 +921,34 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                         properties_text.clear();
                     }
                     b"CharacterStyleRange" => {
+                        let open = open_ranges.pop();
+                        let mut pushed_at: Option<usize> = None;
                         if let (Some(run), Some(para)) =
                             (current_run.take(), current_paragraph.as_mut())
                         {
                             if !run.text.is_empty() {
                                 para.runs.push(run);
+                                pushed_at = Some(para.runs.len() - 1);
+                            }
+                        }
+                        // Record where this element landed — including
+                        // the runs a `<TextVariableInstance>` already
+                        // split off (see `OpenRange`). A range that
+                        // pushed nothing gets no entry, which is how the
+                        // writer learns to leave it alone.
+                        if let Some(mut open) = open {
+                            if let Some(idx) = pushed_at {
+                                open.first.get_or_insert(idx);
+                                open.count += 1;
+                            }
+                            if let Some(first) = open.first {
+                                provenance.runs.insert(
+                                    open.pos,
+                                    RunSlot {
+                                        first,
+                                        count: open.count,
+                                    },
+                                );
                             }
                         }
                     }
@@ -816,6 +958,7 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                         source_stack.pop();
                     }
                     b"ParagraphStyleRange" => {
+                        let open = open_paragraphs.pop();
                         if let Some(para) = current_paragraph.take() {
                             // Keep paragraphs that have either a
                             // shaped run or a hosted table; drop
@@ -828,12 +971,21 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                                 // inside a cell paragraph still wants
                                 // its body paragraphs to live on the
                                 // footnote, not on the cell.
-                                if let Some(ctx) = footnote_stack.last_mut() {
+                                let at = if let Some(ctx) = footnote_stack.last_mut() {
                                     ctx.footnote.paragraphs.push(para);
+                                    ctx.footnote.paragraphs.len() - 1
                                 } else if let Some(cell) = current_cell.as_mut() {
                                     cell.paragraphs.push(para);
+                                    cell.paragraphs.len() - 1
                                 } else {
                                     out.paragraphs.push(para);
+                                    out.paragraphs.len() - 1
+                                };
+                                // The index is scope-local, matching the
+                                // list it was pushed to; the writer knows
+                                // which scope it is in.
+                                if let Some(pos) = open {
+                                    provenance.paragraphs.insert(pos, at);
                                 }
                             }
                         }
@@ -1035,6 +1187,11 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                                 flushed.text_variable = None;
                                 if let Some(para) = current_paragraph.as_mut() {
                                     para.runs.push(flushed);
+                                    let at = para.runs.len() - 1;
+                                    if let Some(open) = open_ranges.last_mut() {
+                                        open.first.get_or_insert(at);
+                                        open.count += 1;
+                                    }
                                 }
                                 run.text.clear();
                             }
@@ -1046,6 +1203,11 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
                             if !var_run.text.is_empty() {
                                 if let Some(para) = current_paragraph.as_mut() {
                                     para.runs.push(var_run);
+                                    let at = para.runs.len() - 1;
+                                    if let Some(open) = open_ranges.last_mut() {
+                                        open.first.get_or_insert(at);
+                                        open.count += 1;
+                                    }
                                 }
                             }
                             // `run` continues open with empty text for
@@ -1185,7 +1347,7 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
         }
         buf.clear();
     }
-    Ok(out)
+    Ok((out, provenance))
 }
 
 /// Parse a "y1 x1 y2 x2" `GeometricBounds` attribute. Local copy

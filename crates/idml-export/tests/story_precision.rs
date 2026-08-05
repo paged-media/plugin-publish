@@ -333,29 +333,23 @@ fn an_anchored_object_after_content_stays_well_formed() {
     );
 }
 
-/// The one entry in the swept packages whose character numbers still
-/// move, and WHY — a lead this file deliberately does not fix, listed by
-/// name so it can neither be forgotten nor quietly grow.
+/// CLOSED. This used to name `samples/line-sheet.idml#Stories/
+/// Story_u2b6.xml` as the one entry whose character numbers still moved,
+/// and why: its first `<CharacterStyleRange>` holds a `<Table>` and no
+/// text, `idml_import::parse_story` DROPS a run with empty text, and
+/// `rewrite_story`'s positional cursor counted every element — so the
+/// paragraph's runs were patched one position out and the range's
+/// `PointSize="10"` / `FontStyle="Bold"` were overwritten with the NEXT
+/// run's values. The two `AppliedCharacterStyle` divergences in
+/// `samples/sample.idml` had the same root, and `<TextVariableInstance>`
+/// broke the mapping the other way (the parser SPLITS one range into
+/// three runs).
 ///
-/// `Story_u2b6`'s first `<CharacterStyleRange>` holds a `<Table>` and no
-/// text. `idml_import::parse_story` DROPS a run with empty text
-/// (`if !run.text.is_empty()` at the range's close), but
-/// `rewrite_story`'s positional cursor counts every
-/// `<CharacterStyleRange>` element it sees — so from that point on the
-/// paragraph's runs are patched one position out, and the range's
-/// `PointSize="10"` / `FontStyle="Bold"` are overwritten with the NEXT
-/// run's values. It is not a precision defect and the preserving patch
-/// cannot help: the model value handed to the patcher belongs to a
-/// different run.
-///
-/// The same root causes the two `AppliedCharacterStyle` divergences in
-/// `samples/sample.idml` (a self-closing, textless
-/// `<CharacterStyleRange/>` before a `<HyperlinkTextSource>`), and
-/// `<TextVariableInstance>` breaks the mapping the other way — the parser
-/// SPLITS one range into three runs. Fixing it means giving the rewrite a
-/// pre-pass that maps element index → model run index instead of counting;
-/// that is its own change, not this one.
-const KNOWN_RUN_MISALIGNMENT: [&str; 1] = ["samples/line-sheet.idml#Stories/Story_u2b6.xml"];
+/// The parser now publishes where each source element landed
+/// (`idml_import::StoryProvenance`) and the rewrite looks it up instead
+/// of counting; see `tests/run_alignment_roundtrip.rs`. The exemption
+/// list is empty and must stay empty.
+const KNOWN_RUN_MISALIGNMENT: [&str; 0] = [];
 
 /// The corpus lane the three defects were measured on. Opt-in: the corpus
 /// is private and gitignored, so this no-ops cleanly wherever it is

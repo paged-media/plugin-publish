@@ -348,14 +348,98 @@ fn missing_object_styles<'a>(
         .filter(move |s| !seen.contains(&s.self_id) && !is_reserved_style_id(&s.self_id))
 }
 
+/// What the WHOLE `Resources/Styles.xml` holds — the knowledge a single
+/// forward pass does not have when it reaches the first group.
+///
+/// # The defect this closes
+///
+/// `patch_styles` used to accumulate its "already defined" set as it
+/// read, and inject the model styles it had not seen yet at the FIRST
+/// `</RootParagraphStyleGroup>`. But a part can carry more than one root
+/// group of a kind — the corpus's generated packages open with a group
+/// holding only InDesign's reserved `$ID/[No paragraph style]` and put
+/// the document's real styles in a SECOND group further down. At the
+/// first close every real style was still "unseen", so all of them were
+/// injected there, and then the second group defined them again: two
+/// elements with the same `Self` in one part, the injected copy missing
+/// everything the writer does not model (`NextStyle`, `Justification`,
+/// `Hyphenation`, `AppliedNumberingList`, `StrokeColor`).
+///
+/// This is the same shape as the story rewrite's range misalignment (see
+/// [`crate::rewrite::rewrite_story`]) and as the nested-group
+/// duplication fixed before it: a streaming pass deciding "is this new?"
+/// from what it happens to have read so far. The fix is the same in
+/// kind — establish the whole-document fact FIRST — even though the fact
+/// itself is different, so the two are not shared code.
+#[derive(Default)]
+struct StylesLayout {
+    para: std::collections::HashSet<String>,
+    character: std::collections::HashSet<String>,
+    object: std::collections::HashSet<String>,
+    /// How many `<Root*StyleGroup>` elements of each kind the part
+    /// carries. New definitions go into the LAST one, which is where a
+    /// document that has both keeps its own styles.
+    para_groups: usize,
+    char_groups: usize,
+    object_groups: usize,
+}
+
+/// Read `original` once for [`StylesLayout`]. Deliberately a separate
+/// pass over the same bytes rather than a lookahead: the emitting pass
+/// then has one rule and no state that means different things at
+/// different points in the stream.
+fn scan_styles(original: &[u8]) -> Result<StylesLayout, quick_xml::Error> {
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+
+    let mut out = StylesLayout::default();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(ref e) | Event::Empty(ref e) => match e.name().as_ref() {
+                b"ParagraphStyle" => {
+                    if let Some(id) = attr_value(e, b"Self") {
+                        out.para.insert(id);
+                    }
+                }
+                b"CharacterStyle" => {
+                    if let Some(id) = attr_value(e, b"Self") {
+                        out.character.insert(id);
+                    }
+                }
+                b"ObjectStyle" => {
+                    if let Some(id) = attr_value(e, b"Self") {
+                        out.object.insert(id);
+                    }
+                }
+                b"RootParagraphStyleGroup" => out.para_groups += 1,
+                b"RootCharacterStyleGroup" => out.char_groups += 1,
+                b"RootObjectStyleGroup" => out.object_groups += 1,
+                _ => {}
+            },
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
 /// Rewrite `Resources/Styles.xml` so every model paragraph / character
 /// / object style is present. New paragraph styles are injected before
-/// `</RootParagraphStyleGroup>`, character styles before
-/// `</RootCharacterStyleGroup>`, object styles before
+/// the LAST `</RootParagraphStyleGroup>`, character styles before the
+/// last `</RootCharacterStyleGroup>`, object styles before the last
 /// `</RootObjectStyleGroup>`. Byte-identical to `original` when
 /// nothing new (and when the source has no group, the new styles flush
 /// at `</idPkg:Styles>` so they aren't silently dropped).
+///
+/// "New" means absent from the WHOLE part, not merely unseen so far —
+/// see [`StylesLayout`].
 pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, quick_xml::Error> {
+    let layout = scan_styles(original)?;
+
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -364,9 +448,14 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     let mut buf = Vec::new();
 
-    let mut seen_para: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut seen_char: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut seen_object: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Which occurrence of each root group the stream is on, so the
+    // injection lands in the last one.
+    let mut para_group_seen = 0usize;
+    let mut char_group_seen = 0usize;
+    let mut object_group_seen = 0usize;
+    let mut in_last_para_group = false;
+    let mut in_last_char_group = false;
+    let mut in_last_object_group = false;
     let mut para_group_closed = false;
     let mut char_group_closed = false;
     let mut object_group_closed = false;
@@ -378,15 +467,19 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
             // An EMPTY `<RootObjectStyleGroup/>` (a document with no
             // object styles at all) has no close tag to inject before,
             // so expand it into a real element around the new defs.
-            // Only fires when there is something to write — otherwise
-            // it falls through and passes the empty tag through
-            // verbatim.
+            // Only fires on the LAST such element, and only when there
+            // is something to write — otherwise it falls through and
+            // passes the empty tag through verbatim.
             Event::Empty(ref e)
                 if e.name().as_ref() == b"RootObjectStyleGroup"
-                    && missing_object_styles(styles, &seen_object).next().is_some() =>
+                    && object_group_seen + 1 == layout.object_groups
+                    && missing_object_styles(styles, &layout.object)
+                        .next()
+                        .is_some() =>
             {
+                object_group_seen += 1;
                 writer.write_event(Event::Start(e.borrow()))?;
-                for s in missing_object_styles(styles, &seen_object) {
+                for s in missing_object_styles(styles, &layout.object) {
                     write_object_style(&mut writer, s)?;
                 }
                 writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
@@ -395,46 +488,51 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                 object_group_closed = true;
             }
             Event::Start(ref e) | Event::Empty(ref e) => {
+                // Only the group counters need tracking here now; which
+                // styles exist was settled by the pre-pass.
                 match e.name().as_ref() {
-                    b"ParagraphStyle" => {
-                        if let Some(id) = attr_value(e, b"Self") {
-                            seen_para.insert(id);
-                        }
+                    b"RootParagraphStyleGroup" => {
+                        para_group_seen += 1;
+                        in_last_para_group = para_group_seen == layout.para_groups;
                     }
-                    b"CharacterStyle" => {
-                        if let Some(id) = attr_value(e, b"Self") {
-                            seen_char.insert(id);
-                        }
+                    b"RootCharacterStyleGroup" => {
+                        char_group_seen += 1;
+                        in_last_char_group = char_group_seen == layout.char_groups;
                     }
-                    b"ObjectStyle" => {
-                        if let Some(id) = attr_value(e, b"Self") {
-                            seen_object.insert(id);
-                        }
+                    b"RootObjectStyleGroup" => {
+                        object_group_seen += 1;
+                        in_last_object_group = object_group_seen == layout.object_groups;
                     }
                     _ => {}
                 }
                 writer.write_event(ev.borrow())?;
             }
-            Event::End(ref e) if e.name().as_ref() == b"RootParagraphStyleGroup" => {
+            Event::End(ref e)
+                if e.name().as_ref() == b"RootParagraphStyleGroup" && in_last_para_group =>
+            {
                 for s in styles.paragraph_styles.values() {
-                    if !seen_para.contains(&s.self_id) {
+                    if !layout.para.contains(&s.self_id) {
                         write_paragraph_style(&mut writer, s)?;
                     }
                 }
                 para_group_closed = true;
                 writer.write_event(ev.borrow())?;
             }
-            Event::End(ref e) if e.name().as_ref() == b"RootCharacterStyleGroup" => {
+            Event::End(ref e)
+                if e.name().as_ref() == b"RootCharacterStyleGroup" && in_last_char_group =>
+            {
                 for s in styles.character_styles.values() {
-                    if !seen_char.contains(&s.self_id) {
+                    if !layout.character.contains(&s.self_id) {
                         write_character_style(&mut writer, s)?;
                     }
                 }
                 char_group_closed = true;
                 writer.write_event(ev.borrow())?;
             }
-            Event::End(ref e) if e.name().as_ref() == b"RootObjectStyleGroup" => {
-                for s in missing_object_styles(styles, &seen_object) {
+            Event::End(ref e)
+                if e.name().as_ref() == b"RootObjectStyleGroup" && in_last_object_group =>
+            {
+                for s in missing_object_styles(styles, &layout.object) {
                     write_object_style(&mut writer, s)?;
                 }
                 object_group_closed = true;
@@ -445,14 +543,14 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                 // gets the new defs so a reference never dangles.
                 if !para_group_closed {
                     for s in styles.paragraph_styles.values() {
-                        if !seen_para.contains(&s.self_id) {
+                        if !layout.para.contains(&s.self_id) {
                             write_paragraph_style(&mut writer, s)?;
                         }
                     }
                 }
                 if !char_group_closed {
                     for s in styles.character_styles.values() {
-                        if !seen_char.contains(&s.self_id) {
+                        if !layout.character.contains(&s.self_id) {
                             write_character_style(&mut writer, s)?;
                         }
                     }
@@ -462,10 +560,12 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                 // from, so synthesise the wrapper rather than flush the
                 // defs on their own.
                 if !object_group_closed
-                    && missing_object_styles(styles, &seen_object).next().is_some()
+                    && missing_object_styles(styles, &layout.object)
+                        .next()
+                        .is_some()
                 {
                     writer.write_event(Event::Start(BytesStart::new("RootObjectStyleGroup")))?;
-                    for s in missing_object_styles(styles, &seen_object) {
+                    for s in missing_object_styles(styles, &layout.object) {
                         write_object_style(&mut writer, s)?;
                     }
                     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(

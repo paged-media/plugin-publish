@@ -41,16 +41,18 @@
 //! | `story`       | `Stories/*.xml`      | `rewrite::rewrite_story`             |
 //! | `graphic`     | `Resources/Graphic.xml` | `resources::patch_graphic`        |
 //! | `styles`      | `Resources/Styles.xml`  | `resources::patch_styles`         |
-//! | `master`      | `MasterSpreads/*.xml`| *(LATENT — see below)*               |
+//! | `master`      | `MasterSpreads/*.xml`| `rewrite::rewrite_spread`            |
 //! | `package`     | whole `.idml`        | `import_idml_doc` + `write_idml`     |
 //!
-//! `master` is the honest odd one out: master spreads ARE parsed (with
-//! the same `parse_spread`, into `Document::master_spreads`) but
-//! `write_idml` iterates `doc.spreads` only, so they are copied verbatim
-//! today and a mutated master is silently dropped on save. The lane
-//! measures the rewrite the writer WOULD use, so the latent gap is
-//! visible before that hole is closed rather than after. It is reported
-//! separately and excluded from the shipping total.
+//! `master` used to be the honest odd one out. Master spreads were
+//! parsed (with the same `parse_spread`, into `Document::master_spreads`)
+//! but `write_idml` iterated `doc.spreads` only, so they were copied
+//! verbatim and a mutated master was silently dropped on save. This lane
+//! measured the rewrite the writer WOULD use so the LATENT gap was
+//! visible before the hole was closed rather than after; it read 0 gaps
+//! over 316 entries, which is what said the rewrite was safe to route
+//! them through. `write_idml` now writes masters, so the lane measures a
+//! real transformer and counts in the total like any other.
 //!
 //! `package` is the ground truth — the real save path, per-entry — and
 //! necessarily double-counts the part lanes; it is reported separately
@@ -58,9 +60,11 @@
 //!
 //! Diagnostic tooling, in the tradition of idml-import's `dump_markers`
 //! / `dump_anchored`. The regression GUARDS live in
-//! `tests/nested_group_roundtrip.rs`, `tests/path_contour_roundtrip.rs`
-//! and `tests/story_precision.rs` (opt-in `PAGED_IDML_CORPUS` lanes);
-//! this is what you run to find the next one.
+//! `tests/nested_group_roundtrip.rs`, `tests/path_contour_roundtrip.rs`,
+//! `tests/story_precision.rs`, `tests/run_alignment_roundtrip.rs`,
+//! `tests/styles_group_duplication.rs` and
+//! `tests/master_spread_roundtrip.rs` (opt-in `PAGED_IDML_CORPUS`
+//! lanes); this is what you run to find the next one.
 //!
 //! ```text
 //! cargo run --release --example corpus_sweep                 # sibling corpus
@@ -350,23 +354,19 @@ fn main() {
             lane.packages_with_gaps.len(),
             lane.growth
         );
-        // `master` is LATENT — the writer never emits it (see the module
-        // docs), so it does not belong in the shipping total.
-        if *name != "master" {
-            tot.entries += lane.entries;
-            tot.gaps += lane.gaps;
-            tot.malformed += lane.malformed;
-            tot.panics += lane.panics;
-            tot.errors += lane.errors;
-            tot.growth += lane.growth;
-            for p in &lane.packages_with_gaps {
-                tot.packages_with_gaps.insert(p.clone());
-            }
+        tot.entries += lane.entries;
+        tot.gaps += lane.gaps;
+        tot.malformed += lane.malformed;
+        tot.panics += lane.panics;
+        tot.errors += lane.errors;
+        tot.growth += lane.growth;
+        for p in &lane.packages_with_gaps {
+            tot.packages_with_gaps.insert(p.clone());
         }
     }
     println!(
         "{:<10} {:>8} {:>7} {:>10} {:>7} {:>7} {:>6} {:>+13}",
-        "TOTAL*",
+        "TOTAL",
         tot.entries,
         tot.gaps,
         tot.malformed,
@@ -375,7 +375,7 @@ fn main() {
         tot.packages_with_gaps.len(),
         tot.growth
     );
-    println!("* excludes the LATENT `master` lane (never written today)");
+    println!("(every lane is a transformer `write_idml` actually runs)");
 
     if opts.wants("package") {
         println!();

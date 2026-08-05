@@ -155,7 +155,10 @@
 //!   stories minted by InsertTextFrame — DO save since C-8: the `emit`
 //!   module serialises a full part for any model spread/story with no
 //!   source entry and references it from designmap.) Master-spread
-//!   inserts and the removal manifest-drop remain deferred.
+//!   inserts and the removal manifest-drop remain deferred — an EDIT to
+//!   an existing master does save now (`write_idml` runs
+//!   `MasterSpreads/*.xml` through this same rewrite); minting a master
+//!   the archive never carried does not.
 //! * **Singular group transform.** A group whose `ItemTransform` linear
 //!   part is non-invertible can't have its member transforms de-composed;
 //!   such a member keeps its `ItemTransform` verbatim (degenerate case;
@@ -214,7 +217,9 @@ use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 
-use idml_import::{Bounds, CharacterRun, PathAnchor, Spread, Story, TableCell, TextFrame};
+use idml_import::{
+    Bounds, CharacterRun, Paragraph, PathAnchor, Spread, Story, TableCell, TextFrame,
+};
 
 /// Mirror of `paged_gen::xml::format_f32`: round to 4 decimals, drop
 /// trailing zeros + a dangling `.`, normalise `-0` to `0`. Kept as a
@@ -3593,9 +3598,43 @@ fn collect_table_cells<'a>(
 
 /// Rewrite a `Story_*.xml` body so its `<ParagraphStyleRange>` /
 /// `<CharacterStyleRange>` attributes + single-Content text reflect the
-/// current model. Ranges are matched positionally (IDML carries no id on
-/// them); the parser produced them in this same order.
+/// current model.
+///
+/// # Matching ranges to model items
+///
+/// IDML carries no id on a style range, so the range→model link has to
+/// be derived. It used to be derived by COUNTING: the nth
+/// `<CharacterStyleRange>` element patched against the nth
+/// `CharacterRun`. That is only correct if the parser keeps exactly one
+/// model item per source element, and it does not — it drops a range
+/// whose text came out empty (one holding only a `<Table>`, a
+/// self-closing `<CharacterStyleRange/>`), drops a paragraph range left
+/// with neither a run nor a table, and splits a range containing a
+/// `<TextVariableInstance>` into several runs. Every element after such
+/// a range was then patched against the WRONG model item, so an
+/// unmutated save moved `PointSize="10"` to `8`, dropped a
+/// `FontStyle="Bold"`, rewrote `AppliedCharacterStyle`s, and deleted
+/// `AppliedParagraphStyle` from 99 corpus stories outright.
+///
+/// The link now comes from [`idml_import::StoryProvenance`] — the map
+/// the PARSER emits saying which model item each source element became.
+/// The rule that drops and splits lives in one place, on the side that
+/// owns it; the writer looks up rather than guesses. An element with no
+/// entry has no model counterpart and passes through VERBATIM, which is
+/// also the right answer for markup the parser suppresses wholesale
+/// (`<HiddenText>`, `<Note>`).
+///
+/// The provenance is derived from `original` here rather than taken as
+/// an argument so it cannot be computed from different bytes than the
+/// ones being streamed. That costs one extra parse of the entry; a
+/// provenance recomputed by re-deriving the drop rule on this side would
+/// cost the invariant instead. When the parse fails the map is empty and
+/// every range passes through verbatim — the same conservative answer.
 pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml::Error> {
+    let provenance = idml_import::parse_story_with_provenance(original)
+        .map(|(_, p)| p)
+        .unwrap_or_default();
+
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -3604,11 +3643,18 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     let mut buf = Vec::new();
 
-    // Positional cursors into the model.
-    let mut para_idx: isize = -1;
-    let mut run_idx: isize = -1;
+    // The model paragraph the open `<ParagraphStyleRange>` maps to, one
+    // slot per scope (the story's own stream, and a table cell's). A
+    // range's runs are looked up inside it.
+    let mut story_para: Option<&Paragraph> = None;
+    let mut cell_para: Option<&Paragraph> = None;
     // The run currently open (for Content text + attribute patching).
     let mut current_run: Option<&CharacterRun> = None;
+    // True when the open range produced MORE than one model run — a
+    // `<TextVariableInstance>` split. Its attributes are still patched
+    // (the split runs are clones of one style), but its text must never
+    // be re-serialised, because no single run holds all of it.
+    let mut current_run_split = false;
     // Buffered inline body of the open `<CharacterStyleRange>`. The
     // parser collapses a run's `<Content>A</Content><Br/><Content>B
     // </Content>` (and `<Tab/>` between segments) into one run string
@@ -3648,22 +3694,25 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
 
     // W1.15 lane 3 — table-cell text write-back. Inside a `<Cell
     // Self="...">` the `<ParagraphStyleRange>` / `<CharacterStyleRange>`
-    // patch against the matched model `TableCell.paragraphs[]` with
-    // cell-local positional cursors (reset on each `<Cell>` open). When
-    // a cell has no model match — or the cell text is unchanged — its
-    // content passes through verbatim, exactly as before.
+    // patch against the matched model `TableCell.paragraphs[]`, resolved
+    // through the same provenance map (its indices are scope-local, so a
+    // cell range resolves inside the cell). When a cell has no model
+    // match — or the cell text is unchanged — its content passes through
+    // verbatim, exactly as before.
     let cells = collect_story_cells(story);
+    // Depth of the open `<Cell>`, or 0.
     let mut current_cell: Option<&TableCell> = None;
-    let mut cell_depth: usize = 0; // depth of the open `<Cell>`, or 0
-    let mut cell_para_idx: isize = -1;
-    let mut cell_run_idx: isize = -1;
-    // Nested tables (a table in a cell's paragraph) nest `<Cell>`s, so the
-    // cell-local cursor state is a stack: each `<Cell>` open parks the
+    let mut cell_depth: usize = 0;
+    // Nested tables (a table in a cell's paragraph) nest `<Cell>`s, so
+    // the cell-local state is a stack: each `<Cell>` open parks the
     // enclosing cell's state, each `</Cell>` restores it.
-    type CellFrame<'a> = (Option<&'a TableCell>, usize, isize, isize);
+    type CellFrame<'a> = (Option<&'a TableCell>, usize, Option<&'a Paragraph>);
     let mut cell_stack: Vec<CellFrame> = Vec::new();
 
     loop {
+        // The offset at which this event's markup begins — the key the
+        // parser built its provenance map on (see the doc comment).
+        let event_pos = reader.buffer_position();
         match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
             Event::Start(e) => {
@@ -3700,44 +3749,34 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         // model counterpart (by `Self`) + reset the
                         // cell-local cursors. The start tag passes through
                         // verbatim (cell-level attributes patched elsewhere).
-                        cell_stack.push((current_cell, cell_depth, cell_para_idx, cell_run_idx));
+                        cell_stack.push((current_cell, cell_depth, cell_para));
                         cell_depth = table_depth;
-                        cell_para_idx = -1;
-                        cell_run_idx = -1;
+                        cell_para = None;
                         current_cell =
                             attr_value(&e, b"Self").and_then(|id| cells.get(id.as_str()).copied());
                         writer.write_event(Event::Start(e.into_owned()))?;
                     }
                     b"ParagraphStyleRange" if table_depth == 0 => {
-                        para_idx += 1;
-                        run_idx = -1;
-                        let para = story.paragraphs.get(para_idx as usize);
-                        let start = patch_paragraph_range(&e, para)?;
+                        story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
+                        let start = patch_paragraph_range(&e, story_para)?;
                         writer.write_event(Event::Start(start))?;
                     }
                     b"ParagraphStyleRange" if in_cell => {
-                        cell_para_idx += 1;
-                        cell_run_idx = -1;
-                        let para =
-                            current_cell.and_then(|c| c.paragraphs.get(cell_para_idx as usize));
-                        let start = patch_paragraph_range(&e, para)?;
+                        cell_para = current_cell
+                            .and_then(|c| resolve_paragraph(&provenance, event_pos, &c.paragraphs));
+                        let start = patch_paragraph_range(&e, cell_para)?;
                         writer.write_event(Event::Start(start))?;
                     }
                     b"CharacterStyleRange" if table_depth == 0 => {
-                        run_idx += 1;
-                        current_run = story
-                            .paragraphs
-                            .get(para_idx as usize)
-                            .and_then(|p| p.runs.get(run_idx as usize));
+                        (current_run, current_run_split) =
+                            resolve_run(&provenance, event_pos, story_para);
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
                         writer.write_event(Event::Start(start))?;
                     }
                     b"CharacterStyleRange" if in_cell => {
-                        cell_run_idx += 1;
-                        current_run = current_cell
-                            .and_then(|c| c.paragraphs.get(cell_para_idx as usize))
-                            .and_then(|p| p.runs.get(cell_run_idx as usize));
+                        (current_run, current_run_split) =
+                            resolve_run(&provenance, event_pos, cell_para);
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
                         writer.write_event(Event::Start(start))?;
@@ -3782,38 +3821,34 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                 // still advances the positional cursor + patches attrs.
                 match e.name().as_ref() {
                     b"ParagraphStyleRange" if table_depth == 0 => {
-                        para_idx += 1;
-                        run_idx = -1;
-                        let para = story.paragraphs.get(para_idx as usize);
-                        let start = patch_paragraph_range(&e, para)?;
+                        // A self-closing paragraph range has no runs, so
+                        // the parser dropped it and the map has no entry
+                        // — it passes through verbatim. Still recorded
+                        // as the open paragraph so a following range
+                        // resolves against the right scope.
+                        story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
+                        let start = patch_paragraph_range(&e, story_para)?;
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"ParagraphStyleRange" if in_cell => {
-                        cell_para_idx += 1;
-                        cell_run_idx = -1;
-                        let para =
-                            current_cell.and_then(|c| c.paragraphs.get(cell_para_idx as usize));
-                        let start = patch_paragraph_range(&e, para)?;
+                        cell_para = current_cell
+                            .and_then(|c| resolve_paragraph(&provenance, event_pos, &c.paragraphs));
+                        let start = patch_paragraph_range(&e, cell_para)?;
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"CharacterStyleRange" if table_depth == 0 => {
-                        run_idx += 1;
                         current_run = None;
+                        current_run_split = false;
                         body = RunBody::default();
-                        let run = story
-                            .paragraphs
-                            .get(para_idx as usize)
-                            .and_then(|p| p.runs.get(run_idx as usize));
+                        let (run, _) = resolve_run(&provenance, event_pos, story_para);
                         let start = patch_character_range(&e, run)?;
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"CharacterStyleRange" if in_cell => {
-                        cell_run_idx += 1;
                         current_run = None;
+                        current_run_split = false;
                         body = RunBody::default();
-                        let run = current_cell
-                            .and_then(|c| c.paragraphs.get(cell_para_idx as usize))
-                            .and_then(|p| p.runs.get(cell_run_idx as usize));
+                        let (run, _) = resolve_run(&provenance, event_pos, cell_para);
                         let start = patch_character_range(&e, run)?;
                         writer.write_event(Event::Empty(start))?;
                     }
@@ -3910,14 +3945,13 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                     b"Table" => table_depth = table_depth.saturating_sub(1),
                     b"Cell" if cell_depth != 0 && table_depth == cell_depth => {
                         // Leave the cell — restore the enclosing cell's
-                        // cursors (a nested table's cell pops back to its
+                        // state (a nested table's cell pops back to its
                         // host cell; a top-level cell pops back to None) so
                         // siblings + post-table markup patch correctly.
-                        let (cc, cd, cp, cr) = cell_stack.pop().unwrap_or((None, 0, -1, -1));
+                        let (cc, cd, cp) = cell_stack.pop().unwrap_or((None, 0, None));
                         current_cell = cc;
                         cell_depth = cd;
-                        cell_para_idx = cp;
-                        cell_run_idx = cr;
+                        cell_para = cp;
                     }
                     b"Content" if body.active => {
                         body.in_content = false;
@@ -3925,8 +3959,15 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         continue; // already buffered + advanced
                     }
                     b"CharacterStyleRange" => {
-                        flush_run_body(&mut writer, &mut body, current_run)?;
+                        // A SPLIT range's text is spread over several
+                        // runs; re-serialising it from any one of them
+                        // would delete the rest. Flush it as unmatched
+                        // (verbatim replay) — the attributes were still
+                        // patched off the first run at the open tag.
+                        let text_run = if current_run_split { None } else { current_run };
+                        flush_run_body(&mut writer, &mut body, text_run)?;
                         current_run = None;
+                        current_run_split = false;
                     }
                     // Any other End that arrives while the inline body is
                     // buffering has to buffer TOO, or the run's markup
@@ -4113,10 +4154,46 @@ pub(crate) fn write_run_content(
     Ok(())
 }
 
+/// The model paragraph the `<ParagraphStyleRange>` at `pos` produced,
+/// within `scope` (the story's paragraph list, or a cell's).
+fn resolve_paragraph<'a>(
+    provenance: &idml_import::StoryProvenance,
+    pos: u64,
+    scope: &'a [Paragraph],
+) -> Option<&'a Paragraph> {
+    provenance.paragraph_at(pos).and_then(|i| scope.get(i))
+}
+
+/// The model run the `<CharacterStyleRange>` at `pos` produced inside
+/// `para`, plus whether the parser SPLIT that one element across several
+/// runs (see [`idml_import::RunSlot`]).
+fn resolve_run<'a>(
+    provenance: &idml_import::StoryProvenance,
+    pos: u64,
+    para: Option<&'a Paragraph>,
+) -> (Option<&'a CharacterRun>, bool) {
+    let Some(slot) = provenance.run_at(pos) else {
+        return (None, false);
+    };
+    let run = para.and_then(|p| p.runs.get(slot.first));
+    (run, slot.count > 1)
+}
+
 fn patch_paragraph_range(
     e: &BytesStart,
     para: Option<&idml_import::Paragraph>,
 ) -> Result<BytesStart<'static>, quick_xml::Error> {
+    let Some(para) = para else {
+        // No model paragraph aligns with this range — pass through
+        // verbatim, exactly as `patch_character_range` does for an
+        // unmatched run. Falling through with `style: None` instead
+        // DELETED the source's `AppliedParagraphStyle`, which is what
+        // an empty story (every range dropped by the parser) got: 99
+        // corpus stories lost the attribute on a save that changed
+        // nothing.
+        return Ok(e.clone().into_owned());
+    };
+    let para = Some(para);
     let style = para.and_then(|p| p.paragraph_style.clone());
     let extras: Vec<(&str, String)> = match &style {
         Some(s) => vec![("AppliedParagraphStyle", s.clone())],
