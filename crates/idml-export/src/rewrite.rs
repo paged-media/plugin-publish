@@ -3851,12 +3851,13 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                 if body.active && body.in_content {
                     // Buffer — the replace decision happens at the run
                     // close once the whole (possibly entity-split) span
-                    // is known.
-                    let decoded = t.decode().unwrap_or_default();
-                    let orig = quick_xml::escape::unescape(&decoded)
-                        .map(|c| c.into_owned())
-                        .unwrap_or_else(|_| decoded.into_owned());
-                    body.text.push_str(&orig);
+                    // is known. Reconstruct the text with the PARSER's
+                    // rule, not a near-miss of it (see
+                    // [`push_run_text`]).
+                    let decoded = t
+                        .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                        .unwrap_or_default();
+                    push_run_text(&mut body.text, &decoded);
                     body.events.push(Event::Text(t.into_owned()));
                 } else if body.active {
                     // Indentation/whitespace between inline leaves —
@@ -3878,7 +3879,7 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         // Unknown entity — never rewrite over it.
                         body.foreign = true;
                     }
-                    body.text.push_str(&resolved);
+                    push_run_text(&mut body.text, &resolved);
                     body.events.push(Event::GeneralRef(r.into_owned()));
                 } else if body.active {
                     body.foreign = true;
@@ -3927,6 +3928,34 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         flush_run_body(&mut writer, &mut body, current_run)?;
                         current_run = None;
                     }
+                    // Any other End that arrives while the inline body is
+                    // buffering has to buffer TOO, or the run's markup
+                    // comes back scrambled.
+                    //
+                    // The buffer holds Starts, Texts and Emptys and
+                    // replays them at `</CharacterStyleRange>`; an End
+                    // written straight to the writer therefore JUMPS
+                    // AHEAD of everything already buffered. A run that
+                    // carries an anchored page item after its content —
+                    // `<Content>…</Content><Rectangle>…</Rectangle>`, the
+                    // shape InDesign uses for an anchored object, and
+                    // `<HyperlinkTextSource>…<Content>…</Content></…>` for
+                    // a hyperlink — then came out with the whole subtree's
+                    // closing tags stacked in front of its opening ones.
+                    // In the corpus that produced NOT-WELL-FORMED XML: a
+                    // killed save, invisible to a byte-count and invisible
+                    // to a sweep that only looked at Spreads.
+                    //
+                    // `Table` / `Cell` / `Content` / `CharacterStyleRange`
+                    // keep their own arms above: they carry writer-side
+                    // cursor state (table depth, the cell stack, the run
+                    // flush) that buffering would strand.
+                    _ if body.active => {
+                        body.foreign = true;
+                        body.events.push(Event::End(e.into_owned()));
+                        buf.clear();
+                        continue;
+                    }
                     _ => {}
                 }
                 writer.write_event(Event::End(e))?;
@@ -3973,6 +4002,39 @@ struct RunBody {
     foreign: bool,
     /// Buffered events, in document order.
     events: Vec<Event<'static>>,
+}
+
+/// Append one decoded `<Content>` fragment to a run's reconstructed
+/// text, applying **exactly** the normalisation
+/// `idml_import::parse_story` applies when it builds
+/// `CharacterRun::text`: the Unicode line/paragraph separators
+/// U+2028 / U+2029 (InDesign's "forced line break", Shift+Enter)
+/// collapse to `\n`.
+///
+/// This is a comparison contract, not a preference. [`flush_run_body`]
+/// decides whether to REPLACE a run's body by asking whether the model
+/// text still equals the reconstructed source text — so any rule the
+/// parser applies and the reconstruction doesn't makes every such run
+/// look mutated. That is precisely what happened: 283 corpus stories
+/// came back with different bytes and **no attribute difference at
+/// all**, every one of them because it contained a U+2028. The rewrite
+/// re-serialised each of those runs from the model, turning a forced
+/// LINE break into `<Br/>` — an IDML PARAGRAPH break — and flattening
+/// the source's `<Content>` / `<Br />` layout on the way. A save that
+/// nobody asked for was silently changing the text's break semantics.
+///
+/// The caller decodes with `xml_content(Implicit1_0)` (the parser's
+/// decoder) rather than `decode()`, which additionally gets the XML 1.0
+/// end-of-line rule — `\r\n` and lone `\r` both normalise to `\n` — so a
+/// CRLF-serialised story compares equal too.
+fn push_run_text(out: &mut String, decoded: &str) {
+    for ch in decoded.chars() {
+        if matches!(ch, '\u{2028}' | '\u{2029}') {
+            out.push('\n');
+        } else {
+            out.push(ch);
+        }
+    }
 }
 
 /// Emit the buffered inline body of a closing run. When the model text
@@ -4081,28 +4143,60 @@ fn patch_character_range(
     };
     let r = run.clone();
     let extras = character_extras(&r);
-    let start = patch_start(e, |k, _| character_attr_patch(k, &r), &extras)?;
+    let start = patch_start(e, |k, raw| character_attr_patch(k, raw, &r), &extras)?;
     Ok(start.into_owned())
 }
 
 /// Patch decision for one `<CharacterStyleRange>` attribute. Covers the
 /// character paths the mutation surface writes.
-fn character_attr_patch(key: &[u8], r: &CharacterRun) -> Option<Patch> {
+///
+/// # Why the numbers use the PRESERVING patch
+///
+/// Every numeric here is read straight off THIS element's attribute with
+/// a plain `parse::<f32>()` (see `idml_import::story`): no composition,
+/// no inheritance from the applied paragraph / character style, no unit
+/// conversion. So the on-disk spelling is the ONLY source of the model
+/// number, and re-emitting it through `format_f32` (4 decimals) is a
+/// pure loss whenever the source carried more — which InDesign's
+/// `StrokeWeight="0.9921259842519686"` and
+/// `BaselineShift="4.097337047350078"` routinely do.
+///
+/// That makes this the SAME case as `StrokeWeight` on a page item —
+/// the simple [`preserving_f32_patch`] — and NOT the `ItemTransform`
+/// case, which needed a forward-replay predicate because a group
+/// member's `item_transform` is stored COMPOSED with its ancestors' and
+/// has to be de-composed before the on-disk spelling can be compared.
+/// Nothing on a `CharacterStyleRange` is stored derived, so there is
+/// nothing to replay: comparing the model number against the source
+/// spelling's own parse is exact.
+///
+/// `Leading` has one wrinkle — it can also arrive as a
+/// `<Properties><Leading>` child, which overrides the attribute. The
+/// preserving rule handles that correctly by construction: when the two
+/// agree it keeps the source bytes, when they disagree the model value
+/// (the Properties one) is written, exactly as before.
+fn character_attr_patch(key: &[u8], raw: &[u8], r: &CharacterRun) -> Option<Patch> {
+    let raw = std::str::from_utf8(raw).ok();
     match key {
         b"AppliedCharacterStyle" => Some(opt_string_patch(&r.character_style)),
         b"AppliedFont" => Some(opt_string_patch(&r.font)),
         b"FontStyle" => Some(opt_string_patch(&r.font_style)),
-        b"PointSize" => Some(opt_f32_patch(r.point_size)),
+        b"PointSize" => Some(preserving_f32_patch(raw, r.point_size)),
         b"FillColor" => Some(opt_string_patch(&r.fill_color)),
-        b"FillTint" => Some(opt_f32_patch(r.fill_tint)),
+        // The `-1` spelling parses to `None` (the documented "no tint
+        // override" normalisation, `util::parse_tint_attr`), so this
+        // still drops the attribute for it — the preserving rule only
+        // changes the `Some` case, where a long source spelling now
+        // survives instead of being rounded to 4 decimals.
+        b"FillTint" => Some(preserving_f32_patch(raw, r.fill_tint)),
         b"StrokeColor" => Some(opt_string_patch(&r.stroke_color)),
-        b"StrokeWeight" => Some(opt_f32_patch(r.stroke_weight)),
-        b"Leading" => Some(opt_f32_patch(r.leading)),
-        b"Tracking" => Some(opt_f32_patch(r.tracking)),
-        b"BaselineShift" => Some(opt_f32_patch(r.baseline_shift)),
-        b"HorizontalScale" => Some(opt_f32_patch(r.horizontal_scale)),
-        b"VerticalScale" => Some(opt_f32_patch(r.vertical_scale)),
-        b"Skew" => Some(opt_f32_patch(r.skew)),
+        b"StrokeWeight" => Some(preserving_f32_patch(raw, r.stroke_weight)),
+        b"Leading" => Some(preserving_f32_patch(raw, r.leading)),
+        b"Tracking" => Some(preserving_f32_patch(raw, r.tracking)),
+        b"BaselineShift" => Some(preserving_f32_patch(raw, r.baseline_shift)),
+        b"HorizontalScale" => Some(preserving_f32_patch(raw, r.horizontal_scale)),
+        b"VerticalScale" => Some(preserving_f32_patch(raw, r.vertical_scale)),
+        b"Skew" => Some(preserving_f32_patch(raw, r.skew)),
         b"Capitalization" => Some(opt_string_patch(&r.capitalization)),
         b"Position" => Some(opt_string_patch(&r.position)),
         b"KerningMethod" => Some(opt_string_patch(&r.kerning_method)),

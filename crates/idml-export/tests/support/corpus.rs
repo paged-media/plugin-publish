@@ -61,11 +61,25 @@ pub fn root() -> Option<PathBuf> {
 /// Every `Spreads/*.xml` entry of an IDML package, as
 /// `(entry name, decompressed bytes)`.
 pub fn spreads(package: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    entries(package, "Spreads/")
+}
+
+/// Every `Stories/*.xml` entry of an IDML package. The story lane is the
+/// bulk of a real package — 10,539 of the corpus's 12,668 entries against
+/// the spread lane's 823 — so a guard that only walks `spreads()` is
+/// measuring 7% of the document.
+pub fn stories(package: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    entries(package, "Stories/")
+}
+
+/// Every `<prefix>*.xml` entry of an IDML package, as
+/// `(entry name, decompressed bytes)`.
+pub fn entries(package: &std::path::Path, prefix: &str) -> Vec<(String, Vec<u8>)> {
     let bytes = std::fs::read(package).expect("read package");
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("valid zip");
     let names: Vec<String> = (0..zip.len())
         .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
-        .filter(|n| n.starts_with("Spreads/") && n.ends_with(".xml"))
+        .filter(|n| n.starts_with(prefix) && n.ends_with(".xml"))
         .collect();
     names
         .into_iter()
