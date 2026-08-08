@@ -27,8 +27,8 @@
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
     "vitest": "^3.2.7",
-    "@paged-media/plugin-api": "0.2.29-canary.0",
-    "@paged-media/plugin-sdk": "0.2.29-canary.0"
+    "@paged-media/plugin-api": "0.2.30-canary.0",
+    "@paged-media/plugin-sdk": "0.2.30-canary.0"
   },
   "files": [
     "bin",
