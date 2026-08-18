@@ -1,27 +1,27 @@
-# Canary publish of the paged.publish plugin bundle (@paged-media/publish).
+# Canary publish of the paged.publish plugin bundles (@paged-media/publish +
+# @paged-media/pdf).
 #
-# AUTH: classic npm automation token (NO trusted publisher / OIDC needed).
-# Set a repo (or org) secret `NPM_TOKEN` = an npm automation token whose owner
-# can publish in the @paged-media scope (incl. CREATING a new package). The
-# publish step is GUARDED on that secret, so the workflow is a clean no-op
-# until it's set (no chronic red), then auto-publishes each version bump.
+# AUTH: OIDC TRUSTED PUBLISHING (tokenless) — same lane as plugin-image/
+# plugin-web/plugin-sdk. Requires a Trusted Publisher on npm for EACH
+# package: org paged-media, this repo, workflow publish.yml. Until that
+# npm-side config exists the publish step fails visibly (2026-08-18: the
+# legacy NPM_TOKEN here died of expiry — E404-on-PUT is auth — so the
+# tokenless lane replaces it rather than rotating a second secret).
 #
 # Why pnpm pack -> npm publish: `pnpm pack` applies publishConfig (repointing
 # main/types to dist); npm does the authenticated upload.
 #
-# Pre-1.0: every version is a -canary.N prerelease under the `canary` dist-tag.
-# An unchanged version skips; bump packages/publish-bundle/package.json to
-# release. (A granular token limited to existing packages can't create the
-# first version — the initial publish needs an owner/full-scope token.)
+# Pre-1.0: every version is a -canary.N prerelease under the `canary`
+# dist-tag. An unchanged version skips; bump a bundle's package.json to
+# release.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-# Workflow-level so the publish step's `if:` guard can read it (a step's own
-# env isn't visible to its `if`).
-env:
-  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+permissions:
+  id-token: write   # OIDC token for trusted publishing
+  contents: read
 
 jobs:
   publish:
@@ -33,17 +33,14 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22   # >= 22.14 for OIDC trusted publishing
           registry-url: https://registry.npmjs.org
+      - name: upgrade npm (OIDC needs >= 11.5.1)
+        run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --filter "./packages/*" typecheck
       - run: pnpm -r --filter "./packages/*" build # produce dist (pnpm pack skips prepublishOnly)
-      - name: publish each bundle whose version is new (canary)
-        # No-op without NPM_TOKEN, so the workflow is green until the secret is set.
-        if: ${{ env.NPM_TOKEN != '' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish each bundle whose version is new (canary, via OIDC)
         run: |
           set -e
           for dir in packages/*/; do
@@ -55,6 +52,6 @@ jobs:
             fi
             ( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" )
             tgz="$RUNNER_TEMP/$(echo "$name" | sed 's#@##; s#/#-#')-${version}.tgz"
-            echo "publish $name@$version ($tgz)"
+            echo "publish $name@$version ($tgz) via OIDC"
             npm publish "$tgz" --tag canary --access public
           done
