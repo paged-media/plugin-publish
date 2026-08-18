@@ -130,16 +130,33 @@ jobs:
               --reporter=junit --outputFile=junit.xml) \
               || echo "TS_FAILED=1" >> "$GITHUB_ENV"
           done
-          cat packages/*/junit.xml > junit-all.xml 2>/dev/null || true
-          [ -s junit-all.xml ]
+          ls packages/*/junit.xml
 
-      - name: upload vitest results artifact
+      # PER-PACKAGE artifacts, one junit.xml each — never cat them together.
+      # The old merged junit-all.xml carried package-RELATIVE classnames, so
+      # the state matrix could not tell a pdf-bundle test from a
+      # publish-bundle one and its declared plugin-pdf/vitest lane sat
+      # "never published" (state ingest/artifacts.yaml, 2026-08-17 audit).
+      # Artifact names pair with state's pull table: vitest-junit-<package>.
+      - name: upload pdf-bundle vitest artifact
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: vitest-junit
-          path: junit-all.xml
+          name: vitest-junit-pdf-bundle
+          path: packages/pdf-bundle/junit.xml
           if-no-files-found: error
+          retention-days: 14
+
+      # publish-bundle declares no test script yet, so this uploads nothing
+      # today (warn, not error) — the lane starts feeding the day its first
+      # vitest lands, with no workflow change.
+      - name: upload publish-bundle vitest artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-junit-publish-bundle
+          path: packages/publish-bundle/junit.xml
+          if-no-files-found: warn
           retention-days: 14
 
       - name: tests failed
