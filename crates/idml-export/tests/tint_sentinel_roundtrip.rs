@@ -303,10 +303,10 @@ fn corpus_sentinel_tints_survive_an_unmutated_save() {
     // the spread that carries it alongside `Nonprinting="false"`.
     let cases: [(&str, bool); 2] = [
         (
-            "envato/packs/company-profile-canva-docx-id-psd/template.idml",
+            "vendor/envato/packs/company-profile-canva-docx-id-psd/template.idml",
             true,
         ),
-        ("envato/packs/brand-guideline-template/template.idml", false),
+        ("vendor/envato/packs/brand-guideline-template/template.idml", false),
     ];
     let mut seen_sentinels = 0usize;
     for (rel, do_stories) in cases {

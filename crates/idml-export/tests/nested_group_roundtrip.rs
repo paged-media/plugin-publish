@@ -168,7 +168,7 @@ fn a_real_insert_still_lands_at_its_anchor() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn corpus_catalog_spread_does_not_inflate() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("envato/packs/catalog/template.idml");
+    let package = root.join("vendor/envato/packs/catalog/template.idml");
     if !package.exists() {
         eprintln!("SKIP: {} not found", package.display());
         return;
