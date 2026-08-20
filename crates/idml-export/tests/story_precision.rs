@@ -369,8 +369,8 @@ fn corpus_stories_keep_their_numbers_and_stay_well_formed() {
     // numbers.
     let packages = [
         "samples/line-sheet.idml",
-        "vendor/envato/packs/real-estate-brochure/template.idml",
-        "vendor/envato/packs/square-company-profile/template.idml",
+        "idml/packs/real-estate-brochure/template.idml",
+        "idml/packs/square-company-profile/template.idml",
     ];
     const NUMERIC: [&str; 7] = [
         "PointSize",

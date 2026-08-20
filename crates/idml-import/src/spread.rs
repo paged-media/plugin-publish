@@ -3575,7 +3575,7 @@ mod tests {
     #[test]
     fn eps_placement_is_recognised_as_an_image_element() {
         // The real tag is `<EPS>`, not `<EPSImage>` — verified against
-        // corpus/vendor/envato/packs/annual-report-template/template.idml, the
+        // corpus/idml/packs/annual-report-template/template.idml, the
         // only EPS-bearing fixture we have: 1 × `<EPS>`, 0 × `<EPSImage>`.
         // Shape copied from it: a `<Link>` child carrying the URI AND an
         // inline `<Properties><Contents>` PostScript payload.

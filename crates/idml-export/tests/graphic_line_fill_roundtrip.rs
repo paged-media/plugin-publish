@@ -216,7 +216,7 @@ fn a_modelled_fill_still_patches() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn corpus_graphic_line_fills_survive_an_unmutated_save() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("vendor/envato/packs/catalog-brochure-template/template.idml");
+    let package = root.join("idml/packs/catalog-brochure-template/template.idml");
     if !package.exists() {
         eprintln!("SKIP: {} not found", package.display());
         return;

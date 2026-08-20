@@ -243,9 +243,9 @@ fn corpus_templates_survive_an_unmutated_save() {
     let Some(root) = corpus::root() else { return };
     let mut checked = 0usize;
     for pack in [
-        "vendor/envato/packs/the-brochure/template.idml",
-        "vendor/envato/packs/soccer-career-flyer-templates/template.idml",
-        "vendor/envato/packs/business-magazine-template/template.idml",
+        "idml/packs/the-brochure/template.idml",
+        "idml/packs/soccer-career-flyer-templates/template.idml",
+        "idml/packs/business-magazine-template/template.idml",
     ] {
         let package = root.join(pack);
         if !package.exists() {
