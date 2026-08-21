@@ -58,6 +58,48 @@ pub fn root() -> Option<PathBuf> {
     Some(path)
 }
 
+/// A package this lane addresses BY NAME, or a hard failure.
+///
+/// These lanes name specific packs because that pack is the measured
+/// evidence for a specific defect — not a sample that may or may not be
+/// present. So once [`root`] has answered, the corpus IS mounted, and a
+/// name that does not resolve is a broken lane rather than a machine
+/// without a corpus.
+///
+/// The distinction is not academic: the 2026-08-21 restructure moved
+/// `samples/` under `idml/samples/`, and the label lane went on printing
+/// `SKIP: … not found` and reporting green for a fixture it never opened.
+/// A missing corpus is the corpus's absence; a stale path is ours.
+pub fn package(root: &std::path::Path, rel: &str) -> PathBuf {
+    let p = root.join(rel);
+    assert!(
+        p.is_file(),
+        "corpus lane addresses {rel}, which this corpus does not have \
+         (looked at {}). The path is stale or the asset moved — fix the \
+         lane; do not let it skip.",
+        p.display()
+    );
+    p
+}
+
+/// Whether `p` opens as a ZIP, i.e. is really an IDML package.
+///
+/// An IDML is a ZIP, and a sweep that selects `*.idml` by EXTENSION will
+/// eventually be handed something that is not one: the corpus is vendor
+/// material, and `real-estate-brochure-e20723` shipped its InDesign
+/// binary under the name `Real Estate Brochure.idml` (magic `0606edf5`,
+/// byte-identical to the `.indd` beside it). That aborted the whole
+/// master-spread lane on `InvalidArchive("Could not find EOCD")`.
+/// plugin-image met the same class of thing and moved to signature
+/// reads; this is that move for the IDML sweeps.
+pub fn is_package(p: &std::path::Path) -> bool {
+    let mut head = [0u8; 4];
+    match std::fs::File::open(p) {
+        Ok(mut f) => std::io::Read::read_exact(&mut f, &mut head).is_ok() && &head == b"PK\x03\x04",
+        Err(_) => false,
+    }
+}
+
 /// Every `Spreads/*.xml` entry of an IDML package, as
 /// `(entry name, decompressed bytes)`.
 pub fn spreads(package: &std::path::Path) -> Vec<(String, Vec<u8>)> {
@@ -76,7 +118,13 @@ pub fn stories(package: &std::path::Path) -> Vec<(String, Vec<u8>)> {
 /// `(entry name, decompressed bytes)`.
 pub fn entries(package: &std::path::Path, prefix: &str) -> Vec<(String, Vec<u8>)> {
     let bytes = std::fs::read(package).expect("read package");
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("valid zip");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap_or_else(|e| {
+        panic!(
+            "{} is not a readable IDML package ({e}) — an IDML is a ZIP, so \
+             this file is mislabelled in the corpus",
+            package.display()
+        )
+    });
     let names: Vec<String> = (0..zip.len())
         .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
         .filter(|n| n.starts_with(prefix) && n.ends_with(".xml"))

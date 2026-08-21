@@ -310,11 +310,7 @@ fn corpus_sentinel_tints_survive_an_unmutated_save() {
     ];
     let mut seen_sentinels = 0usize;
     for (rel, do_stories) in cases {
-        let package = root.join(rel);
-        if !package.exists() {
-            eprintln!("SKIP: {} not found", package.display());
-            continue;
-        }
+        let package = corpus::package(&root, rel);
         let entries = if do_stories {
             corpus::stories(&package)
         } else {

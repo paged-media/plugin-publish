@@ -254,7 +254,12 @@ fn main() {
         let Ok(bytes) = std::fs::read(p) else {
             continue;
         };
+        // Not a ZIP → not an IDML, whatever the name says. The corpus is
+        // vendor material and one pack ships its InDesign binary under an
+        // `.idml` name, so say which file was passed over instead of
+        // quietly sweeping one package fewer.
         let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(&bytes)) else {
+            eprintln!("skipped {} — named .idml, but not a ZIP", p.display());
             continue;
         };
         n_pkgs += 1;

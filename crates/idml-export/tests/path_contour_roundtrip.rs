@@ -247,11 +247,7 @@ fn corpus_templates_survive_an_unmutated_save() {
         "idml/packs/soccer-career-flyer-templates/template.idml",
         "idml/packs/business-magazine-template/template.idml",
     ] {
-        let package = root.join(pack);
-        if !package.exists() {
-            eprintln!("SKIP: {} not found", package.display());
-            continue;
-        }
+        let package = corpus::package(&root, pack);
         for (name, body) in corpus::spreads(&package) {
             let spread = idml_import::parse_spread(&body).expect("parse");
             // Would have aborted the whole process before the fix.

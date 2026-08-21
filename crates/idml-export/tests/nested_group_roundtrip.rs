@@ -168,11 +168,7 @@ fn a_real_insert_still_lands_at_its_anchor() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn corpus_catalog_spread_does_not_inflate() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("idml/packs/catalog/template.idml");
-    if !package.exists() {
-        eprintln!("SKIP: {} not found", package.display());
-        return;
-    }
+    let package = corpus::package(&root, "idml/packs/catalog/template.idml");
     // Every spread of the template; `Spread_udc.xml` is the 832 KB →
     // 1.37 MB one, but all six carried the same defect.
     let (mut checked, mut grew) = (0usize, 0usize);

@@ -239,8 +239,16 @@ fn corpus_master_spreads_rewrite_byte_identically() {
     let mut checked = 0usize;
     let mut differed: Vec<String> = Vec::new();
     let mut packages = Vec::new();
-    collect(&root, &mut packages);
+    let mut rejected = Vec::new();
+    collect(&root, &mut packages, &mut rejected);
     packages.sort();
+    rejected.sort();
+    for p in &rejected {
+        eprintln!(
+            "NOT A PACKAGE (skipped): {} — named .idml, but its bytes are not a ZIP",
+            p.display()
+        );
+    }
     for package in &packages {
         for (name, body) in corpus::entries(package, "MasterSpreads/") {
             let spread = idml_import::parse_spread(&body).expect("parse");
@@ -251,6 +259,12 @@ fn corpus_master_spreads_rewrite_byte_identically() {
             }
         }
     }
+    eprintln!(
+        "master-spread lane: {} package(s), {checked} master spread(s), \
+         {} mislabelled file(s) skipped",
+        packages.len(),
+        rejected.len()
+    );
     assert!(checked > 0, "the corpus had reachable master spreads");
     assert!(
         differed.is_empty(),
@@ -259,7 +273,22 @@ fn corpus_master_spreads_rewrite_byte_identically() {
     );
 }
 
-fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+/// Every real IDML package under `dir`, plus the `.idml`-named files
+/// that are not packages at all.
+///
+/// The sweep used to select on the EXTENSION alone. That held until the
+/// corpus took its full Envato import, which brought a pack whose vendor
+/// shipped the InDesign binary under an `.idml` name — and the whole lane
+/// died on `InvalidArchive("Could not find EOCD")` before checking a
+/// single master spread. A sweep over vendor material cannot trust file
+/// names; it reads the signature. The rejects are RETURNED rather than
+/// dropped, because a mislabelled package is worth saying out loud even
+/// though it must not abort the run.
+fn collect(
+    dir: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+    rejected: &mut Vec<std::path::PathBuf>,
+) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
@@ -269,9 +298,13 @@ fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
             continue;
         }
         if p.is_dir() {
-            collect(&p, out);
+            collect(&p, out, rejected);
         } else if p.extension().is_some_and(|x| x == "idml") {
-            out.push(p);
+            if corpus::is_package(&p) {
+                out.push(p);
+            } else {
+                rejected.push(p);
+            }
         }
     }
 }

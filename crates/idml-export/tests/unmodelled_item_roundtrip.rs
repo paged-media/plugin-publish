@@ -205,11 +205,7 @@ fn a_genuinely_removed_item_is_still_removed() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn corpus_brand_guidelines_keeps_its_two_anchorless_polygons() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("idml/packs/brand-guidelines/template.idml");
-    if !package.exists() {
-        eprintln!("SKIP: {} not found", package.display());
-        return;
-    }
+    let package = corpus::package(&root, "idml/packs/brand-guidelines/template.idml");
     let mut checked = 0usize;
     for (name, body) in corpus::spreads(&package) {
         if !name.ends_with("Spread_u1db62.xml") {

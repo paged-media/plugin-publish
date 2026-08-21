@@ -368,7 +368,7 @@ fn corpus_stories_keep_their_numbers_and_stay_well_formed() {
     // `square-company-profile` carry the full-precision character
     // numbers.
     let packages = [
-        "samples/line-sheet.idml",
+        "idml/samples/line-sheet.idml",
         "idml/packs/real-estate-brochure/template.idml",
         "idml/packs/square-company-profile/template.idml",
     ];
@@ -385,11 +385,7 @@ fn corpus_stories_keep_their_numbers_and_stay_well_formed() {
     let mut long_spellings = 0usize;
     let mut moved: Vec<String> = Vec::new();
     for rel in packages {
-        let package = root.join(rel);
-        if !package.exists() {
-            eprintln!("SKIP: {} not found", package.display());
-            continue;
-        }
+        let package = corpus::package(&root, rel);
         for (name, body) in corpus::stories(&package) {
             let story = idml_import::parse_story(&body).expect("parse");
             let out = rewrite_story(&body, &story).expect("rewrite");

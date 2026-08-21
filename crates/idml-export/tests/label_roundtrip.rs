@@ -30,7 +30,7 @@
 //! attribute value with a SPACE before reporting it. A character
 //! reference is exempt, which is why InDesign writes `&#xa;`.
 //!
-//! Measured on `samples/sample-3.idml`, whose labels carry an embedded
+//! Measured on `idml/samples/sample-3.idml`, whose labels carry an embedded
 //! ecscript document: what went in as
 //!
 //! ```text
@@ -325,11 +325,7 @@ fn a_moved_items_label_keeps_its_newlines() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn corpus_sample_3_labels_survive_an_unmutated_save() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("samples/sample-3.idml");
-    if !package.exists() {
-        eprintln!("SKIP: {} not found", package.display());
-        return;
-    }
+    let package = corpus::package(&root, "idml/samples/sample-3.idml");
     let mut with_labels = 0usize;
     for (name, body) in corpus::spreads(&package) {
         let text = String::from_utf8_lossy(&body).into_owned();

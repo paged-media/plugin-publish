@@ -404,11 +404,7 @@ fn a_group_member_with_no_transform_does_not_grow_one() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn a_corpus_template_saves_back_byte_identically() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("idml/packs/ancient-building-magazine/template.idml");
-    if !package.exists() {
-        eprintln!("SKIP: {} not found", package.display());
-        return;
-    }
+    let package = corpus::package(&root, "idml/packs/ancient-building-magazine/template.idml");
     let mut checked = 0usize;
     for (name, body) in corpus::spreads(&package) {
         let spread = idml_import::parse_spread(&body).expect("parse");

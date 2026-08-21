@@ -309,11 +309,7 @@ fn a_new_stroke_weight_is_still_appended_to_an_item_that_had_none() {
 #[ignore = "private corpus: opt-in (PAGED_IDML_CORPUS=1 + the corpus mount)"]
 fn a_corpus_template_saves_back_byte_identically() {
     let Some(root) = corpus::root() else { return };
-    let package = root.join("idml/packs/furniture-product-catalog/template.idml");
-    if !package.exists() {
-        eprintln!("SKIP: {} not found", package.display());
-        return;
-    }
+    let package = corpus::package(&root, "idml/packs/furniture-product-catalog/template.idml");
     let mut checked = 0usize;
     let mut hairlines = 0usize;
     for (name, body) in corpus::spreads(&package) {
