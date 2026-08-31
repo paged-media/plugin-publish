@@ -107,6 +107,18 @@ pub enum WriteError {
 /// An unmutated document round-trips byte-identically. A mutated
 /// document differs only in the Spreads / MasterSpreads / Stories whose
 /// model the mutation touched.
+/// Serialise one minted story part — the exact bytes [`write_idml`]
+/// would add for a story the model minted. Exposed so the paragraph-mark
+/// contract can be pinned directly (see
+/// `tests/paragraph_terminator.rs`) instead of only through a full
+/// package write.
+pub fn emit_story_part_for_test(
+    self_id: &str,
+    story: &idml_import::Story,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    emit::story_part(&emit::sanitize_id(self_id), story, "20.0")
+}
+
 pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError> {
     let mut src = zip::ZipArchive::new(Cursor::new(original))?;
     let out = Cursor::new(Vec::<u8>::new());

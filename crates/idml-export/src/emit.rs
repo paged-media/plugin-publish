@@ -105,19 +105,43 @@ pub(crate) fn story_part(
     let mut s = BytesStart::new("Story");
     s.push_attribute(("Self", self_id));
     writer.write_event(Event::Start(s))?;
-    for p in &story.paragraphs {
+    let last_para = story.paragraphs.len().saturating_sub(1);
+    for (pi, p) in story.paragraphs.iter().enumerate() {
         let mut attrs: Vec<(&str, String)> = Vec::new();
         if let Some(style) = &p.paragraph_style {
             attrs.push(("AppliedParagraphStyle", style.clone()));
         }
         rewrite::emit_start_with_attrs(&mut writer, "ParagraphStyleRange", &attrs)?;
-        for r in &p.runs {
+        // The paragraph MARK. In IDML a `<ParagraphStyleRange>` is a
+        // style run over one or more paragraphs, and what separates
+        // paragraphs is the `<Br/>` character — an InDesign-authored
+        // file ends every paragraph's content with one and omits it only
+        // on the story's last. We wrote none, because in our model the
+        // break is structural rather than a character in any run, and
+        // our own reader rebuilds paragraphs from the range boundaries.
+        // That private convention agreed with itself and with nobody
+        // else: opened in InDesign, an eleven-entry table of contents
+        // came back as ONE paragraph with its style dropped.
+        let mark = pi < last_para;
+        let last_run = p.runs.len().saturating_sub(1);
+        for (ri, r) in p.runs.iter().enumerate() {
             rewrite::emit_start_with_attrs(
                 &mut writer,
                 "CharacterStyleRange",
                 &character_run_attrs(r),
             )?;
             rewrite::write_run_content(&mut writer, &r.text)?;
+            if mark && ri == last_run {
+                writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+            }
+            writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+        }
+        if mark && p.runs.is_empty() {
+            // An empty paragraph still ends somewhere: give the mark a
+            // character run to live in, or the break disappears and the
+            // paragraph with it.
+            rewrite::emit_start_with_attrs(&mut writer, "CharacterStyleRange", &[])?;
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
         }
         writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;

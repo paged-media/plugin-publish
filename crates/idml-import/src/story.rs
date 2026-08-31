@@ -225,6 +225,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     let mut out = Story::default();
     let mut current_paragraph: Option<Paragraph> = None;
     let mut current_run: Option<CharacterRun> = None;
+    // A `<Br/>` seen but not yet known to be interior — see the `b"Br"`
+    // arm. Flushed by the next content in the same paragraph, dropped by
+    // the paragraph's end.
+    let mut pending_break = false;
     // Phase 5 — table context stack. Each `<Table>` push, each
     // `</Table>` pop. Nested tables (a table inside a `<Cell>`'s
     // `<Paragraph>`) stack their contexts so the inner table's
@@ -958,6 +962,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         source_stack.pop();
                     }
                     b"ParagraphStyleRange" => {
+                        // The terminator, discarded: it ended the
+                        // paragraph, it is not text inside it.
+                        pending_break = false;
                         let open = open_paragraphs.pop();
                         if let Some(para) = current_paragraph.take() {
                             // Keep paragraphs that have either a
@@ -1152,11 +1159,21 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             }
                         }
                     }
-                    // Line breaks inside a paragraph surface as <Br/> — treat
-                    // them as a logical newline in the current run.
+                    // `<Br/>` is the paragraph MARK, and a mark that ends
+                    // the paragraph is not part of its text. Interior ones
+                    // still are: two marks in a row mean an empty paragraph
+                    // between them, and a mark before more content is a
+                    // break inside the run.
+                    //
+                    // So the newline is held rather than appended, and
+                    // flushed only when something else in the same
+                    // paragraph follows it. `</ParagraphStyleRange>` drops
+                    // a still-pending one — that was the terminator. Before
+                    // this, every paragraph of every InDesign-authored file
+                    // we read carried a trailing newline it never had.
                     b"Br" => {
-                        if let Some(run) = current_run.as_mut() {
-                            run.text.push('\n');
+                        if current_run.is_some() {
+                            pending_break = true;
                         }
                     }
                     // <TextVariableInstance ResultText="..."
@@ -1263,6 +1280,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
             Event::Text(t) => {
                 if in_content {
                     if let Some(run) = current_run.as_mut() {
+                        // A mark with content after it was interior after
+                        // all: it is a break inside the paragraph, so it
+                        // becomes the newline it always was.
+                        if pending_break {
+                            run.text.push('\n');
+                            pending_break = false;
+                        }
                         // Normalise Unicode line/paragraph
                         // separators (U+2028, U+2029) emitted by
                         // InDesign for "Forced Line Break"

@@ -59,12 +59,34 @@ pub fn parse_graphic(xml: &[u8]) -> Result<Graphic, ParseError> {
     // of the surrounding <Gradient>; we collect them here and
     // commit once the close tag fires.
     let mut current_gradient: Option<GradientEntry> = None;
+    // `(tint_self_id, base_color_ref)` — resolved after the pass, since
+    // a `<Tint>` may appear before the `<Color>` it is a tint of.
+    let mut pending_tints: Vec<(String, String)> = Vec::new();
 
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) | Event::Empty(e) => match e.name().as_ref() {
                 b"Color" => {
                     if let Some(entry) = parse_color(&e) {
+                        out.colors.insert(entry.self_id.clone(), entry);
+                    }
+                }
+                // `<Tint>` — a NAMED tint swatch ("Vermilion 20%"), the
+                // spelling InDesign writes and, until this arm existed,
+                // the one swatch kind we silently dropped: a file using
+                // named tints lost them entirely and every user of one
+                // fell back to black.
+                //
+                // The element carries `BaseColor` plus `TintValue` and
+                // usually repeats the base's channels. Parse it exactly
+                // like a `<Color>` (so written channels are honoured
+                // when present) and record the base so a second pass can
+                // fill the channels in from it when they are not.
+                b"Tint" => {
+                    if let Some(entry) = parse_color(&e) {
+                        if let Some(base) = attr(&e, b"BaseColor") {
+                            pending_tints.push((entry.self_id.clone(), base));
+                        }
                         out.colors.insert(entry.self_id.clone(), entry);
                     }
                 }
@@ -103,6 +125,28 @@ pub fn parse_graphic(xml: &[u8]) -> Result<Graphic, ParseError> {
             _ => {}
         }
         buf.clear();
+    }
+    // Second pass: a `<Tint>` whose own channels were absent or empty
+    // borrows them from its base, along with the base's model and spot
+    // alternate — so a 20% tint of a SPOT stays a spot tint and
+    // separates onto the spot plate instead of flattening to process.
+    for (tint_id, base_ref) in pending_tints {
+        let Some(base) = out.colors.get(&base_ref).cloned() else {
+            continue;
+        };
+        if let Some(entry) = out.colors.get_mut(&tint_id) {
+            if entry.value.is_empty() {
+                entry.value = base.value.clone();
+                entry.space = base.space;
+            }
+            if entry.alternate_value.is_empty() {
+                entry.alternate_space = base.alternate_space;
+                entry.alternate_value = base.alternate_value.clone();
+            }
+            if entry.model == ColorModel::Process && base.model == ColorModel::Spot {
+                entry.model = base.model;
+            }
+        }
     }
     Ok(out)
 }
