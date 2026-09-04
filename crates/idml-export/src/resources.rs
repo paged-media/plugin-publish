@@ -171,7 +171,16 @@ pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quic
             Event::Eof => break,
             Event::Start(ref e) | Event::Empty(ref e) => {
                 match e.name().as_ref() {
-                    b"Color" => {
+                    // `<Tint>` counts as a colour entry: it IS one, in
+                    // the spelling IDML uses for a named tint of another
+                    // swatch. Counting only `<Color>` left the model's
+                    // entry looking absent, so the injector appended a
+                    // SECOND element with the same `Self` — the annual
+                    // exported `Color/AnnualVermilion20` twice, once as
+                    // the `<Tint … BaseColor>` InDesign reads and once
+                    // as the `<Color … TintValue>` it discards, and
+                    // which of the two Adobe honours is not ours to say.
+                    b"Color" | b"Tint" => {
                         if let Some(id) = attr_value(e, b"Self") {
                             seen_colors.insert(id);
                         }
@@ -584,8 +593,57 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
 
 #[cfg(test)]
 mod tests {
+
+    /// A `<Tint>` already in the source is not re-injected as a
+    /// `<Color>`. The annual's book carried `Color/AnnualVermilion20`
+    /// twice — the `<Tint … BaseColor>` its fixture wrote and a
+    /// `<Color … TintValue>` this injector appended — because only
+    /// `<Color>` counted as "already present". Two elements sharing a
+    /// `Self` is not something to leave to Adobe's tie-break.
+    #[test]
+    fn a_tint_already_in_the_source_is_not_injected_again() {
+        let original = br#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Graphic xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="13.1"><Color Self="Color/Base" Model="Spot" Space="CMYK" ColorValue="0 85 90 5" Name="Base" AlternateSpace="CMYK" AlternateColorValue="0 85 90 5"/><Tint Self="Color/Base20" Model="Process" Space="CMYK" ColorValue="0 85 90 5" Name="Base 20%" TintValue="20" BaseColor="Color/Base"/></idPkg:Graphic>"#;
+
+        let mut palette = Graphic::default();
+        for (self_id, name, tint) in [
+            ("Color/Base", "Base", None),
+            ("Color/Base20", "Base 20%", Some(20.0)),
+        ] {
+            palette.colors.insert(
+                self_id.to_string(),
+                ColorEntry {
+                    self_id: self_id.to_string(),
+                    name: Some(name.to_string()),
+                    space: ColorSpace::Cmyk,
+                    value: vec![0.0, 85.0, 90.0, 5.0],
+                    model: ColorModel::Spot,
+                    alternate_space: Some(ColorSpace::Cmyk),
+                    alternate_value: vec![0.0, 85.0, 90.0, 5.0],
+                    tint,
+                    alpha: None,
+                },
+            );
+        }
+
+        let out = patch_graphic(original, &palette).expect("patch");
+        let s = String::from_utf8(out).expect("utf8");
+        assert_eq!(
+            s.matches(r#"Self="Color/Base20""#).count(),
+            1,
+            "the tint must appear ONCE, not once per spelling: {s}",
+        );
+        assert!(
+            s.contains(r#"<Tint Self="Color/Base20""#),
+            "and it stays the <Tint> the source carried: {s}",
+        );
+        assert_eq!(
+            original, s.as_bytes(),
+            "nothing was missing, so the file is byte-identical",
+        );
+    }
     use super::*;
-    use idml_import::ObjectStyleDef;
+    use idml_import::{ColorModel, ColorSpace, ObjectStyleDef};
 
     /// A minimal but REAL-SHAPED `Resources/Styles.xml`: the three root
     /// groups InDesign always writes, each carrying its reserved
