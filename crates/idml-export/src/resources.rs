@@ -240,9 +240,10 @@ fn push_style_common(
     if let Some(b) = based_on {
         attrs.push(("BasedOn", b.clone()));
     }
-    if let Some(f) = font {
-        attrs.push(("AppliedFont", f.clone()));
-    }
+    // NOT `AppliedFont`: InDesign reads it as a typed child of
+    // `<Properties>`, never as an attribute (see `emit_applied_font`).
+    // `font` stays in the signature because both callers write it —
+    // through the Properties block, after the start tag.
     if let Some(fs) = font_style {
         attrs.push(("FontStyle", fs.clone()));
     }
@@ -268,7 +269,7 @@ fn write_paragraph_style(
         s.point_size,
         &s.fill_color,
     );
-    emit_empty(writer, "ParagraphStyle", &attrs)
+    emit_style_element(writer, "ParagraphStyle", &attrs, &s.font)
 }
 
 fn write_character_style(
@@ -285,7 +286,39 @@ fn write_character_style(
         s.point_size,
         &s.fill_color,
     );
-    emit_empty(writer, "CharacterStyle", &attrs)
+    emit_style_element(writer, "CharacterStyle", &attrs, &s.font)
+}
+
+/// A style element, self-closing when it pins no font and carrying a
+/// `<Properties><AppliedFont type="string">…` child when it does.
+///
+/// The applied font is the one high-frequency style field IDML does NOT
+/// spell as an attribute. Writing it as one cost the annual every
+/// typeface it had: InDesign read the styles, found no applied font,
+/// and composed 134 pages in Minion Pro.
+fn emit_style_element(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    name: &str,
+    attrs: &[(&str, String)],
+    font: &Option<String>,
+) -> Result<(), quick_xml::Error> {
+    let Some(family) = font else {
+        return emit_empty(writer, name, attrs);
+    };
+    let mut start = BytesStart::new(name.to_string());
+    for (k, v) in attrs {
+        start.push_attribute((k.as_bytes(), escape_attr(v).as_bytes()));
+    }
+    writer.write_event(Event::Start(start))?;
+    writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    let mut af = BytesStart::new("AppliedFont");
+    af.push_attribute(("type", "string"));
+    writer.write_event(Event::Start(af))?;
+    writer.write_event(Event::Text(quick_xml::events::BytesText::new(family)))?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("AppliedFont")))?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(name.to_string())))?;
+    Ok(())
 }
 
 /// True for an id in IDML's reserved `$ID/[…]` namespace

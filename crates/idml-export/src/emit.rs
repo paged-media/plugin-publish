@@ -130,6 +130,7 @@ pub(crate) fn story_part(
                 "CharacterStyleRange",
                 &character_run_attrs(r),
             )?;
+            emit_applied_font(&mut writer, &r.font)?;
             rewrite::write_run_content(&mut writer, &r.text)?;
             if mark && ri == last_run {
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
@@ -151,13 +152,37 @@ pub(crate) fn story_part(
     Ok(writer.into_inner().into_inner())
 }
 
+/// `<Properties><AppliedFont type="string">NAME</AppliedFont></Properties>`
+/// — the ONLY spelling InDesign reads for an applied font. Emitted
+/// straight after the range's start tag, where a `<Properties>` block
+/// belongs; nothing is written when the run pins no font.
+fn emit_applied_font(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    font: &Option<String>,
+) -> Result<(), quick_xml::Error> {
+    let Some(name) = font else { return Ok(()) };
+    writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    let mut e = BytesStart::new("AppliedFont");
+    e.push_attribute(("type", "string"));
+    writer.write_event(Event::Start(e))?;
+    writer.write_event(Event::Text(quick_xml::events::BytesText::new(name)))?;
+    writer.write_event(Event::End(BytesEnd::new("AppliedFont")))?;
+    writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+    Ok(())
+}
+
 /// The `<CharacterStyleRange>` attributes for one run — the same key
 /// set `rewrite::character_attr_patch` owns, emitted only when set.
 fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String)> {
     let mut out: Vec<(&'static str, String)> = Vec::new();
-    let string_attrs: [(&'static str, &Option<String>); 9] = [
+    // NOT here: `AppliedFont`. InDesign reads the applied font as a
+    // typed CHILD of `<Properties>`, never as an attribute — a real
+    // InDesign-authored file carries 54 `<AppliedFont type="string">`
+    // elements and not one attribute. We wrote the attribute, Adobe
+    // ignored it, and a 134-page specimen in twenty faces opened
+    // entirely in Minion Pro. `emit_applied_font` writes it now.
+    let string_attrs: [(&'static str, &Option<String>); 8] = [
         ("AppliedCharacterStyle", &r.character_style),
-        ("AppliedFont", &r.font),
         ("FontStyle", &r.font_style),
         ("FillColor", &r.fill_color),
         ("StrokeColor", &r.stroke_color),
