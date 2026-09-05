@@ -917,6 +917,12 @@ struct NewItemPaint<'a> {
     /// [`NONE_OBJECT_STYLE`] sentinel, which is what an item with no
     /// style applied carries.
     applied_object_style: Option<&'a str>,
+    /// `ItemLayer` — the layer the item sits on. Engine-minted items
+    /// never wrote it: InDesign then stacks the whole document on ONE
+    /// layer, by document order alone, and the model's layer order is
+    /// lost on open (measured 2026-09-05 on the annual: 0 of 1932 items
+    /// carried it, 1519 had a layer in the model).
+    item_layer: Option<&'a str>,
 }
 
 /// `Option<String>` has no `const` default that can be borrowed inline,
@@ -948,6 +954,7 @@ impl Default for NewItemPaint<'_> {
             blend_mode: None,
             nonprinting: false,
             applied_object_style: None,
+            item_layer: None,
         }
     }
 }
@@ -1002,6 +1009,9 @@ fn push_common_item_attrs(
     ));
     if paint.nonprinting {
         attrs.push(("Nonprinting", "true".to_string()));
+    }
+    if let Some(l) = paint.item_layer {
+        attrs.push(("ItemLayer", l.to_string()));
     }
 }
 
@@ -1152,6 +1162,7 @@ fn write_new_text_frame(
         blend_mode: f.blend_mode.as_deref(),
         nonprinting: f.nonprinting,
         applied_object_style: f.applied_object_style.as_deref(),
+        item_layer: f.item_layer.as_deref(),
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     emit_start_with_attrs(writer, "TextFrame", &attrs)?;
@@ -1563,6 +1574,7 @@ fn write_new_item(
                         blend_mode: rect.blend_mode.as_deref(),
                         nonprinting: rect.nonprinting,
                         applied_object_style: rect.applied_object_style.as_deref(),
+                        item_layer: rect.item_layer.as_deref(),
                     },
                     rect.bounds,
                     spread,
@@ -1585,6 +1597,7 @@ fn write_new_item(
                         blend_mode: o.blend_mode.as_deref(),
                         nonprinting: o.nonprinting,
                         applied_object_style: o.applied_object_style.as_deref(),
+                        item_layer: o.item_layer.as_deref(),
                     },
                     o.bounds,
                     spread,
@@ -1607,6 +1620,7 @@ fn write_new_item(
                         blend_mode: p.blend_mode.as_deref(),
                         nonprinting: p.nonprinting,
                         applied_object_style: p.applied_object_style.as_deref(),
+                        item_layer: p.item_layer.as_deref(),
                     },
                     p.bounds,
                     &p.anchors,
@@ -1646,6 +1660,7 @@ fn write_new_item(
                         stroke_weight: l.stroke_weight,
                         nonprinting: l.nonprinting,
                         applied_object_style: l.applied_object_style.as_deref(),
+                        item_layer: l.item_layer.as_deref(),
                         ..Default::default()
                     },
                     l.bounds,
@@ -3359,6 +3374,7 @@ fn patch_spread_item(
                         None,
                         Some(&corners),
                         &applied_object_style,
+                        &frame.item_layer,
                     )
                 },
                 &frame_attr_extras(
@@ -3372,6 +3388,7 @@ fn patch_spread_item(
                     None,
                     Some(&corners),
                     applied_object_style.as_deref(),
+                    frame.item_layer.as_deref(),
                 ),
             )?;
             Ok(Some(start.into_owned()))
@@ -3394,6 +3411,7 @@ fn patch_spread_item(
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
+                    item_layer: r.item_layer.clone(),
                     start_arrow: None,
                     end_arrow: None,
                     corners: Some(corner_attrs_of(
@@ -3422,6 +3440,7 @@ fn patch_spread_item(
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
+                    item_layer: r.item_layer.clone(),
                     start_arrow: None,
                     end_arrow: None,
                     // C-18: the B-23 residual is closed — `Oval` now
@@ -3455,6 +3474,7 @@ fn patch_spread_item(
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
+                    item_layer: r.item_layer.clone(),
                     start_arrow: None,
                     end_arrow: None,
                     corners: Some(corner_attrs_of(
@@ -3482,6 +3502,7 @@ fn patch_spread_item(
                     nonprinting: r.nonprinting,
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
+                    item_layer: r.item_layer.clone(),
                     start_arrow: Some(r.start_arrow),
                     end_arrow: Some(r.end_arrow),
                     // C-18: the B-23 residual is closed — `GraphicLine`
@@ -3542,6 +3563,9 @@ struct VectorItem {
     /// (`SetProperty(AppliedObjectStyle)` rewrites it), so it has to
     /// patch back or the applied style is lost on save.
     applied_object_style: Option<String>,
+    /// `ItemLayer` — patched back when the model names a layer; never
+    /// removed (see [`item_layer_patch`]).
+    item_layer: Option<String>,
     /// v43 — `LeftLineEnd` / `RightLineEnd`. `None` for the kinds that
     /// don't carry the fields (Rectangle / Oval / Polygon), so their
     /// source attributes pass through verbatim.
@@ -3773,6 +3797,7 @@ fn patch_vector_item(
                 item.end_arrow,
                 item.corners.as_ref(),
                 &item.applied_object_style,
+                &item.item_layer,
             )
         },
         &frame_attr_extras(
@@ -3786,6 +3811,7 @@ fn patch_vector_item(
             item.end_arrow,
             item.corners.as_ref(),
             item.applied_object_style.as_deref(),
+            item.item_layer.as_deref(),
         ),
     )?;
     Ok(Some(start.into_owned()))
@@ -3813,6 +3839,7 @@ fn frame_attr_patch(
     end_arrow: Option<idml_import::ArrowheadType>,
     corners: Option<&CornerAttrs>,
     applied_object_style: &Option<String>,
+    item_layer: &Option<String>,
 ) -> Option<Patch> {
     // B-23 — corner vocabulary first; `None` falls through to the rest.
     if let Some(c) = corners {
@@ -3822,6 +3849,7 @@ fn frame_attr_patch(
     }
     match key {
         b"AppliedObjectStyle" => Some(applied_object_style_patch(raw, applied_object_style)),
+        b"ItemLayer" => Some(item_layer_patch(raw, item_layer)),
         b"ItemTransform" => tx.patch_for(raw),
         // `fill: None` ⇒ this KIND models no fill (see [`Fill`]); the
         // source attribute is nobody's to rewrite and passes through,
@@ -3885,6 +3913,7 @@ fn frame_attr_extras(
     end_arrow: Option<idml_import::ArrowheadType>,
     corners: Option<&CornerAttrs>,
     applied_object_style: Option<&str>,
+    item_layer: Option<&str>,
 ) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     // An object style APPLIED to an item whose source element never
@@ -3893,6 +3922,12 @@ fn frame_attr_extras(
     // used to fall off here.
     if let Some(s) = applied_object_style {
         out.push(("AppliedObjectStyle", s.to_string()));
+    }
+    // The layer an item sits on, when the source element never said —
+    // every engine-minted item, until 2026-09-05. Without it InDesign
+    // opens the whole document on one layer.
+    if let Some(l) = item_layer {
+        out.push(("ItemLayer", l.to_string()));
     }
     if let Some(m) = tx.extra() {
         out.push(("ItemTransform", m));
@@ -3956,6 +3991,18 @@ fn opt_string_patch(v: &Option<String>) -> Patch {
     match v {
         Some(s) => Patch::Set(s.clone()),
         None => Patch::Remove,
+    }
+}
+
+/// `ItemLayer`: the model's layer when it names one (kept when the
+/// source already spells it), and KEPT — never removed — when the model
+/// names none: an item's layer is never something the engine unsets, so
+/// an absent model value means "the source's word stands".
+fn item_layer_patch(raw: &[u8], model: &Option<String>) -> Patch {
+    match model {
+        Some(l) if raw == l.as_bytes() => Patch::Keep,
+        Some(l) => Patch::Set(l.clone()),
+        None => Patch::Keep,
     }
 }
 
