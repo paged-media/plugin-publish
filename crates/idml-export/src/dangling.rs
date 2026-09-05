@@ -84,6 +84,13 @@ pub fn drop_dangling_style_refs(
     original: &[u8],
     styles: &StyleSheet,
 ) -> Result<Vec<u8>, quick_xml::Error> {
+    // A document with no stylesheet at all (a bare fixture, no
+    // `Resources/Styles.xml`) defines nothing, so every reference would
+    // be dangling — but there is nothing to reconcile the references
+    // AGAINST; such a package passes through as it is.
+    if styles.paragraph_styles.is_empty() && styles.character_styles.is_empty() {
+        return Ok(original.to_vec());
+    }
     let key_for = |name: &[u8]| -> Option<&'static [u8]> {
         match name {
             PARAGRAPH_RANGE => Some(APPLIED_PARAGRAPH),
@@ -171,6 +178,15 @@ mod tests {
         assert_eq!(
             out,
             r#"<Story Self="u1"><ParagraphStyleRange Justification="LeftAlign"><CharacterStyleRange PointSize="9"><Content>a</Content></CharacterStyleRange><CharacterStyleRange AppliedCharacterStyle="CharacterStyle/Strong"><Content>b</Content></CharacterStyleRange><CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>c</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body"><CharacterStyleRange/></ParagraphStyleRange></Story>"#
+        );
+    }
+
+    #[test]
+    fn a_document_with_no_stylesheet_is_left_alone() {
+        let src = r#"<Story Self="u1"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body"><CharacterStyleRange AppliedCharacterStyle="CharacterStyle/Strong"><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
+        assert_eq!(
+            drop_dangling_style_refs(src.as_bytes(), &StyleSheet::default()).unwrap(),
+            src.as_bytes()
         );
     }
 
