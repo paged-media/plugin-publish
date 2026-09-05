@@ -172,6 +172,64 @@ fn rewrite_with(
     if wraps.is_empty() {
         return Ok(original.to_vec());
     }
+    // Pass 1 — which hosts already spell their wrap (the block follows
+    // the host's Properties, so a single pass would have written ours
+    // before seeing theirs).
+    let spelled: std::collections::HashSet<String> = {
+        let mut reader = Reader::from_reader(original);
+        let config = reader.config_mut();
+        config.expand_empty_elements = false;
+        config.trim_text(false);
+        let mut buf = Vec::new();
+        let mut depth = 0usize;
+        let mut host: Option<(usize, String)> = None;
+        let mut out = std::collections::HashSet::new();
+        loop {
+            match reader.read_event_into(&mut buf)? {
+                Event::Eof => break,
+                Event::Start(e) => {
+                    depth += 1;
+                    let name = e.name().as_ref().to_vec();
+                    if host.is_none() && is_host_name(&name) {
+                        if let Some(id) = attr_value(&e, b"Self") {
+                            host = Some((depth, id));
+                        }
+                    } else if let Some((d, id)) = host.as_ref() {
+                        if depth == *d + 1 && name == TEXT_WRAP_PREFERENCE {
+                            out.insert(id.clone());
+                        }
+                    }
+                }
+                Event::Empty(e) => {
+                    if let Some((d, id)) = host.as_ref() {
+                        if depth + 1 == *d + 1 && e.name().as_ref() == TEXT_WRAP_PREFERENCE {
+                            out.insert(id.clone());
+                        }
+                    }
+                }
+                Event::End(_) => {
+                    if let Some((d, _)) = host.as_ref() {
+                        if *d == depth {
+                            host = None;
+                        }
+                    }
+                    depth = depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+        out
+    };
+    let wraps: HashMap<String, TextWrap> = wraps
+        .iter()
+        .filter(|(id, _)| !spelled.contains(*id))
+        .map(|(id, w)| (id.clone(), *w))
+        .collect();
+    if wraps.is_empty() {
+        return Ok(original.to_vec());
+    }
+    let wraps = &wraps;
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -313,6 +371,25 @@ mod tests {
         let out = String::from_utf8(rewrite_with(src.as_bytes(), &wraps).unwrap()).unwrap();
         assert!(out.contains(r#"<Rectangle Self="p1"><TextWrapPreference Inverse="false" ApplyToMasterPageOnly="false" TextWrapSide="BothSides" TextWrapMode="ContourTextWrap"><Properties><TextWrapOffset Top="8" Left="8" Bottom="8" Right="8"/></Properties><ContourOption ContourType="SameAsClipping" IncludeInsideEdges="true" ContourPathName="$ID/"/></TextWrapPreference></Rectangle>"#), "{out}");
         let spelled = r#"<Spread Self="s1"><Rectangle Self="p1"><Properties/><TextWrapPreference Inverse="false" TextWrapMode="ContourTextWrap"><Properties><TextWrapOffset Top="8" Left="8" Bottom="8" Right="8"/></Properties></TextWrapPreference></Rectangle></Spread>"#;
+        assert_eq!(
+            rewrite_with(spelled.as_bytes(), &wraps).unwrap(),
+            spelled.as_bytes()
+        );
+    }
+
+    #[test]
+    fn a_wrap_spelled_after_an_open_properties_block_is_not_written_twice() {
+        let wraps = wraps_with(
+            "p1",
+            TextWrap {
+                mode: TextWrapMode::BoundingBoxTextWrap,
+                offsets: [6.0, 12.0, 6.0, 12.0],
+                invert: None,
+                contour_type: None,
+                include_inside_edges: None,
+            },
+        );
+        let spelled = r#"<Spread Self="s1"><Rectangle Self="p1"><Properties><PathGeometry/></Properties><TextWrapPreference Inverse="false" TextWrapMode="BoundingBoxTextWrap"><Properties><TextWrapOffset Top="6" Left="12" Bottom="6" Right="12"/></Properties></TextWrapPreference></Rectangle></Spread>"#;
         assert_eq!(
             rewrite_with(spelled.as_bytes(), &wraps).unwrap(),
             spelled.as_bytes()
