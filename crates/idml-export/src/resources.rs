@@ -262,7 +262,14 @@ fn write_paragraph_style(
         s.point_size,
         &s.fill_color,
     );
-    emit_style_element(writer, "ParagraphStyle", &attrs, &s.based_on, &s.font, s.leading)
+    emit_style_element(
+        writer,
+        "ParagraphStyle",
+        &attrs,
+        &s.based_on,
+        &s.font,
+        s.leading,
+    )
 }
 
 fn write_character_style(
@@ -277,7 +284,14 @@ fn write_character_style(
         s.point_size,
         &s.fill_color,
     );
-    emit_style_element(writer, "CharacterStyle", &attrs, &s.based_on, &s.font, s.leading)
+    emit_style_element(
+        writer,
+        "CharacterStyle",
+        &attrs,
+        &s.based_on,
+        &s.font,
+        s.leading,
+    )
 }
 
 /// A style element, self-closing when it neither pins a font nor is
@@ -331,7 +345,9 @@ fn emit_style_element(
         let mut le = BytesStart::new("Leading");
         le.push_attribute(("type", "unit"));
         writer.write_event(Event::Start(le))?;
-        writer.write_event(Event::Text(quick_xml::events::BytesText::new(&format_f32(l))))?;
+        writer.write_event(Event::Text(quick_xml::events::BytesText::new(&format_f32(
+            l,
+        ))))?;
         writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Leading")))?;
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;

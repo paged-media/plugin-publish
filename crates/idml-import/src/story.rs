@@ -279,6 +279,12 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // 0 / None means Properties belongs to a Story / TextFrame / other
     // container we don't extract typed children from yet.
     let mut properties_kind: u8 = 0;
+    // A tab stop being read from InDesign's own spelling — a
+    // `<ListItem type="record">` under the paragraph's `<TabList>` whose
+    // fields are child elements. Pushed at the record's close once a
+    // `<Position>` was seen.
+    let mut pending_tab: Option<TabStop> = None;
+    let mut pending_tab_has_position = false;
     let mut properties_field: Option<Vec<u8>> = None;
     let mut properties_text = String::new();
     // Anchored-frame state. When a <TextFrame> / <Rectangle> /
@@ -876,6 +882,24 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             0
                         };
                     }
+                    b"ListItem" if properties_kind == 2 => {
+                        // InDesign spells a paragraph's tab stop as a
+                        // `<ListItem type="record">` of child elements
+                        // (`Alignment`, `AlignmentCharacter`, `Leader`,
+                        // `Position`); the attribute form the generator
+                        // writes (`<TabStop Position=…/>`) is read by the
+                        // `TabStop` arm above and leaves this record
+                        // without a position, so it is not pushed twice.
+                        pending_tab = Some(TabStop {
+                            position: 0.0,
+                            alignment: None,
+                            alignment_character: None,
+                            leader: None,
+                        });
+                        pending_tab_has_position = false;
+                        properties_field = None;
+                        properties_text.clear();
+                    }
                     other if properties_kind != 0 => {
                         // Capture the next Text events as the value of
                         // this typed child element. The `type` attribute
@@ -921,9 +945,52 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         properties_field = None;
                         properties_text.clear();
                     }
+                    b"ListItem" if properties_kind == 2 => {
+                        if let Some(stop) = pending_tab.take() {
+                            if pending_tab_has_position {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    p.tab_list.push(stop);
+                                }
+                            }
+                        }
+                        pending_tab_has_position = false;
+                        properties_field = None;
+                        properties_text.clear();
+                    }
                     name if properties_kind != 0 && properties_field.as_deref() == Some(name) => {
                         let value = properties_text.trim().to_string();
                         match (properties_kind, name) {
+                            // ParagraphStyleRange Properties: InDesign's
+                            // record-form tab stop.
+                            (2, b"Position") => {
+                                if let Some(t) = pending_tab.as_mut() {
+                                    if let Ok(v) = value.parse::<f32>() {
+                                        t.position = v;
+                                        pending_tab_has_position = true;
+                                    }
+                                }
+                            }
+                            (2, b"Alignment") => {
+                                if let Some(t) = pending_tab.as_mut() {
+                                    if !value.is_empty() {
+                                        t.alignment = Some(value);
+                                    }
+                                }
+                            }
+                            (2, b"AlignmentCharacter") => {
+                                if let Some(t) = pending_tab.as_mut() {
+                                    if !value.is_empty() {
+                                        t.alignment_character = Some(value);
+                                    }
+                                }
+                            }
+                            (2, b"Leader") => {
+                                if let Some(t) = pending_tab.as_mut() {
+                                    if !value.is_empty() {
+                                        t.leader = Some(value);
+                                    }
+                                }
+                            }
                             // CharacterStyleRange Properties.
                             (1, b"AppliedFont") => {
                                 if let Some(run) = current_run.as_mut() {
@@ -1629,6 +1696,46 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn indesign_record_form_tab_list_reaches_the_paragraph() {
+        // InDesign 20.0.1's own spelling (corpus packs, 2026-09-06): a
+        // `<ListItem type="record">` of child elements, not the
+        // generator's `<TabStop Position=…/>` attributes.
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+  <Story Self="s">
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+      <Properties>
+        <TabList type="list">
+          <ListItem type="record">
+            <Alignment type="enumeration">RightAlign</Alignment>
+            <AlignmentCharacter type="string">.</AlignmentCharacter>
+            <Leader type="string">.</Leader>
+            <Position type="unit">144</Position>
+          </ListItem>
+          <ListItem type="record">
+            <Alignment type="enumeration">LeftAlign</Alignment>
+            <AlignmentCharacter type="string">.</AlignmentCharacter>
+            <Leader type="string"></Leader>
+            <Position type="unit">34.5</Position>
+          </ListItem>
+        </TabList>
+      </Properties>
+      <CharacterStyleRange><Content>a</Content><Tab/><Content>b</Content></CharacterStyleRange>
+    </ParagraphStyleRange>
+  </Story>
+</idPkg:Story>"#;
+        let story = super::parse_story(xml).unwrap();
+        let tabs = &story.paragraphs[0].tab_list;
+        assert_eq!(tabs.len(), 2, "{tabs:?}");
+        assert_eq!(tabs[0].position, 144.0);
+        assert_eq!(tabs[0].alignment.as_deref(), Some("RightAlign"));
+        assert_eq!(tabs[0].leader.as_deref(), Some("."));
+        assert_eq!(tabs[1].position, 34.5);
+        assert_eq!(tabs[1].alignment.as_deref(), Some("LeftAlign"));
+        assert_eq!(tabs[1].leader, None, "an empty <Leader> is no leader");
+    }
+
     use super::*;
 
     const SAMPLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>

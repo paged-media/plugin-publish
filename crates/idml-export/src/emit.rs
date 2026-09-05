@@ -179,11 +179,10 @@ pub(crate) fn write_paragraphs(
 ) -> Result<(), quick_xml::Error> {
     let last_para = paragraphs.len().saturating_sub(1);
     for (pi, p) in paragraphs.iter().enumerate() {
-        let mut attrs: Vec<(&str, String)> = Vec::new();
-        if let Some(style) = &p.paragraph_style {
-            attrs.push(("AppliedParagraphStyle", style.clone()));
-        }
-        rewrite::emit_start_with_attrs(writer, "ParagraphStyleRange", &attrs)?;
+        rewrite::emit_start_with_attrs(writer, "ParagraphStyleRange", &paragraph_attrs(p))?;
+        // `<Properties>` is the range's first child in InDesign's own
+        // files; the anchor markers follow it.
+        emit_paragraph_properties(writer, p)?;
         if pi == 0 {
             write_anchor_markers(writer, anchors)?;
         }
@@ -544,6 +543,227 @@ pub(crate) fn emit_applied_font(
 
 /// The `<CharacterStyleRange>` attributes for one run — the same key
 /// set `rewrite::character_attr_patch` owns, emitted only when set.
+/// The `RuleAbove*` / `RuleBelow*` attribute names, InDesign's
+/// spelling (`…LineWeight`, not `…Weight`; the importer reads both).
+pub(crate) struct RuleKeys {
+    pub on: &'static str,
+    pub color: &'static str,
+    pub tint: &'static str,
+    pub weight: &'static str,
+    pub offset: &'static str,
+    pub left_indent: &'static str,
+    pub right_indent: &'static str,
+    pub width: &'static str,
+}
+
+pub(crate) const RULE_ABOVE: RuleKeys = RuleKeys {
+    on: "RuleAbove",
+    color: "RuleAboveColor",
+    tint: "RuleAboveTint",
+    weight: "RuleAboveLineWeight",
+    offset: "RuleAboveOffset",
+    left_indent: "RuleAboveLeftIndent",
+    right_indent: "RuleAboveRightIndent",
+    width: "RuleAboveWidth",
+};
+
+pub(crate) const RULE_BELOW: RuleKeys = RuleKeys {
+    on: "RuleBelow",
+    color: "RuleBelowColor",
+    tint: "RuleBelowTint",
+    weight: "RuleBelowLineWeight",
+    offset: "RuleBelowOffset",
+    left_indent: "RuleBelowLeftIndent",
+    right_indent: "RuleBelowRightIndent",
+    width: "RuleBelowWidth",
+};
+
+fn paragraph_rule_attrs(
+    out: &mut Vec<(&'static str, String)>,
+    keys: &RuleKeys,
+    rule: &idml_import::ParagraphRule,
+) {
+    if let Some(on) = rule.on {
+        out.push((keys.on, on.to_string()));
+    }
+    if let Some(c) = &rule.color {
+        out.push((keys.color, c.clone()));
+    }
+    let f32_attrs: [(&'static str, Option<f32>); 5] = [
+        (keys.tint, rule.tint),
+        (keys.weight, rule.weight),
+        (keys.offset, rule.offset),
+        (keys.left_indent, rule.left_indent),
+        (keys.right_indent, rule.right_indent),
+    ];
+    for (k, v) in f32_attrs {
+        if let Some(v) = v {
+            out.push((k, rewrite::format_f32(v)));
+        }
+    }
+    if let Some(w) = &rule.width {
+        out.push((keys.width, w.clone()));
+    }
+}
+
+/// The `<ParagraphStyleRange>` attributes for one paragraph — the same
+/// key set `rewrite::paragraph_attr_patch` owns, emitted only when set.
+/// These ARE a paragraph's local overrides as far as InDesign is
+/// concerned: the annual's spacing battery (space before/after, indents,
+/// keeps, drop caps, rules, all authored by mutation) used to be saved
+/// with only its style reference, and InDesign 20.0.1 opened it with
+/// none of them (measured 2026-09-06). Tab stops and the bullet
+/// character are `<Properties>` children — [`emit_paragraph_properties`].
+pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    if let Some(s) = &p.paragraph_style {
+        out.push(("AppliedParagraphStyle", s.clone()));
+    }
+    if let Some(j) = p.justification {
+        out.push(("Justification", j.as_idml().to_string()));
+    }
+    let f32_attrs: [(&'static str, Option<f32>); 5] = [
+        ("FirstLineIndent", p.first_line_indent),
+        ("LeftIndent", p.left_indent),
+        ("RightIndent", p.right_indent),
+        ("SpaceBefore", p.space_before),
+        ("SpaceAfter", p.space_after),
+    ];
+    for (k, v) in f32_attrs {
+        if let Some(v) = v {
+            out.push((k, rewrite::format_f32(v)));
+        }
+    }
+    if p.drop_cap_characters > 0 {
+        out.push(("DropCapCharacters", p.drop_cap_characters.to_string()));
+    }
+    if p.drop_cap_lines > 0 {
+        out.push(("DropCapLines", p.drop_cap_lines.to_string()));
+    }
+    if p.drop_cap_detail != 0 {
+        out.push(("DropCapDetail", p.drop_cap_detail.to_string()));
+    }
+    let bool_attrs: [(&'static str, Option<bool>); 2] = [
+        ("Hyphenation", p.hyphenation),
+        ("KeepLinesTogether", p.keep_lines_together),
+    ];
+    for (k, v) in bool_attrs {
+        if let Some(b) = v {
+            out.push((k, b.to_string()));
+        }
+    }
+    if let Some(n) = p.keep_with_next {
+        out.push(("KeepWithNext", n.to_string()));
+    }
+    let string_attrs: [(&'static str, &Option<String>); 4] = [
+        ("BulletsAndNumberingListType", &p.bullets_list_type),
+        ("NumberingFormat", &p.numbering_format),
+        ("AppliedNumberingList", &p.applied_numbering_list),
+        ("KinsokuSet", &p.kinsoku_set),
+    ];
+    for (k, v) in string_attrs {
+        if let Some(s) = v {
+            out.push((k, s.clone()));
+        }
+    }
+    paragraph_rule_attrs(&mut out, &RULE_ABOVE, &p.rule_above);
+    paragraph_rule_attrs(&mut out, &RULE_BELOW, &p.rule_below);
+    out
+}
+
+/// Whether a paragraph carries either `<Properties>` child.
+pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
+    !p.tab_list.is_empty() || p.bullet_character.is_some()
+}
+
+/// The paragraph's `<Properties>` block — its tab stops and bullet
+/// character in InDesign's own spelling (see `paragraph_props`).
+/// Nothing is written when the paragraph carries neither.
+pub(crate) fn emit_paragraph_properties(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    p: &idml_import::Paragraph,
+) -> Result<(), quick_xml::Error> {
+    if !paragraph_has_properties(p) {
+        return Ok(());
+    }
+    writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    if !p.tab_list.is_empty() {
+        write_tab_list(writer, &p.tab_list)?;
+    }
+    if let Some(cp) = p.bullet_character {
+        write_bullet_char(writer, cp)?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+    Ok(())
+}
+
+fn write_typed_text(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    name: &str,
+    ty: &str,
+    text: &str,
+) -> Result<(), quick_xml::Error> {
+    let mut e = BytesStart::new(name);
+    e.push_attribute(("type", ty));
+    writer.write_event(Event::Start(e))?;
+    writer.write_event(Event::Text(quick_xml::events::BytesText::new(text)))?;
+    writer.write_event(Event::End(BytesEnd::new(name)))?;
+    Ok(())
+}
+
+/// `<TabList type="list">` of `<ListItem type="record">` records, each
+/// spelling all four fields the way InDesign 20.0.1 does — the
+/// alignment character defaults to `.` and an absent leader is an empty
+/// `<Leader>` (measured on the corpus's InDesign-authored packs,
+/// 2026-09-06).
+pub(crate) fn write_tab_list(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    stops: &[idml_import::TabStop],
+) -> Result<(), quick_xml::Error> {
+    let mut tl = BytesStart::new("TabList");
+    tl.push_attribute(("type", "list"));
+    writer.write_event(Event::Start(tl))?;
+    for s in stops {
+        let mut li = BytesStart::new("ListItem");
+        li.push_attribute(("type", "record"));
+        writer.write_event(Event::Start(li))?;
+        write_typed_text(
+            writer,
+            "Alignment",
+            "enumeration",
+            s.alignment.as_deref().unwrap_or("LeftAlign"),
+        )?;
+        write_typed_text(
+            writer,
+            "AlignmentCharacter",
+            "string",
+            s.alignment_character.as_deref().unwrap_or("."),
+        )?;
+        write_typed_text(
+            writer,
+            "Leader",
+            "string",
+            s.leader.as_deref().unwrap_or(""),
+        )?;
+        write_typed_text(writer, "Position", "unit", &rewrite::format_f32(s.position))?;
+        writer.write_event(Event::End(BytesEnd::new("ListItem")))?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("TabList")))?;
+    Ok(())
+}
+
+/// `<BulletChar BulletCharacterType="UnicodeOnly" BulletCharacterValue="…"/>`.
+pub(crate) fn write_bullet_char(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    code_point: u32,
+) -> Result<(), quick_xml::Error> {
+    let mut e = BytesStart::new("BulletChar");
+    e.push_attribute(("BulletCharacterType", "UnicodeOnly"));
+    e.push_attribute(("BulletCharacterValue", code_point.to_string().as_str()));
+    writer.write_event(Event::Empty(e))?;
+    Ok(())
+}
+
 pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String)> {
     let mut out: Vec<(&'static str, String)> = Vec::new();
     // NOT here: `AppliedFont`. InDesign reads the applied font as a

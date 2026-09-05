@@ -4110,6 +4110,13 @@ pub fn rewrite_story_in_frame(
     story: &Story,
     host_width: Option<f32>,
 ) -> Result<Vec<u8>, quick_xml::Error> {
+    // Tab stops and bullet characters are `<Properties>` children, not
+    // range attributes; they are spelled first, and the provenance below
+    // is derived from the spelled bytes. The pass adds, replaces and
+    // drops those children only, so the parser maps the same ranges and
+    // runs either way.
+    let spelled = crate::paragraph_props::spell(original, story)?;
+    let original: &[u8] = &spelled;
     let (provenance, provenance_ok) = match idml_import::parse_story_with_provenance(original) {
         Ok((_, p)) => (p, true),
         Err(_) => (Default::default(), false),
@@ -4923,7 +4930,7 @@ pub(crate) fn write_run_content(
 
 /// The model paragraph the `<ParagraphStyleRange>` at `pos` produced,
 /// within `scope` (the story's paragraph list, or a cell's).
-fn resolve_paragraph<'a>(
+pub(crate) fn resolve_paragraph<'a>(
     provenance: &idml_import::StoryProvenance,
     pos: u64,
     scope: &'a [Paragraph],
@@ -5069,30 +5076,122 @@ fn patch_paragraph_range(
     para: Option<&idml_import::Paragraph>,
 ) -> Result<BytesStart<'static>, quick_xml::Error> {
     let Some(para) = para else {
-        // No model paragraph aligns with this range — pass through
-        // verbatim, exactly as `patch_character_range` does for an
-        // unmatched run. Falling through with `style: None` instead
-        // DELETED the source's `AppliedParagraphStyle`, which is what
-        // an empty story (every range dropped by the parser) got: 99
-        // corpus stories lost the attribute on a save that changed
-        // nothing.
         return Ok(e.clone().into_owned());
     };
-    let para = Some(para);
-    let style = para.and_then(|p| p.paragraph_style.clone());
-    let extras: Vec<(&str, String)> = match &style {
-        Some(s) => vec![("AppliedParagraphStyle", s.clone())],
-        None => Vec::new(),
-    };
-    let start = patch_start(
-        e,
-        |k, _| match k {
-            b"AppliedParagraphStyle" => Some(opt_string_patch(&style)),
-            _ => None,
-        },
-        &extras,
-    )?;
+    let extras = crate::emit::paragraph_attrs(para);
+    let start = patch_start(e, |k, raw| paragraph_attr_patch(k, raw, para), &extras)?;
     Ok(start.into_owned())
+}
+
+/// An integer attribute whose absence means `0` (`DropCapCharacters`,
+/// `DropCapLines`, `DropCapDetail`): a source spelling of the model's
+/// value keeps its bytes, a zero drops the attribute, anything else is
+/// rewritten.
+fn preserving_int_patch(raw: Option<&str>, v: i64) -> Patch {
+    if raw.and_then(|s| s.trim().parse::<i64>().ok()) == Some(v) {
+        return Patch::Keep;
+    }
+    if v == 0 {
+        Patch::Remove
+    } else {
+        Patch::Set(v.to_string())
+    }
+}
+
+fn opt_u32_patch(raw: Option<&str>, v: Option<u32>) -> Patch {
+    match v {
+        Some(n) => {
+            if raw.and_then(|s| s.trim().parse::<u32>().ok()) == Some(n) {
+                Patch::Keep
+            } else {
+                Patch::Set(n.to_string())
+            }
+        }
+        None => Patch::Remove,
+    }
+}
+
+/// `AppliedNumberingList`: the parser reads InDesign's several "no
+/// list" spellings (`n`, `NumberingList/n`, `…[No numbering list]`) as
+/// `None`, so a `None` model keeps such a source spelling rather than
+/// deleting it, and only a real list name that the model dropped is
+/// rewritten to `n`.
+fn numbering_list_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
+    match v {
+        Some(s) => Patch::Set(s.clone()),
+        None => match raw {
+            Some("n") | Some("NumberingList/n") | Some("") => Patch::Keep,
+            Some(r) if r.ends_with("[No numbering list]") => Patch::Keep,
+            Some(_) => Patch::Set("n".to_string()),
+            None => Patch::Remove,
+        },
+    }
+}
+
+fn paragraph_rule_patch(
+    key: &[u8],
+    raw: Option<&str>,
+    keys: &crate::emit::RuleKeys,
+    rule: &idml_import::ParagraphRule,
+) -> Option<Patch> {
+    let k = std::str::from_utf8(key).ok()?;
+    if k == keys.on {
+        Some(opt_bool_patch(rule.on))
+    } else if k == keys.color {
+        Some(opt_string_patch(&rule.color))
+    } else if k == keys.tint {
+        Some(preserving_f32_patch(raw, rule.tint))
+    } else if k == keys.weight {
+        Some(preserving_f32_patch(raw, rule.weight))
+    } else if k == keys.offset {
+        Some(preserving_f32_patch(raw, rule.offset))
+    } else if k == keys.left_indent {
+        Some(preserving_f32_patch(raw, rule.left_indent))
+    } else if k == keys.right_indent {
+        Some(preserving_f32_patch(raw, rule.right_indent))
+    } else if k == keys.width {
+        Some(opt_string_patch(&rule.width))
+    } else {
+        None
+    }
+}
+
+/// The `<ParagraphStyleRange>` attributes the model owns — every
+/// paragraph override InDesign reads from the range (the key set
+/// `emit::paragraph_attrs` writes). A key the model does not own passes
+/// through verbatim (`HyphenationZone`, `DropcapDetail` in InDesign's
+/// own lowercase-c spelling, …).
+pub(crate) fn paragraph_attr_patch(
+    key: &[u8],
+    raw: &[u8],
+    p: &idml_import::Paragraph,
+) -> Option<Patch> {
+    let raw = std::str::from_utf8(raw).ok();
+    match key {
+        b"AppliedParagraphStyle" => Some(opt_string_patch(&p.paragraph_style)),
+        b"Justification" => Some(match p.justification {
+            Some(j) if raw == Some(j.as_idml()) => Patch::Keep,
+            Some(j) => Patch::Set(j.as_idml().to_string()),
+            None => Patch::Remove,
+        }),
+        b"FirstLineIndent" => Some(preserving_f32_patch(raw, p.first_line_indent)),
+        b"LeftIndent" => Some(preserving_f32_patch(raw, p.left_indent)),
+        b"RightIndent" => Some(preserving_f32_patch(raw, p.right_indent)),
+        b"SpaceBefore" => Some(preserving_f32_patch(raw, p.space_before)),
+        b"SpaceAfter" => Some(preserving_f32_patch(raw, p.space_after)),
+        b"DropCapCharacters" => Some(preserving_int_patch(raw, p.drop_cap_characters as i64)),
+        b"DropCapLines" => Some(preserving_int_patch(raw, p.drop_cap_lines as i64)),
+        b"DropCapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
+        b"Hyphenation" => Some(opt_bool_patch(p.hyphenation)),
+        b"KeepLinesTogether" => Some(opt_bool_patch(p.keep_lines_together)),
+        b"KeepWithNext" => Some(opt_u32_patch(raw, p.keep_with_next)),
+        b"BulletsAndNumberingListType" => Some(opt_string_patch(&p.bullets_list_type)),
+        b"NumberingFormat" => Some(opt_string_patch(&p.numbering_format)),
+        b"AppliedNumberingList" => Some(numbering_list_patch(raw, &p.applied_numbering_list)),
+        b"KinsokuSet" => Some(opt_string_patch(&p.kinsoku_set)),
+        _ => paragraph_rule_patch(key, raw, &crate::emit::RULE_ABOVE, &p.rule_above)
+            .or_else(|| paragraph_rule_patch(key, raw, &crate::emit::RULE_BELOW, &p.rule_below)),
+    }
 }
 
 fn patch_character_range(
@@ -5258,6 +5357,59 @@ pub(crate) fn unformatted_xref_sources(story: &[u8]) -> Result<usize, quick_xml:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paragraph_overrides_are_patched_onto_the_range() {
+        // InDesign reads a paragraph's local overrides from these range
+        // attributes; the patch lane used to own only the style
+        // reference, so an override authored by mutation was saved
+        // nowhere (the annual's spacing battery, 2026-09-06).
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body" Justification="CenterAlign" SpaceAfter="6" HyphenationZone="36"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+        let p = &mut story.paragraphs[0];
+        p.justification = Some(idml_import::Justification::LeftJustified);
+        p.space_after = None;
+        p.space_before = Some(13.0);
+        p.first_line_indent = Some(26.0);
+        p.left_indent = Some(18.0);
+        p.right_indent = Some(18.0);
+        p.keep_with_next = Some(1);
+        p.keep_lines_together = Some(true);
+        p.hyphenation = Some(false);
+        p.drop_cap_characters = 1;
+        p.drop_cap_lines = 3;
+        p.rule_above.on = Some(true);
+        p.rule_above.weight = Some(1.5);
+        p.rule_above.color = Some("Color/Black".into());
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        for needle in [
+            r#"Justification="LeftJustified""#,
+            r#"SpaceBefore="13""#,
+            r#"FirstLineIndent="26""#,
+            r#"LeftIndent="18""#,
+            r#"RightIndent="18""#,
+            r#"KeepWithNext="1""#,
+            r#"KeepLinesTogether="true""#,
+            r#"Hyphenation="false""#,
+            r#"DropCapCharacters="1""#,
+            r#"DropCapLines="3""#,
+            r#"RuleAbove="true""#,
+            r#"RuleAboveColor="Color/Black""#,
+            r#"RuleAboveLineWeight="1.5""#,
+            r#"HyphenationZone="36""#,
+        ] {
+            assert!(out.contains(needle), "{needle} missing: {out}");
+        }
+        assert!(
+            !out.contains("SpaceAfter"),
+            "a cleared override is dropped: {out}"
+        );
+    }
 
     /// The `f32` you get from parsing a corpus spelling.
     ///

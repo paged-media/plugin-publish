@@ -86,6 +86,7 @@ pub mod guides;
 pub mod images;
 mod navigation;
 mod paged;
+mod paragraph_props;
 pub mod preferences;
 mod reorder;
 pub mod resources;
