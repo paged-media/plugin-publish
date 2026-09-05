@@ -76,6 +76,7 @@ use std::io::{Cursor, Read, Write};
 
 use paged_scene::{Document, ParsedStory};
 
+pub mod based_on;
 mod emit;
 pub mod face;
 pub mod fonts;
@@ -759,6 +760,12 @@ pub(crate) fn write_package(
                 entry: STYLES_SRC.to_string(),
                 source,
             })?;
+        // … and every parent is a typed child, not an attribute (see
+        // [`based_on`]).
+        let new = based_on::patch_based_on(&new).map_err(|source| WriteError::Rewrite {
+            entry: STYLES_SRC.to_string(),
+            source,
+        })?;
         if new != orig.as_slice() {
             patched.insert(STYLES_SRC.to_string(), new);
         }

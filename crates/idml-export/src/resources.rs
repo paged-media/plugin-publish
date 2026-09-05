@@ -228,8 +228,6 @@ pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quic
 fn push_style_common(
     attrs: &mut Vec<(&'static str, String)>,
     name: &Option<String>,
-    based_on: &Option<String>,
-    _font: &Option<String>,
     font_style: &Option<String>,
     point_size: Option<f32>,
     fill_color: &Option<String>,
@@ -237,13 +235,10 @@ fn push_style_common(
     if let Some(n) = name {
         attrs.push(("Name", n.clone()));
     }
-    if let Some(b) = based_on {
-        attrs.push(("BasedOn", b.clone()));
-    }
-    // NOT `AppliedFont`: InDesign reads it as a typed child of
-    // `<Properties>`, never as an attribute (see `emit_applied_font`).
-    // `font` stays in the signature because both callers write it —
-    // through the Properties block, after the start tag.
+    // NOT `AppliedFont`, and NOT `BasedOn`: InDesign reads both as typed
+    // children of `<Properties>`, never as attributes (see
+    // [`emit_style_element`]). Both callers write them through the
+    // Properties block, after the start tag.
     if let Some(fs) = font_style {
         attrs.push(("FontStyle", fs.clone()));
     }
@@ -263,13 +258,11 @@ fn write_paragraph_style(
     push_style_common(
         &mut attrs,
         &s.name,
-        &s.based_on,
-        &s.font,
         &s.font_style,
         s.point_size,
         &s.fill_color,
     );
-    emit_style_element(writer, "ParagraphStyle", &attrs, &s.font)
+    emit_style_element(writer, "ParagraphStyle", &attrs, &s.based_on, &s.font)
 }
 
 fn write_character_style(
@@ -280,46 +273,72 @@ fn write_character_style(
     push_style_common(
         &mut attrs,
         &s.name,
-        &s.based_on,
-        &s.font,
         &s.font_style,
         s.point_size,
         &s.fill_color,
     );
-    emit_style_element(writer, "CharacterStyle", &attrs, &s.font)
+    emit_style_element(writer, "CharacterStyle", &attrs, &s.based_on, &s.font)
 }
 
-/// A style element, self-closing when it pins no font and carrying a
-/// `<Properties><AppliedFont type="string">…` child when it does.
+/// A style element, self-closing when it neither pins a font nor is
+/// based on another style, and carrying a `<Properties>` block with
+/// `<BasedOn type="object">…` and / or `<AppliedFont type="string">…`
+/// children when it does.
 ///
-/// The applied font is the one high-frequency style field IDML does NOT
-/// spell as an attribute. Writing it as one cost the annual every
-/// typeface it had: InDesign read the styles, found no applied font,
-/// and composed 134 pages in Minion Pro.
+/// The applied font and the parent style are the two high-frequency
+/// style fields IDML does NOT spell as attributes. Writing the font as
+/// one cost the annual every typeface it had: InDesign read the styles,
+/// found no applied font, and composed 134 pages in Minion Pro. Writing
+/// `BasedOn` as one cost it every cascade (measured 2026-09-05): InDesign
+/// reported every style based on `[No paragraph style]`, "Body First"
+/// (based on the 9.5 pt Source Serif body) composed at 12 pt in the root
+/// face, and 4,449 characters fell to Minion Pro; the typed child
+/// resolved all of it (133 overset stories, from 140). See
+/// [`crate::based_on`] for the pass that rewrites older packages.
 fn emit_style_element(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     name: &str,
     attrs: &[(&str, String)],
+    based_on: &Option<String>,
     font: &Option<String>,
 ) -> Result<(), quick_xml::Error> {
-    let Some(family) = font else {
+    if based_on.is_none() && font.is_none() {
         return emit_empty(writer, name, attrs);
-    };
+    }
     let mut start = BytesStart::new(name.to_string());
     for (k, v) in attrs {
         start.push_attribute((k.as_bytes(), escape_attr(v).as_bytes()));
     }
     writer.write_event(Event::Start(start))?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
-    let mut af = BytesStart::new("AppliedFont");
-    af.push_attribute(("type", "string"));
-    writer.write_event(Event::Start(af))?;
-    writer.write_event(Event::Text(quick_xml::events::BytesText::new(family)))?;
-    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("AppliedFont")))?;
+    if let Some(parent) = based_on {
+        write_based_on_child(writer, parent)?;
+    }
+    if let Some(family) = font {
+        let mut af = BytesStart::new("AppliedFont");
+        af.push_attribute(("type", "string"));
+        writer.write_event(Event::Start(af))?;
+        writer.write_event(Event::Text(quick_xml::events::BytesText::new(family)))?;
+        writer.write_event(Event::End(quick_xml::events::BytesEnd::new("AppliedFont")))?;
+    }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
         name.to_string(),
     )))?;
+    Ok(())
+}
+
+/// `<BasedOn type="object">PARENT</BasedOn>` — InDesign's spelling of a
+/// style's parent (the `object` type carries the parent's `Self`).
+pub(crate) fn write_based_on_child(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    parent: &str,
+) -> Result<(), quick_xml::Error> {
+    let mut bo = BytesStart::new("BasedOn");
+    bo.push_attribute(("type", "object"));
+    writer.write_event(Event::Start(bo))?;
+    writer.write_event(Event::Text(quick_xml::events::BytesText::new(parent)))?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("BasedOn")))?;
     Ok(())
 }
 
@@ -338,12 +357,10 @@ fn is_reserved_style_id(id: &str) -> bool {
 /// defaults a page item inherits when it carries no override — so a
 /// re-parse reproduces the resolved appearance.
 ///
-/// `BasedOn` is written as an ATTRIBUTE, matching what
-/// [`push_style_common`] already does for the paragraph / character
-/// lanes. The parser accepts either that or InDesign's
-/// `<Properties><BasedOn type="object">…</BasedOn></Properties>` child
-/// form, so the cascade survives the round trip; the attribute form
-/// keeps this a single self-closing element like its siblings.
+/// `BasedOn` is written as InDesign's typed `<Properties>` child, the
+/// same as the paragraph / character lanes ([`emit_style_element`]):
+/// the parser accepts the attribute form too, but InDesign does NOT
+/// (measured 2026-09-05 — an attribute-form cascade opens flat).
 fn write_object_style(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     s: &ObjectStyleDef,
@@ -351,9 +368,6 @@ fn write_object_style(
     let mut attrs: Vec<(&str, String)> = vec![("Self", s.self_id.clone())];
     if let Some(n) = &s.name {
         attrs.push(("Name", n.clone()));
-    }
-    if let Some(b) = &s.based_on {
-        attrs.push(("BasedOn", b.clone()));
     }
     if let Some(c) = &s.fill_color {
         attrs.push(("FillColor", c.clone()));
@@ -376,7 +390,7 @@ fn write_object_style(
     if let Some(r) = s.corner_radius {
         attrs.push(("CornerRadius", format_f32(r)));
     }
-    emit_empty(writer, "ObjectStyle", &attrs)
+    emit_style_element(writer, "ObjectStyle", &attrs, &s.based_on, &None)
 }
 
 /// The object styles `styles` carries that `seen` (the source part)
@@ -865,7 +879,7 @@ mod tests {
         let out = patch_styles(STYLES_XML, &styles).expect("patch");
         let s = String::from_utf8(out).expect("utf8");
         assert!(
-            s.contains(r#"<ObjectStyle Self="ObjectStyle/u0" Name="Sidebar" BasedOn="ObjectStyle/Callout"/>"#),
+            s.contains(r#"<ObjectStyle Self="ObjectStyle/u0" Name="Sidebar"><Properties><BasedOn type="object">ObjectStyle/Callout</BasedOn></Properties></ObjectStyle>"#),
             "the new object style must be defined, not just referenced: {s}"
         );
         // ...and INSIDE the root group, not loose in the part.
