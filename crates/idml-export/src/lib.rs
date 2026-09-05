@@ -31,6 +31,10 @@
 //!   source ZIP with its original compressed bytes (via
 //!   [`zip::write::ZipWriter::raw_copy_file`]), so `mimetype` stays
 //!   first + stored and untouched entries round-trip bit-for-bit.
+//!   The `.paged` CONTAINER parts (`manifest.json`, `paged/**`) are the
+//!   one exception: [`write_idml`] drops them so its product is a pure
+//!   IDML package; only [`write_paged`] carries them (see
+//!   [`write_package`]).
 //! * **Patched (streaming rewrite).** `Spreads/*.xml`,
 //!   `MasterSpreads/*.xml` and `Stories/*.xml`
 //!   are rewritten with a quick-xml reader→writer pass that copies the
@@ -72,12 +76,20 @@ use std::io::{Cursor, Read, Write};
 use paged_scene::Document;
 
 mod emit;
+pub mod guides;
+pub mod images;
+mod navigation;
 mod paged;
 mod reorder;
 pub mod resources;
 pub mod rewrite;
+pub mod text_frame_prefs;
 
-pub use paged::{idml_parts_hash, write_paged, MANIFEST_NAME, PAGED_PREFIX};
+/// The `Self` of the one `<CrossReferenceFormat>` the exporter emits for
+/// cross-reference sources that name none (InDesign drops those).
+pub const XREF_FORMAT_ID: &str = "paged-xref-format";
+
+pub use paged::{idml_parts_hash, is_container_part, write_paged, MANIFEST_NAME, PAGED_PREFIX};
 
 /// Errors raised while re-serializing a document.
 #[derive(Debug, thiserror::Error)]
@@ -116,10 +128,35 @@ pub fn emit_story_part_for_test(
     self_id: &str,
     story: &idml_import::Story,
 ) -> Result<Vec<u8>, quick_xml::Error> {
-    emit::story_part(&emit::sanitize_id(self_id), story, "20.0")
+    emit::story_part(&emit::sanitize_id(self_id), story, "20.0", &[], None)
 }
 
 pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError> {
+    write_package(doc, original, false)
+}
+
+/// The one writer both [`write_idml`] and [`write_paged`] run. The only
+/// thing that differs between the two products is whether the CONTAINER
+/// parts of `original` — `manifest.json` and everything under `paged/`
+/// — survive the copy-through walk:
+///
+/// * `keep_container_parts = false` ⇒ a PURE `.idml`: only IDML parts
+///   (`mimetype`, `designmap.xml`, `META-INF/`, `Resources/`, `XML/`,
+///   `MasterSpreads/`, `Spreads/`, `Stories/`, and any other entry that
+///   is not a container part — the same definition [`idml_parts_hash`]
+///   uses). This closes the "an `.idml` exported from a loaded `.paged`
+///   is the container under another name" gap: the engine's load sniff
+///   prefers a carried-through `document.pgm` over the IDML parts, so a
+///   parity gate that re-opened such an export compared the model with
+///   itself and reported zero differing pages. A source with no
+///   container parts is unaffected (still byte-identical when unmutated).
+/// * `keep_container_parts = true` ⇒ the `.paged` lane, where the
+///   carried-through plugin parts + manifest are the whole point.
+pub(crate) fn write_package(
+    doc: &Document,
+    original: &[u8],
+    keep_container_parts: bool,
+) -> Result<Vec<u8>, WriteError> {
     let mut src = zip::ZipArchive::new(Cursor::new(original))?;
     let out = Cursor::new(Vec::<u8>::new());
     let mut zip = zip::write::ZipWriter::new(out);
@@ -148,10 +185,38 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
     // page order) lands next to its host.
     let mut new_spread_refs: Vec<(Option<String>, String)> = Vec::new();
     let mut new_story_srcs: Vec<String> = Vec::new();
+    // The layer new guides bind to (`ItemLayer`): the document's first.
+    let default_layer: Option<&str> = doc.designmap.layers.first().map(|l| l.self_id.as_str());
 
     for (i, spread) in doc.spreads.iter().enumerate() {
         if let Some(orig) = entry_bytes(&mut src, &spread.src)? {
-            let new = rewrite::rewrite_spread(&orig, &spread.spread).map_err(|source| {
+            // Auto-sizing prefs and guides first (their own passes), then
+            // the page-item rewrite over the patched bytes.
+            let with_prefs = text_frame_prefs::rewrite_text_frame_prefs(&orig, &spread.spread)
+                .map_err(|source| WriteError::Rewrite {
+                    entry: spread.src.clone(),
+                    source,
+                })?;
+            let with_guides = guides::rewrite_guides(
+                &with_prefs,
+                &spread.spread.guides,
+                spread.spread.self_id.as_deref(),
+                default_layer,
+            )
+            .map_err(|source| WriteError::Rewrite {
+                entry: spread.src.clone(),
+                source,
+            })?;
+            let rewritten =
+                rewrite::rewrite_spread(&with_guides, &spread.spread).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: spread.src.clone(),
+                        source,
+                    }
+                })?;
+            // Linked images last, over the rewritten bytes, so inserted
+            // frames get theirs too.
+            let new = images::rewrite_images(&rewritten, &spread.spread).map_err(|source| {
                 WriteError::Rewrite {
                     entry: spread.src.clone(),
                     source,
@@ -161,7 +226,13 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
                 patched.insert(spread.src.clone(), new);
             }
         } else if !spread.src.is_empty() {
-            let body = emit::spread_part(&spread.spread, &dom_version).map_err(|source| {
+            let body = emit::spread_part(&spread.spread, &dom_version, default_layer).map_err(
+                |source| WriteError::Rewrite {
+                    entry: spread.src.clone(),
+                    source,
+                },
+            )?;
+            let body = images::rewrite_images(&body, &spread.spread).map_err(|source| {
                 WriteError::Rewrite {
                     entry: spread.src.clone(),
                     source,
@@ -197,7 +268,29 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
     masters.sort_by(|a, b| a.src.cmp(&b.src));
     for master in masters {
         if let Some(orig) = entry_bytes(&mut src, &master.src)? {
-            let new = rewrite::rewrite_spread(&orig, &master.spread).map_err(|source| {
+            let with_prefs = text_frame_prefs::rewrite_text_frame_prefs(&orig, &master.spread)
+                .map_err(|source| WriteError::Rewrite {
+                    entry: master.src.clone(),
+                    source,
+                })?;
+            let with_guides = guides::rewrite_guides(
+                &with_prefs,
+                &master.spread.guides,
+                master.spread.self_id.as_deref(),
+                default_layer,
+            )
+            .map_err(|source| WriteError::Rewrite {
+                entry: master.src.clone(),
+                source,
+            })?;
+            let rewritten =
+                rewrite::rewrite_spread(&with_guides, &master.spread).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: master.src.clone(),
+                        source,
+                    }
+                })?;
+            let new = images::rewrite_images(&rewritten, &master.spread).map_err(|source| {
                 WriteError::Rewrite {
                     entry: master.src.clone(),
                     source,
@@ -208,14 +301,65 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
             }
         }
     }
+    // The text destinations (`TextAnchor`) each story must carry as an
+    // inline marker — InDesign's spelling; the designmap spelling binds
+    // nothing (measured). Keyed by story id, matching either the model's
+    // id or its sanitized entry-stem form.
+    let anchors_for = |story: &paged_scene::ParsedStory| -> Vec<(String, Option<String>)> {
+        let sanitized = emit::sanitize_id(&story.self_id);
+        doc.designmap
+            .hyperlink_destinations
+            .iter()
+            .filter_map(|d| match &d.kind {
+                idml_import::HyperlinkDestinationKind::TextAnchor(target)
+                    if *target == story.self_id || *target == sanitized =>
+                {
+                    Some((d.self_id.clone(), None))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    // The inner width of the text column a story flows in — the column
+    // fallback for a table the model never sized (`emit::write_table`).
+    // `frame_for_story` is keyed by the parsed story id; a minted story's
+    // frame names it by the model id, so both spellings are tried.
+    let host_width_for = |story: &paged_scene::ParsedStory| -> Option<f32> {
+        let frame = doc
+            .frame_for_story
+            .get(&story.self_id)
+            .or_else(|| doc.frame_for_story.get(&emit::sanitize_id(&story.self_id)))?;
+        let insets = frame.inset_spacing.unwrap_or([0.0; 4]);
+        let inner = frame.bounds.right - frame.bounds.left - insets[1] - insets[3];
+        let columns = frame.column_count.unwrap_or(1).max(1) as f32;
+        let gutter = frame.column_gutter.unwrap_or(12.0);
+        let width = (inner - gutter * (columns - 1.0)) / columns;
+        (width > 0.0).then_some(width)
+    };
+    // Whether any carried-through story has a cross-reference source
+    // with no format (InDesign drops it); the designmap then gains the
+    // exporter's one format and the source is pointed at it.
+    let mut needs_xref_format = false;
     for story in &doc.stories {
         if let Some(orig) = entry_bytes(&mut src, &story.src)? {
-            let new = rewrite::rewrite_story(&orig, &story.story).map_err(|source| {
-                WriteError::Rewrite {
+            let anchors = anchors_for(story);
+            let unformatted =
+                rewrite::unformatted_xref_sources(&orig).map_err(|source| WriteError::Rewrite {
                     entry: story.src.clone(),
                     source,
-                }
-            })?;
+                })?;
+            needs_xref_format |= unformatted > 0;
+            let injected = rewrite::inject_story_navigation(&orig, &anchors, Some(XREF_FORMAT_ID))
+                .map_err(|source| WriteError::Rewrite {
+                    entry: story.src.clone(),
+                    source,
+                })?;
+            let new =
+                rewrite::rewrite_story_in_frame(&injected, &story.story, host_width_for(story))
+                    .map_err(|source| WriteError::Rewrite {
+                        entry: story.src.clone(),
+                        source,
+                    })?;
             if new != orig.as_slice() {
                 patched.insert(story.src.clone(), new);
             }
@@ -228,15 +372,46 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
             } else {
                 story.src.clone()
             };
-            if src.by_name(&entry_src).is_ok() {
-                // Derived name collides with an existing entry — leave
-                // that entry alone rather than clobber it.
+            if let Some(orig) = entry_bytes(&mut src, &entry_src)? {
+                // The derived entry already exists: a `.paged` checkpoint
+                // wrote this minted story's part, and the reloaded model
+                // (`document.pgm`) still says `src: ""`. This used to be
+                // read as a name collision and the story was SKIPPED —
+                // the checkpoint's part rode through verbatim, stale text
+                // and all, and every table the model added after the
+                // checkpoint was lost (16 of 16 in the annual). It is the
+                // story's source part: patch it like any other.
+                let anchors = anchors_for(story);
+                let unformatted = rewrite::unformatted_xref_sources(&orig).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: entry_src.clone(),
+                        source,
+                    }
+                })?;
+                needs_xref_format |= unformatted > 0;
+                let injected =
+                    rewrite::inject_story_navigation(&orig, &anchors, Some(XREF_FORMAT_ID))
+                        .map_err(|source| WriteError::Rewrite {
+                            entry: entry_src.clone(),
+                            source,
+                        })?;
+                let new =
+                    rewrite::rewrite_story_in_frame(&injected, &story.story, host_width_for(story))
+                        .map_err(|source| WriteError::Rewrite {
+                            entry: entry_src.clone(),
+                            source,
+                        })?;
+                if new != orig.as_slice() {
+                    patched.insert(entry_src, new);
+                }
                 continue;
             }
             let body = emit::story_part(
                 &emit::sanitize_id(&story.self_id),
                 &story.story,
                 &dom_version,
+                &anchors_for(story),
+                host_width_for(story),
             )
             .map_err(|source| WriteError::Rewrite {
                 entry: entry_src.clone(),
@@ -248,20 +423,39 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
     }
 
     // Reference the new parts: a minimal designmap.xml insertion next to
-    // the existing `<idPkg:Spread>` / `<idPkg:Story>` elements. Only
-    // documents that minted something get a designmap diff.
+    // the existing `<idPkg:Spread>` / `<idPkg:Story>` elements — then the
+    // document-level resources (sections, the hyperlink block, the
+    // conditions) brought in line with the model AND with InDesign's
+    // spelling (see [`navigation`]). Both are pure pass-throughs for a
+    // document that changed nothing and is already spelled canonically.
     const DESIGNMAP_SRC: &str = "designmap.xml";
-    if !(new_spread_refs.is_empty() && new_story_srcs.is_empty()) {
-        if let Some(orig) = entry_bytes(&mut src, DESIGNMAP_SRC)? {
-            let new = emit::patch_designmap(&orig, &new_spread_refs, &new_story_srcs).map_err(
+    const GRAPHIC_SRC: &str = "Resources/Graphic.xml";
+    const STYLES_SRC: &str = "Resources/Styles.xml";
+    let styles_orig = entry_bytes(&mut src, STYLES_SRC)?;
+    if let Some(orig) = entry_bytes(&mut src, DESIGNMAP_SRC)? {
+        let mut new = orig.clone();
+        if !(new_spread_refs.is_empty() && new_story_srcs.is_empty()) {
+            new = emit::patch_designmap(&new, &new_spread_refs, &new_story_srcs).map_err(
                 |source| WriteError::Rewrite {
                     entry: DESIGNMAP_SRC.to_string(),
                     source,
                 },
             )?;
-            if new != orig.as_slice() {
-                patched.insert(DESIGNMAP_SRC.to_string(), new);
+        }
+        let plan = navigation_plan(doc, &orig, styles_orig.as_deref(), needs_xref_format).map_err(
+            |source| WriteError::Rewrite {
+                entry: DESIGNMAP_SRC.to_string(),
+                source,
+            },
+        )?;
+        new = navigation::patch_designmap_navigation(&new, &plan).map_err(|source| {
+            WriteError::Rewrite {
+                entry: DESIGNMAP_SRC.to_string(),
+                source,
             }
+        })?;
+        if new != orig.as_slice() {
+            patched.insert(DESIGNMAP_SRC.to_string(), new);
         }
     }
 
@@ -271,8 +465,6 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
     // pass-throughs when the model carries nothing the source lacks, so
     // an unmutated round-trip leaves these entries byte-identical (and the
     // entry takes the verbatim copy path below).
-    const GRAPHIC_SRC: &str = "Resources/Graphic.xml";
-    const STYLES_SRC: &str = "Resources/Styles.xml";
     if let Some(orig) = entry_bytes(&mut src, GRAPHIC_SRC)? {
         let new = resources::patch_graphic(&orig, &doc.palette).map_err(|source| {
             WriteError::Rewrite {
@@ -284,12 +476,20 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
             patched.insert(GRAPHIC_SRC.to_string(), new);
         }
     }
-    if let Some(orig) = entry_bytes(&mut src, STYLES_SRC)? {
-        let new =
-            resources::patch_styles(&orig, &doc.styles).map_err(|source| WriteError::Rewrite {
+    if let Some(orig) = styles_orig {
+        // Conditions leave Styles.xml (they live in the designmap — see
+        // `navigation`), then the style groups are patched.
+        let stripped =
+            resources::strip_conditions(&orig).map_err(|source| WriteError::Rewrite {
                 entry: STYLES_SRC.to_string(),
                 source,
             })?;
+        let new = resources::patch_styles(&stripped, &doc.styles).map_err(|source| {
+            WriteError::Rewrite {
+                entry: STYLES_SRC.to_string(),
+                source,
+            }
+        })?;
         if new != orig.as_slice() {
             patched.insert(STYLES_SRC.to_string(), new);
         }
@@ -313,6 +513,11 @@ pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError
             entry.name().to_string()
         };
 
+        if !keep_container_parts && paged::is_container_part(&name) {
+            // A pure `.idml` carries no `.paged` container part — see
+            // `write_package`'s doc. `write_paged` keeps them.
+            continue;
+        }
         if let Some(body) = patched.get(&name) {
             zip.start_file(&name, deflated)?;
             zip.write_all(body)?;
@@ -349,4 +554,82 @@ fn entry_bytes<R: Read + std::io::Seek>(
     let mut buf = Vec::with_capacity(entry.size() as usize);
     entry.read_to_end(&mut buf)?;
     Ok(Some(buf))
+}
+
+/// Prepare the designmap pass's view of the model: sections with their
+/// derived `Length`, the URL / page destinations (text anchors are story
+/// markers), hyperlinks, bookmarks, conditions + sets, and the indicator
+/// colours scraped from wherever the source spelled them.
+fn navigation_plan<'a>(
+    doc: &'a Document,
+    designmap: &[u8],
+    styles: Option<&[u8]>,
+    needs_xref_format: bool,
+) -> Result<navigation::NavigationPlan<'a>, quick_xml::Error> {
+    // Page order → each section's length: pages from its start up to the
+    // next section's start. A section whose start page is unknown gets 1.
+    let pages: Vec<&str> = doc
+        .spreads
+        .iter()
+        .flat_map(|s| s.spread.pages.iter())
+        .filter_map(|p| p.self_id.as_deref())
+        .collect();
+    let mut starts: Vec<(usize, usize)> = doc
+        .designmap
+        .sections
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let page = s.page_start.as_deref()?;
+            pages.iter().position(|p| *p == page).map(|at| (at, i))
+        })
+        .collect();
+    starts.sort();
+    let mut lengths: Vec<usize> = vec![1; doc.designmap.sections.len()];
+    for (k, (at, i)) in starts.iter().enumerate() {
+        let end = starts
+            .get(k + 1)
+            .map(|(next, _)| *next)
+            .unwrap_or(pages.len());
+        lengths[*i] = end.saturating_sub(*at).max(1);
+    }
+    let sections = doc
+        .designmap
+        .sections
+        .iter()
+        .zip(lengths)
+        .map(|(s, length)| navigation::SectionSpec {
+            self_id: s.self_id.clone(),
+            page_start: s.page_start.clone(),
+            length,
+            continue_numbering: s.continue_numbering,
+            include_prefix: s.include_prefix,
+            start_at: s.start_at,
+            section_prefix: s.section_prefix.clone(),
+            marker: s.marker.clone(),
+            numbering_style: s.numbering_style,
+        })
+        .collect();
+    let destinations = doc
+        .designmap
+        .hyperlink_destinations
+        .iter()
+        .filter(|d| !matches!(d.kind, idml_import::HyperlinkDestinationKind::TextAnchor(_)))
+        .collect();
+    let mut indicator_colors = resources::scan_condition_colors(designmap)?;
+    if let Some(styles) = styles {
+        for (id, color) in resources::scan_condition_colors(styles)? {
+            indicator_colors.entry(id).or_insert(color);
+        }
+    }
+    Ok(navigation::NavigationPlan {
+        sections,
+        destinations,
+        hyperlinks: &doc.designmap.hyperlinks,
+        bookmarks: &doc.designmap.bookmarks,
+        conditions: &doc.styles.conditions,
+        condition_sets: &doc.styles.condition_sets,
+        indicator_colors,
+        xref_format: needs_xref_format.then(|| XREF_FORMAT_ID.to_string()),
+    })
 }

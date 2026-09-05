@@ -64,17 +64,18 @@
 //!    run, so a terminator that lands in the text would trade an
 //!    InDesign bug for a rendering one.
 
-use idml_import::{parse_story, CharacterRun, Story};
 use idml_import::Paragraph;
+use idml_import::{parse_story, CharacterRun, Story};
 
 fn para(style: &str, text: &str) -> Paragraph {
-    let mut p = Paragraph::default();
-    p.paragraph_style = Some(style.to_string());
-    p.runs = vec![CharacterRun {
-        text: text.to_string(),
+    Paragraph {
+        paragraph_style: Some(style.to_string()),
+        runs: vec![CharacterRun {
+            text: text.to_string(),
+            ..Default::default()
+        }],
         ..Default::default()
-    }];
-    p
+    }
 }
 
 fn three_paragraph_story() -> Story {
@@ -90,8 +91,8 @@ fn three_paragraph_story() -> Story {
 
 #[test]
 fn a_minted_story_spells_its_paragraph_marks() {
-    let xml = idml_export::emit_story_part_for_test("u43", &three_paragraph_story())
-        .expect("story_part");
+    let xml =
+        idml_export::emit_story_part_for_test("u43", &three_paragraph_story()).expect("story_part");
     let s = String::from_utf8(xml).expect("utf8");
 
     // Two marks for three paragraphs: the last needs none, exactly as
@@ -115,8 +116,8 @@ fn a_minted_story_spells_its_paragraph_marks() {
 
 #[test]
 fn the_mark_does_not_leak_into_the_text() {
-    let xml = idml_export::emit_story_part_for_test("u43", &three_paragraph_story())
-        .expect("story_part");
+    let xml =
+        idml_export::emit_story_part_for_test("u43", &three_paragraph_story()).expect("story_part");
     let back = parse_story(&xml).expect("re-import the minted story");
 
     assert_eq!(

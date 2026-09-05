@@ -37,8 +37,9 @@ pub mod styles;
 mod util;
 
 pub use designmap::{
-    parse_designmap, ColorSettings, DesignMap, DocumentPreference, Hyperlink, HyperlinkDestination,
-    HyperlinkDestinationKind, Layer, NumberingStyle, Section, SpreadRef, StoryRef, TextVariable,
+    parse_designmap, Bookmark, ColorSettings, DesignMap, DocumentPreference, Hyperlink,
+    HyperlinkDestination, HyperlinkDestinationKind, Layer, NumberingStyle, Section, SpreadRef,
+    StoryRef, TextVariable,
 };
 pub use graphic::{
     parse_graphic, ColorEntry, ColorModel, ColorSpace, GradientEntry, GradientKind,
@@ -55,16 +56,17 @@ pub use spread::{
     SpreadProvenance, TextFrame, TextPath, TextWrap, TextWrapMode, VerticalJustification,
 };
 pub use story::{
-    parse_story, parse_story_with_provenance, AnchoredFrame, AnchoredFrameKind,
+    parse_story, parse_story_with_provenance, story_text_anchors, AnchoredFrame, AnchoredFrameKind,
     AnchoredObjectSetting, CellDiagonal, CharacterRun, Justification, OtfFeatures, Paragraph,
     PlaceholderField, RunSlot, Story, StoryProvenance, TabStop, Table, TableBorder, TableCell,
     TableColumn, TableLineStrokes, TableRow, AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER,
 };
 pub use styles::{
-    parse_stylesheet, CellStyleDef, CharacterStyleDef, ConditionDef, NestedDelimiter, NestedStyle,
-    ObjectStyleDef, ParagraphBorder, ParagraphRule, ParagraphShading, ParagraphStyleDef,
-    ResolvedCell, ResolvedCharacter, ResolvedObject, ResolvedParagraph, ResolvedTable, StripeDef,
-    StrokeStyleDef, StrokeStyleKind, StyleSheet, TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
+    parse_conditions, parse_stylesheet, CellStyleDef, CharacterStyleDef, ConditionDef,
+    ConditionSetDef, NestedDelimiter, NestedStyle, ObjectStyleDef, ParagraphBorder, ParagraphRule,
+    ParagraphShading, ParagraphStyleDef, ResolvedCell, ResolvedCharacter, ResolvedObject,
+    ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef, StrokeStyleKind, StyleSheet,
+    TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
 };
 pub use util::parse_tint;
 
@@ -191,15 +193,22 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
 
     // The structured manifest is parsed here (not in `open_source_archive`) so
     // the raw source archive carries no model data (N7).
-    let designmap = parse_designmap(&archive.designmap_raw)?;
+    let mut designmap = parse_designmap(&archive.designmap_raw)?;
     let palette = match archive.entry("Resources/Graphic.xml") {
         Some(raw) => parse_graphic(raw)?,
         None => Graphic::default(),
     };
-    let styles = match archive.entry("Resources/Styles.xml") {
+    let mut styles = match archive.entry("Resources/Styles.xml") {
         Some(raw) => parse_stylesheet(raw)?,
         None => StyleSheet::default(),
     };
+    // Conditions live in `designmap.xml` in InDesign's own exports
+    // (measured, InDesign 20.0.1) and in `Resources/Styles.xml` in every
+    // engine-built fixture before 2026-09. Read both; the designmap wins
+    // on an id clash, being the spelling InDesign writes.
+    let (dm_conditions, dm_sets) = parse_conditions(&archive.designmap_raw)?;
+    styles.conditions.extend(dm_conditions);
+    styles.condition_sets.extend(dm_sets);
 
     // Master spreads parse first so the page → master link is available
     // downstream. A `<MasterSpread>` has the same schema as a `<Spread>`.
@@ -239,6 +248,24 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
             .ok_or_else(|| OpenError::MissingEntry(story_ref.src.clone()))?;
         let parsed = parse_story(raw)?;
         let self_id = paged_scene::derive_story_id(&story_ref.src);
+        // Inline text-destination markers (InDesign's spelling) become
+        // text-anchor destinations naming this story — the designmap
+        // spelling the engine's older fixtures used maps to the same
+        // model, so either opens to the same links.
+        for (anchor_id, _name) in story_text_anchors(raw)? {
+            if !designmap
+                .hyperlink_destinations
+                .iter()
+                .any(|d| d.self_id == anchor_id)
+            {
+                designmap
+                    .hyperlink_destinations
+                    .push(paged_model::HyperlinkDestination {
+                        self_id: anchor_id,
+                        kind: paged_model::HyperlinkDestinationKind::TextAnchor(self_id.clone()),
+                    });
+            }
+        }
         stories.push(paged_scene::ParsedStory {
             src: story_ref.src.clone(),
             self_id,

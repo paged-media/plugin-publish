@@ -463,13 +463,38 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // arrive via `Event::Empty` and never reach here, so
                     // they don't unbalance the stack.)
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
-                        if let Some(self_id) = attr(&e, b"Self") {
-                            source_stack.push(self_id);
-                        } else {
-                            // Keep the stack depth-balanced with the
-                            // End even when the id is missing.
-                            source_stack.push(String::new());
+                        let self_id = attr(&e, b"Self").unwrap_or_default();
+                        // InDesign's OWN spelling nests the source INSIDE the
+                        // `<CharacterStyleRange>`, around the `<Content>` it
+                        // covers (measured: `<CharacterStyleRange><Content>
+                        // </Content><HyperlinkTextSource Self="ufe"…><Content>
+                        // paged</Content></HyperlinkTextSource>…`). The run is
+                        // already open then, so tagging at range-open (below)
+                        // never sees it. Split the open run here exactly as a
+                        // `<TextVariableInstance>` does: flush the text before
+                        // the source as its own run, then continue the run
+                        // tagged; the matching End flushes the tagged text and
+                        // continues untagged.
+                        if let Some(run) = current_run.as_mut() {
+                            if !run.text.is_empty() {
+                                let flushed = run.clone();
+                                if let Some(para) = current_paragraph.as_mut() {
+                                    para.runs.push(flushed);
+                                    let at = para.runs.len() - 1;
+                                    if let Some(open) = open_ranges.last_mut() {
+                                        open.first.get_or_insert(at);
+                                        open.count += 1;
+                                    }
+                                }
+                                run.text.clear();
+                            }
+                            run.hyperlink_source = Some(self_id.clone());
                         }
+                        // The wrapping form (source OUTSIDE the ranges) is
+                        // what the stack serves: every range opened inside
+                        // inherits the id. An empty id keeps the stack
+                        // depth-balanced with the End.
+                        source_stack.push(self_id);
                     }
                     // <StoryPreference> may also appear with
                     // children (e.g. nested <Properties>) instead of
@@ -960,6 +985,25 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // source span so following runs stop inheriting it.
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
                         source_stack.pop();
+                        // Inner form (see the Start arm): the tagged text
+                        // ends here — flush it and continue the range's run
+                        // untagged (or tagged by an outer wrapping source).
+                        if let Some(run) = current_run.as_mut() {
+                            if !run.text.is_empty() {
+                                let flushed = run.clone();
+                                if let Some(para) = current_paragraph.as_mut() {
+                                    para.runs.push(flushed);
+                                    let at = para.runs.len() - 1;
+                                    if let Some(open) = open_ranges.last_mut() {
+                                        open.first.get_or_insert(at);
+                                        open.count += 1;
+                                    }
+                                }
+                                run.text.clear();
+                            }
+                            run.hyperlink_source =
+                                source_stack.last().filter(|s| !s.is_empty()).cloned();
+                        }
                     }
                     b"ParagraphStyleRange" => {
                         // The terminator, discarded: it ended the
@@ -1544,6 +1588,38 @@ fn parse_tab_stop(e: &quick_xml::events::BytesStart) -> Option<TabStop> {
         alignment_character: attr(e, b"AlignmentCharacter"),
         leader: attr(e, b"Leader"),
     })
+}
+
+/// The inline `<HyperlinkTextDestination Self="…" Name="…"/>` markers a
+/// story carries, in document order, as `(self_id, name)`.
+///
+/// InDesign keeps a text destination (the target of a cross-reference
+/// or a bookmark) as an EMPTY MARKER at the anchor position inside the
+/// story — never as a `designmap.xml` element (measured on InDesign
+/// 20.0.1: a designmap `<HyperlinkTextDestination DestinationText=…>`
+/// binds nothing, the inline marker binds). The import orchestrator
+/// turns each marker into a [`HyperlinkDestinationKind::TextAnchor`]
+/// naming this story, which is the model's (page-level) resolution.
+pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut out = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(ref e) | Event::Empty(ref e)
+                if e.name().as_ref() == b"HyperlinkTextDestination" =>
+            {
+                if let Some(id) = attr(e, b"Self") {
+                    out.push((id, attr(e, b"Name")));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

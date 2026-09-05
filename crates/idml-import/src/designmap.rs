@@ -48,17 +48,42 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // wrapping form parks here so its `<TextVariablePreference>`
     // child can fold in before `</TextVariable>` pushes it).
     let mut current_text_variable: Option<TextVariable> = None;
+    // The `<Section>` / `<Hyperlink>` currently open in ELEMENT form
+    // (index into `out.sections` / `out.hyperlinks`), so a typed
+    // `<Properties>` child can fold into it: InDesign writes a section's
+    // `PageNumberStyle` and a hyperlink's `Destination` as typed
+    // Properties children, never as attributes (measured on InDesign
+    // 20.0.1 — the attribute form of `Destination` is ignored, and
+    // together with `DestinationUniqueKey` makes the file unopenable).
+    // The attribute forms stay readable for the engine's own older
+    // fixtures.
+    let mut current_section: Option<usize> = None;
+    let mut current_hyperlink: Option<usize> = None;
+    // The typed Properties child whose text is about to arrive.
+    let mut pending: Option<PendingProperty> = None;
+    // `DestinationUniqueKey` → destination `Self`, for hyperlinks that
+    // name their destination ONLY by key (no attribute, no child).
+    let mut dest_keys: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Index-aligned with `out.hyperlinks`: the key each hyperlink
+    // carried, resolved after the whole file is read.
+    let mut hyperlink_keys: Vec<Option<String>> = Vec::new();
 
     loop {
         let ev = reader.read_event_into(&mut buf)?;
         if let Event::End(ref e) = ev {
-            if e.name().as_ref() == b"Layer" {
-                layer_stack.pop();
-            }
-            if e.name().as_ref() == b"TextVariable" {
-                if let Some(var) = current_text_variable.take() {
-                    out.text_variables.push(var);
+            match e.name().as_ref() {
+                b"Layer" => {
+                    layer_stack.pop();
                 }
+                b"TextVariable" => {
+                    if let Some(var) = current_text_variable.take() {
+                        out.text_variables.push(var);
+                    }
+                }
+                b"Section" => current_section = None,
+                b"Hyperlink" => current_hyperlink = None,
+                b"PageNumberStyle" | b"Destination" => pending = None,
+                _ => {}
             }
         }
         let is_start = matches!(ev, Event::Start(_));
@@ -207,6 +232,18 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                     }
                 }
                 // W1.4 — hyperlink destination resources.
+                if matches!(
+                    e.name().as_ref(),
+                    b"HyperlinkURLDestination"
+                        | b"HyperlinkPageDestination"
+                        | b"HyperlinkTextDestination"
+                ) {
+                    if let (Some(self_id), Some(key)) =
+                        (attr(&e, b"Self"), attr(&e, b"DestinationUniqueKey"))
+                    {
+                        dest_keys.insert(key, self_id);
+                    }
+                }
                 if e.name().as_ref() == b"HyperlinkURLDestination" {
                     if let Some(self_id) = attr(&e, b"Self") {
                         let url = attr(&e, b"DestinationURL").unwrap_or_default();
@@ -254,7 +291,23 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(false),
                         });
+                        if is_start {
+                            current_section = Some(out.sections.len() - 1);
+                        }
                     }
+                }
+                // InDesign's spelling of a section's numbering style:
+                // `<Properties><PageNumberStyle type="enumeration">LowerRoman
+                // </PageNumberStyle></Properties>` (a union type — it may
+                // also name a custom numbering list, hence a child rather
+                // than an attribute). The attribute form above stays
+                // readable for the engine's older fixtures.
+                if e.name().as_ref() == b"PageNumberStyle" && is_start && current_section.is_some()
+                {
+                    pending = Some(PendingProperty::SectionPageNumberStyle);
+                }
+                if e.name().as_ref() == b"Destination" && is_start && current_hyperlink.is_some() {
+                    pending = Some(PendingProperty::HyperlinkDestination);
                 }
                 if e.name().as_ref() == b"Article" {
                     if let Some(self_id) = attr(&e, b"Self") {
@@ -278,13 +331,25 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 }
                 if e.name().as_ref() == b"Hyperlink" {
                     if let Some(self_id) = attr(&e, b"Self") {
+                        // The destination REF, in precedence order: the
+                        // `Destination` attribute (engine fixtures), the
+                        // `<Properties><Destination type="object">` child
+                        // (InDesign; folded in below), and last the
+                        // `DestinationUniqueKey` resolved through the
+                        // destinations' own keys once the file is read.
+                        // Storing the bare key here — as this once did —
+                        // left every InDesign-authored link dangling: no
+                        // destination is `Self`-named by its key.
                         out.hyperlinks.push(Hyperlink {
                             self_id,
                             name: attr(&e, b"Name"),
                             source: attr(&e, b"Source"),
-                            destination: attr(&e, b"DestinationUniqueKey")
-                                .or_else(|| attr(&e, b"Destination")),
+                            destination: attr(&e, b"Destination"),
                         });
+                        hyperlink_keys.push(attr(&e, b"DestinationUniqueKey"));
+                        if is_start {
+                            current_hyperlink = Some(out.hyperlinks.len() - 1);
+                        }
                     }
                 }
                 if e.name().as_ref() == b"Bookmark" {
@@ -335,12 +400,61 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                     _ => {}
                 }
             }
+            Event::Text(t) => {
+                if let Some(which) = pending.take() {
+                    let text = t
+                        .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_default();
+                    let text = text.trim();
+                    if text.is_empty() {
+                        // Indentation before the real text — keep waiting.
+                        pending = Some(which);
+                    } else {
+                        match which {
+                            PendingProperty::SectionPageNumberStyle => {
+                                if let Some(sec) =
+                                    current_section.and_then(|i| out.sections.get_mut(i))
+                                {
+                                    sec.numbering_style = NumberingStyle::from_idml(text);
+                                }
+                            }
+                            PendingProperty::HyperlinkDestination => {
+                                if let Some(h) =
+                                    current_hyperlink.and_then(|i| out.hyperlinks.get_mut(i))
+                                {
+                                    if h.destination.is_none() {
+                                        h.destination = Some(text.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Event::Eof => break,
             _ => {}
         }
         buf.clear();
     }
+    // Hyperlinks that named their destination only by
+    // `DestinationUniqueKey` resolve through the destinations' keys.
+    for (h, key) in out.hyperlinks.iter_mut().zip(hyperlink_keys) {
+        if h.destination.is_none() {
+            if let Some(id) = key.and_then(|k| dest_keys.get(&k)) {
+                h.destination = Some(id.clone());
+            }
+        }
+    }
     Ok(out)
+}
+
+/// A typed `<Properties>` child of the open `<Section>` / `<Hyperlink>`
+/// whose text content is the value.
+#[derive(Clone, Copy)]
+enum PendingProperty {
+    SectionPageNumberStyle,
+    HyperlinkDestination,
 }
 
 #[cfg(test)]

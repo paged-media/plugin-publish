@@ -373,7 +373,7 @@ fn invert_matrix(m: &[f32; 6]) -> Option<[f32; 6]> {
 /// One attribute patch: the value to write for `key`, or `Remove` to
 /// drop the attribute entirely (model value went to `None` on an
 /// attribute that was present).
-enum Patch {
+pub(crate) enum Patch {
     Set(String),
     Remove,
     /// B-23 — model-owned, but the model value is byte-equivalent to
@@ -399,7 +399,7 @@ enum Patch {
 /// `extras`: `(key, value)` pairs to append if the key wasn't already
 /// present (newly-set model attributes). Returns the rebuilt
 /// `BytesStart` preserving the element name exactly.
-fn patch_start<F>(
+pub(crate) fn patch_start<F>(
     src: &BytesStart,
     lookup: F,
     extras: &[(&str, String)],
@@ -1159,9 +1159,206 @@ fn write_new_text_frame(
     write_item_label(writer, spread, self_id)?;
     write_box_path_geometry(writer, f.bounds)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
+    write_text_frame_preference(writer, f)?;
     write_transparency_setting(writer, &paint)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("TextFrame")))?;
     Ok(())
+}
+
+pub(crate) fn auto_sizing_idml(v: idml_import::AutoSizingType) -> &'static str {
+    use idml_import::AutoSizingType::*;
+    match v {
+        Off => "Off",
+        HeightOnly => "HeightOnly",
+        WidthOnly => "WidthOnly",
+        HeightAndWidth => "HeightAndWidth",
+        HeightAndWidthProportionally => "HeightAndWidthProportionally",
+    }
+}
+
+pub(crate) fn auto_sizing_reference_point_idml(
+    v: idml_import::AutoSizingReferencePoint,
+) -> &'static str {
+    use idml_import::AutoSizingReferencePoint::*;
+    match v {
+        TopLeftPoint => "TopLeftPoint",
+        TopCenterPoint => "TopCenterPoint",
+        TopRightPoint => "TopRightPoint",
+        CenterLeftPoint => "CenterLeftPoint",
+        CenterPoint => "CenterPoint",
+        CenterRightPoint => "CenterRightPoint",
+        BottomLeftPoint => "BottomLeftPoint",
+        BottomCenterPoint => "BottomCenterPoint",
+        BottomRightPoint => "BottomRightPoint",
+    }
+}
+
+/// `<TextFramePreference AutoSizingType="…" AutoSizingReferencePoint="…"/>`
+/// for an inserted frame that carries auto-sizing. Measured on InDesign
+/// 20.0.1: exactly this element, inside the `<TextFrame>`, is honoured
+/// (`textFramePreferences.autoSizingType = HEIGHT_ONLY`); the book that
+/// wrote no `<TextFramePreference>` at all had every auto-sized frame
+/// reported overset. Nothing is written when the model sets no
+/// auto-sizing (the parser's `None`), so a plain frame is unchanged.
+pub(crate) fn write_text_frame_preference(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    f: &TextFrame,
+) -> Result<(), quick_xml::Error> {
+    let Some(kind) = f.auto_sizing else {
+        return Ok(());
+    };
+    let mut attrs: Vec<(&str, String)> =
+        vec![("AutoSizingType", auto_sizing_idml(kind).to_string())];
+    if let Some(p) = f.auto_sizing_reference_point {
+        attrs.push((
+            "AutoSizingReferencePoint",
+            auto_sizing_reference_point_idml(p).to_string(),
+        ));
+    }
+    if let Some(v) = f.minimum_width_for_auto_sizing {
+        attrs.push(("MinimumWidthForAutoSizing", format_f32(v)));
+    }
+    if let Some(v) = f.minimum_height_for_auto_sizing {
+        attrs.push(("MinimumHeightForAutoSizing", format_f32(v)));
+    }
+    if let Some(v) = f.use_minimum_height_for_auto_sizing {
+        attrs.push(("UseMinimumHeightForAutoSizing", v.to_string()));
+    }
+    emit_empty_with_attrs(writer, "TextFramePreference", &attrs)
+}
+
+/// Bring a CARRIED-THROUGH story in line with InDesign's navigation
+/// spelling (measured on InDesign 20.0.1):
+///
+/// * every text destination in `anchors` (the model's
+///   `HyperlinkDestinationKind::TextAnchor`s naming this story) that the
+///   story does not already carry as an inline
+///   `<HyperlinkTextDestination/>` marker gets one, in a range of its
+///   own at the head of the first paragraph — the designmap spelling the
+///   engine's fixtures used binds nothing there;
+/// * a `<CrossReferenceSource>` without an `AppliedFormat` gains one
+///   naming `xref_format` (InDesign drops a source that points at no
+///   `<CrossReferenceFormat>`; `navigation` emits the format).
+///
+/// Byte-identical when nothing is missing. Runs BEFORE `rewrite_story`,
+/// which then derives its provenance from these bytes: the injected
+/// range holds no `<Content>`, so the parser drops it and it passes
+/// through the rewrite verbatim.
+pub(crate) fn inject_story_navigation(
+    original: &[u8],
+    anchors: &[(String, Option<String>)],
+    xref_format: Option<&str>,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    // Pre-pass: what the story already carries.
+    let (present, unformatted_xrefs) = {
+        let mut reader = Reader::from_reader(original);
+        reader.config_mut().trim_text(false);
+        let mut buf = Vec::new();
+        let mut present: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut unformatted = 0usize;
+        loop {
+            match reader.read_event_into(&mut buf)? {
+                Event::Eof => break,
+                Event::Start(ref e) | Event::Empty(ref e) => match e.name().as_ref() {
+                    b"HyperlinkTextDestination" => {
+                        if let Some(id) = attr_value(e, b"Self") {
+                            present.insert(id);
+                        }
+                    }
+                    b"CrossReferenceSource" if attr_value(e, b"AppliedFormat").is_none() => {
+                        unformatted += 1;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            buf.clear();
+        }
+        (present, unformatted)
+    };
+    let missing: Vec<&(String, Option<String>)> = anchors
+        .iter()
+        .filter(|(id, _)| !present.contains(id))
+        .collect();
+    let fix_xrefs = xref_format.is_some() && unformatted_xrefs > 0;
+    if missing.is_empty() && !fix_xrefs {
+        return Ok(original.to_vec());
+    }
+
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    let mut placed = false;
+    let write_markers = |w: &mut Writer<Cursor<Vec<u8>>>| -> Result<(), quick_xml::Error> {
+        for (id, name) in &missing {
+            emit_start_with_attrs(
+                w,
+                "CharacterStyleRange",
+                &[(
+                    "AppliedCharacterStyle",
+                    "CharacterStyle/$ID/[No character style]".to_string(),
+                )],
+            )?;
+            emit_empty_with_attrs(
+                w,
+                "HyperlinkTextDestination",
+                &[
+                    ("Self", id.clone()),
+                    (
+                        "Name",
+                        name.clone()
+                            .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id).to_string()),
+                    ),
+                    ("Hidden", "false".to_string()),
+                ],
+            )?;
+            w.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                "CharacterStyleRange",
+            )))?;
+        }
+        Ok(())
+    };
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(e) => match e.name().as_ref() {
+                b"ParagraphStyleRange" if !placed && !missing.is_empty() => {
+                    writer.write_event(Event::Start(e.into_owned()))?;
+                    write_markers(&mut writer)?;
+                    placed = true;
+                }
+                b"CrossReferenceSource"
+                    if fix_xrefs && attr_value(&e, b"AppliedFormat").is_none() =>
+                {
+                    let start = patch_start(
+                        &e,
+                        |_, _| None,
+                        &[("AppliedFormat", xref_format.unwrap_or_default().to_string())],
+                    )?;
+                    writer.write_event(Event::Start(start))?;
+                }
+                _ => writer.write_event(Event::Start(e.into_owned()))?,
+            },
+            Event::End(e) if e.name().as_ref() == b"Story" => {
+                if !placed && !missing.is_empty() {
+                    // A story with no paragraph at all: the markers get one.
+                    emit_start_with_attrs(&mut writer, "ParagraphStyleRange", &[])?;
+                    write_markers(&mut writer)?;
+                    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                        "ParagraphStyleRange",
+                    )))?;
+                    placed = true;
+                }
+                writer.write_event(Event::End(e))?;
+            }
+            other => writer.write_event(other)?,
+        }
+        buf.clear();
+    }
+    Ok(writer.into_inner().into_inner())
 }
 
 /// Serialise an inserted bounds-only vector frame (`<Rectangle>` /
@@ -3465,7 +3662,7 @@ fn corner_attr_extras(c: &CornerAttrs) -> Vec<(&'static str, String)> {
 
 /// `Set` only when the model number differs from the on-disk spelling's
 /// own parse; otherwise `None` keeps the source bytes.
-fn preserving_f32_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
+pub(crate) fn preserving_f32_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
     match v {
         Some(n) => {
             if raw.and_then(|s| s.trim().parse::<f32>().ok()) == Some(n) {
@@ -3843,9 +4040,48 @@ fn collect_table_cells<'a>(
 /// cost the invariant instead. When the parse fails the map is empty and
 /// every range passes through verbatim — the same conservative answer.
 pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml::Error> {
-    let provenance = idml_import::parse_story_with_provenance(original)
-        .map(|(_, p)| p)
-        .unwrap_or_default();
+    rewrite_story_in_frame(original, story, None)
+}
+
+/// [`rewrite_story`] with the inner width of the text column the story
+/// flows in, when the caller knows it — the column fallback for a table
+/// the model never sized (see `emit::write_table`).
+pub fn rewrite_story_in_frame(
+    original: &[u8],
+    story: &Story,
+    host_width: Option<f32>,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let (provenance, provenance_ok) = match idml_import::parse_story_with_provenance(original) {
+        Ok((_, p)) => (p, true),
+        Err(_) => (Default::default(), false),
+    };
+    // How many story-level `<ParagraphStyleRange>`s the source carries —
+    // so the LAST one is recognisable when the model appends paragraphs
+    // after it (see the `</ParagraphStyleRange>` arm).
+    let source_psr_total = {
+        let mut r = Reader::from_reader(original);
+        r.config_mut().trim_text(false);
+        let mut b = Vec::new();
+        let mut depth_t = 0usize;
+        let mut n = 0usize;
+        loop {
+            match r.read_event_into(&mut b)? {
+                Event::Eof => break,
+                Event::Start(ref e) if e.name().as_ref() == b"Table" => depth_t += 1,
+                Event::End(ref e) if e.name().as_ref() == b"Table" => {
+                    depth_t = depth_t.saturating_sub(1)
+                }
+                Event::Start(ref e) | Event::Empty(ref e)
+                    if depth_t == 0 && e.name().as_ref() == b"ParagraphStyleRange" =>
+                {
+                    n += 1
+                }
+                _ => {}
+            }
+            b.clear();
+        }
+        n
+    };
 
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
@@ -3879,6 +4115,32 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
     // close, when the full reconstructed text is known. See
     // [`RunBody`].
     let mut body = RunBody::default();
+    // Whether the previous run in this paragraph ended with a `<Br/>`:
+    // the parser then starts THIS run's text with the `\n` (see
+    // `flush_run_body`). Reset at every paragraph range.
+    let mut prev_ended_with_br = false;
+    // Model runs the MODEL split off source ranges earlier in this
+    // paragraph (see the `</CharacterStyleRange>` arm): every later range's
+    // provenance index shifts by this much. Reset at every paragraph range.
+    let mut run_offset: usize = 0;
+    // The model index of the open range's (first) run, offset applied.
+    let mut current_first: Option<usize> = None;
+    // Wrapping-form hyperlink / cross-reference sources currently open
+    // OUTSIDE a range (the engine's older spelling): a run replaced inside
+    // one must not gain a second, inner wrapper.
+    let mut open_sources: usize = 0;
+    let mut csr_open = false;
+    // ---- what the SOURCE story lacks and the model has ----
+    // The highest model paragraph index a story-level range resolved to:
+    // model paragraphs beyond it have no source element (a table
+    // `InsertTable` appended after a checkpoint, text appended at the
+    // end) and are written whole at `</Story>`.
+    let mut max_story_para: Option<usize> = None;
+    let mut source_psr_seen = 0usize;
+    // Whether the open story-level range carried a `<Table>` — a model
+    // paragraph with a table the source range lacks gets it at the
+    // range's close.
+    let mut table_in_para = false;
     // Depth of open `<Table>` elements. Inside a table the
     // `<ParagraphStyleRange>` / `<CharacterStyleRange>` belong to CELL
     // paragraphs, which the parser stores on `paragraph.table.cells[]`,
@@ -3953,6 +4215,9 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                     }
                     b"Table" => {
                         table_depth += 1;
+                        if table_depth == 1 {
+                            table_in_para = true;
+                        }
                         writer.write_event(Event::Start(e.into_owned()))?;
                     }
                     b"Cell" if table_depth > 0 => {
@@ -3969,26 +4234,40 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         writer.write_event(Event::Start(e.into_owned()))?;
                     }
                     b"ParagraphStyleRange" if table_depth == 0 => {
+                        prev_ended_with_br = false;
+                        run_offset = 0;
+                        table_in_para = false;
+                        source_psr_seen += 1;
+                        if let Some(i) = provenance
+                            .paragraph_at(event_pos)
+                            .and_then(|i| model_paragraph_index(&story.paragraphs, i))
+                        {
+                            max_story_para = Some(max_story_para.map_or(i, |m| m.max(i)));
+                        }
                         story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
                         let start = patch_paragraph_range(&e, story_para)?;
                         writer.write_event(Event::Start(start))?;
                     }
                     b"ParagraphStyleRange" if in_cell => {
+                        prev_ended_with_br = false;
+                        run_offset = 0;
                         cell_para = current_cell
                             .and_then(|c| resolve_paragraph(&provenance, event_pos, &c.paragraphs));
                         let start = patch_paragraph_range(&e, cell_para)?;
                         writer.write_event(Event::Start(start))?;
                     }
                     b"CharacterStyleRange" if table_depth == 0 => {
-                        (current_run, current_run_split) =
-                            resolve_run(&provenance, event_pos, story_para);
+                        (current_run, current_run_split, current_first) =
+                            resolve_run(&provenance, event_pos, story_para, run_offset);
+                        csr_open = true;
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
                         writer.write_event(Event::Start(start))?;
                     }
                     b"CharacterStyleRange" if in_cell => {
-                        (current_run, current_run_split) =
-                            resolve_run(&provenance, event_pos, cell_para);
+                        (current_run, current_run_split, current_first) =
+                            resolve_run(&provenance, event_pos, cell_para, run_offset);
+                        csr_open = true;
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
                         writer.write_event(Event::Start(start))?;
@@ -4002,6 +4281,7 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         // run buffers (foreign markup flips the guard).
                         body.active = true;
                         body.in_content = true;
+                        body.ends_with_br = false;
                         body.events.push(Event::Start(e.into_owned()));
                     }
                     _ => {
@@ -4012,6 +4292,14 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                             body.foreign = true;
                             body.events.push(Event::Start(e.into_owned()));
                         } else {
+                            if !csr_open
+                                && matches!(
+                                    e.name().as_ref(),
+                                    b"HyperlinkTextSource" | b"CrossReferenceSource"
+                                )
+                            {
+                                open_sources += 1;
+                            }
                             writer.write_event(Event::Start(e.into_owned()))?;
                         }
                     }
@@ -4033,6 +4321,15 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                 // still advances the positional cursor + patches attrs.
                 match e.name().as_ref() {
                     b"ParagraphStyleRange" if table_depth == 0 => {
+                        prev_ended_with_br = false;
+                        run_offset = 0;
+                        source_psr_seen += 1;
+                        if let Some(i) = provenance
+                            .paragraph_at(event_pos)
+                            .and_then(|i| model_paragraph_index(&story.paragraphs, i))
+                        {
+                            max_story_para = Some(max_story_para.map_or(i, |m| m.max(i)));
+                        }
                         // A self-closing paragraph range has no runs, so
                         // the parser dropped it and the map has no entry
                         // — it passes through verbatim. Still recorded
@@ -4043,6 +4340,8 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"ParagraphStyleRange" if in_cell => {
+                        prev_ended_with_br = false;
+                        run_offset = 0;
                         cell_para = current_cell
                             .and_then(|c| resolve_paragraph(&provenance, event_pos, &c.paragraphs));
                         let start = patch_paragraph_range(&e, cell_para)?;
@@ -4051,16 +4350,22 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                     b"CharacterStyleRange" if table_depth == 0 => {
                         current_run = None;
                         current_run_split = false;
+                        current_first = None;
+                        csr_open = false;
                         body = RunBody::default();
-                        let (run, _) = resolve_run(&provenance, event_pos, story_para);
+                        let (run, _, _) =
+                            resolve_run(&provenance, event_pos, story_para, run_offset);
                         let start = patch_character_range(&e, run)?;
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"CharacterStyleRange" if in_cell => {
                         current_run = None;
                         current_run_split = false;
+                        current_first = None;
+                        csr_open = false;
                         body = RunBody::default();
-                        let (run, _) = resolve_run(&provenance, event_pos, cell_para);
+                        let (run, _, _) =
+                            resolve_run(&provenance, event_pos, cell_para, run_offset);
                         let start = patch_character_range(&e, run)?;
                         writer.write_event(Event::Empty(start))?;
                     }
@@ -4072,6 +4377,7 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         // the newline so the split survives a rewrite.
                         body.active = true;
                         body.text.push('\n');
+                        body.ends_with_br = true;
                         body.events.push(Event::Empty(e.into_owned()));
                     }
                     b"Tab" if (table_depth == 0 || in_cell) && !body.in_content => {
@@ -4079,6 +4385,7 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         // continues the body region (see `<Br/>`).
                         body.active = true;
                         body.text.push('\t');
+                        body.ends_with_br = false;
                         body.events.push(Event::Empty(e.into_owned()));
                     }
                     _ => {
@@ -4171,15 +4478,64 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         continue; // already buffered + advanced
                     }
                     b"CharacterStyleRange" => {
-                        // A SPLIT range's text is spread over several
-                        // runs; re-serialising it from any one of them
-                        // would delete the rest. Flush it as unmatched
-                        // (verbatim replay) — the attributes were still
-                        // patched off the first run at the open tag.
+                        // A range the PARSER split (`TextVariableInstance`)
+                        // spreads its text over several runs; re-serialising
+                        // it from any one of them would delete the rest.
+                        // Flush it as unmatched (verbatim replay) — the
+                        // attributes were still patched off the first run
+                        // at the open tag.
                         let text_run = if current_run_split { None } else { current_run };
-                        flush_run_body(&mut writer, &mut body, text_run)?;
+                        // A range the MODEL split (see `split_tail`): the
+                        // first piece replaces the body, the other pieces
+                        // follow as ranges of their own, the paragraph
+                        // mark moving to the last of them.
+                        let scope = if table_depth > 0 && current_cell.is_some() {
+                            cell_para
+                        } else {
+                            story_para
+                        };
+                        let source_text = if body.ends_with_br {
+                            body.text
+                                .strip_suffix('\n')
+                                .unwrap_or(&body.text)
+                                .to_string()
+                        } else {
+                            body.text.clone()
+                        };
+                        let extras = if body.active && !body.foreign && !current_run_split {
+                            split_tail(scope, current_first, &source_text, prev_ended_with_br)
+                        } else {
+                            Vec::new()
+                        };
+                        let mark = body.ends_with_br;
+                        let wrap = open_sources == 0;
+                        flush_run_body(
+                            &mut writer,
+                            &mut body,
+                            text_run,
+                            &mut prev_ended_with_br,
+                            !extras.is_empty(),
+                            wrap,
+                        )?;
+                        writer.write_event(Event::End(e))?;
+                        if let Some(para) = scope {
+                            let last = extras.len().saturating_sub(1);
+                            for (n, i) in extras.iter().enumerate() {
+                                write_split_run(
+                                    &mut writer,
+                                    &para.runs[*i],
+                                    wrap,
+                                    mark && n == last,
+                                )?;
+                            }
+                        }
+                        run_offset += extras.len();
                         current_run = None;
                         current_run_split = false;
+                        current_first = None;
+                        csr_open = false;
+                        buf.clear();
+                        continue;
                     }
                     // Any other End that arrives while the inline body is
                     // buffering has to buffer TOO, or the run's markup
@@ -4208,6 +4564,70 @@ pub fn rewrite_story(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xm
                         body.events.push(Event::End(e.into_owned()));
                         buf.clear();
                         continue;
+                    }
+                    b"HyperlinkTextSource" | b"CrossReferenceSource" if !csr_open => {
+                        open_sources = open_sources.saturating_sub(1);
+                    }
+                    b"ParagraphStyleRange" if table_depth == 0 => {
+                        // A table the model holds on this paragraph and the
+                        // source range does not carry: written here, in the
+                        // minted-story vocabulary. (Every `InsertTable` lands
+                        // on a fresh paragraph, so this is the checkpoint
+                        // case — a `.paged` saved by an exporter without a
+                        // table lane, reloaded, exported again.)
+                        if !table_in_para {
+                            if let Some(t) = story_para.and_then(|p| p.table.as_ref()) {
+                                emit_start_with_attrs(
+                                    &mut writer,
+                                    "CharacterStyleRange",
+                                    &[(
+                                        "AppliedCharacterStyle",
+                                        crate::emit::NO_CHARACTER_STYLE.to_string(),
+                                    )],
+                                )?;
+                                crate::emit::write_table(&mut writer, t, host_width)?;
+                                writer.write_event(Event::End(
+                                    quick_xml::events::BytesEnd::new("CharacterStyleRange"),
+                                ))?;
+                            }
+                        }
+                        // The LAST source paragraph, with model paragraphs
+                        // still to come after it: it needs a paragraph mark
+                        // or InDesign reads the appended text as part of it.
+                        let trailing_from = max_story_para.map_or(0, |m| m + 1);
+                        let trailing_content = story
+                            .paragraphs
+                            .get(trailing_from..)
+                            .is_some_and(|t| t.iter().any(|p| !paragraph_is_empty(p)));
+                        if provenance_ok
+                            && source_psr_seen == source_psr_total
+                            && trailing_content
+                            && !prev_ended_with_br
+                        {
+                            emit_start_with_attrs(&mut writer, "CharacterStyleRange", &[])?;
+                            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+                            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                                "CharacterStyleRange",
+                            )))?;
+                        }
+                        table_in_para = false;
+                    }
+                    b"Story" => {
+                        // Model paragraphs beyond the last source range —
+                        // appended after the source part was written.
+                        let trailing_from = max_story_para.map_or(0, |m| m + 1);
+                        let trailing_content = story
+                            .paragraphs
+                            .get(trailing_from..)
+                            .is_some_and(|t| t.iter().any(|p| !paragraph_is_empty(p)));
+                        if provenance_ok && trailing_content {
+                            crate::emit::write_paragraphs(
+                                &mut writer,
+                                &story.paragraphs[trailing_from..],
+                                &[],
+                                host_width,
+                            )?;
+                        }
                     }
                     _ => {}
                 }
@@ -4255,6 +4675,12 @@ struct RunBody {
     foreign: bool,
     /// Buffered events, in document order.
     events: Vec<Event<'static>>,
+    /// The last inline leaf buffered was a `<Br/>` — a PARAGRAPH MARK when
+    /// the run is the paragraph's last, a break that the parser hands to
+    /// the NEXT run's text otherwise. Either way it is not in this run's
+    /// text, and the comparison in [`flush_run_body`] must not read it
+    /// as a difference.
+    ends_with_br: bool,
 }
 
 /// Append one decoded `<Content>` fragment to a run's reconstructed
@@ -4298,27 +4724,97 @@ fn push_run_text(out: &mut String, decoded: &str) {
 /// runs of plain text → `<Content>…</Content>`). Otherwise replay the
 /// original events so an unchanged run — or one carrying markers — stays
 /// byte-identical.
+///
+/// # The paragraph mark is not text
+///
+/// The parser (`idml_import::story`) treats a `<Br/>` that closes a
+/// run as PENDING: content following it in the same paragraph turns it
+/// into a `\n` at the START of that following run's text; the
+/// paragraph's end discards it — it was the terminator, not a
+/// character. So a run's reconstructed source text can end with a `\n`
+/// that is in no model run, and the NEXT model run can start with a `\n`
+/// that is in no source range of its own. Comparing the raw strings read
+/// both as mutations: every InDesign paragraph (which ends its last run
+/// with `<Br />`) was re-serialised on an unmutated save, and the
+/// re-serialisation DROPPED the mark — so a saved story reopened in
+/// InDesign as one merged paragraph. `prev_br` carries the previous
+/// run's trailing mark into this comparison; a replaced run re-emits the
+/// mark it had.
+///
+/// `hold_br`: the paragraph mark belongs to a later split-off range —
+/// do not write it here. `wrap_source`: a replaced run tagged with a
+/// hyperlink source may take InDesign's inner `<HyperlinkTextSource>`
+/// (false while a wrapping-form source is open around the range).
 fn flush_run_body(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     body: &mut RunBody,
     run: Option<&CharacterRun>,
+    prev_br: &mut bool,
+    hold_br: bool,
+    wrap_source: bool,
 ) -> Result<(), quick_xml::Error> {
     if !body.active {
         return Ok(());
     }
+    let ends_with_br = body.ends_with_br;
+    let model_text = |r: &CharacterRun| -> String {
+        let t = r.text.as_str();
+        let t = if *prev_br {
+            t.strip_prefix('\n').unwrap_or(t)
+        } else {
+            t
+        };
+        t.to_string()
+    };
+    let source_text = if ends_with_br {
+        body.text.strip_suffix('\n').unwrap_or(&body.text)
+    } else {
+        body.text.as_str()
+    };
+    // A run tagged with a hyperlink source whose source range carries no
+    // wrapper (the range was tagged after the part was written — a
+    // checkpoint reload) is re-serialised too, wrapped: an existing
+    // wrapper inside the range makes the body foreign, an existing
+    // wrapping-form source around it clears `wrap_source`, so neither is
+    // wrapped twice.
+    let needs_wrap = wrap_source && run.is_some_and(|r| r.hyperlink_source.is_some());
     let replace = match run {
-        Some(r) => r.text != body.text && !body.foreign,
+        Some(r) => (model_text(r) != source_text || needs_wrap) && !body.foreign,
         None => false,
     };
     if replace {
-        write_run_content(writer, &run.expect("checked above").text)?;
+        let r = run.expect("checked above");
+        let text = model_text(r);
+        match (&r.hyperlink_source, wrap_source) {
+            (Some(src), true) => {
+                emit_start_with_attrs(
+                    writer,
+                    "HyperlinkTextSource",
+                    &[
+                        ("Self", src.clone()),
+                        ("Name", src.rsplit('/').next().unwrap_or(src).to_string()),
+                        ("Hidden", "false".to_string()),
+                    ],
+                )?;
+                write_run_content(writer, &text)?;
+                writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                    "HyperlinkTextSource",
+                )))?;
+            }
+            _ => write_run_content(writer, &text)?,
+        }
+        if ends_with_br && !hold_br {
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+        }
     } else {
         for ev in body.events.drain(..) {
             writer.write_event(ev)?;
         }
     }
+    *prev_br = ends_with_br;
     body.active = false;
     body.in_content = false;
+    body.ends_with_br = false;
     body.events.clear();
     Ok(())
 }
@@ -4373,7 +4869,35 @@ fn resolve_paragraph<'a>(
     pos: u64,
     scope: &'a [Paragraph],
 ) -> Option<&'a Paragraph> {
-    provenance.paragraph_at(pos).and_then(|i| scope.get(i))
+    provenance
+        .paragraph_at(pos)
+        .and_then(|i| model_paragraph_index(scope, i))
+        .and_then(|i| scope.get(i))
+}
+
+/// A paragraph the parser DROPS on read (neither a run nor a table).
+fn paragraph_is_empty(p: &Paragraph) -> bool {
+    p.runs.is_empty() && p.table.is_none()
+}
+
+/// The MODEL index of the parser's `parse_index`-th paragraph.
+///
+/// The provenance map counts in PARSE space: the parser drops a
+/// paragraph with neither a run nor a table, so its indices skip them.
+/// A model that came from the native part (`document.pgm`) still holds
+/// such paragraphs — the annual's DOCX-lowered story kept an empty one
+/// in the middle, and every source range after it was patched against
+/// the paragraph BEFORE the one it came from: the whole tail of the
+/// story shifted by one on save, and the two hyperlink sources in it
+/// never met their runs. Counting only the paragraphs the parser would
+/// have kept puts the two spaces back in step.
+fn model_paragraph_index(scope: &[Paragraph], parse_index: usize) -> Option<usize> {
+    scope
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !paragraph_is_empty(p))
+        .nth(parse_index)
+        .map(|(i, _)| i)
 }
 
 /// The model run the `<CharacterStyleRange>` at `pos` produced inside
@@ -4383,12 +4907,102 @@ fn resolve_run<'a>(
     provenance: &idml_import::StoryProvenance,
     pos: u64,
     para: Option<&'a Paragraph>,
-) -> (Option<&'a CharacterRun>, bool) {
+    offset: usize,
+) -> (Option<&'a CharacterRun>, bool, Option<usize>) {
     let Some(slot) = provenance.run_at(pos) else {
-        return (None, false);
+        return (None, false, None);
     };
-    let run = para.and_then(|p| p.runs.get(slot.first));
-    (run, slot.count > 1)
+    let first = slot.first + offset;
+    let run = para.and_then(|p| p.runs.get(first));
+    (run, slot.count > 1, Some(first))
+}
+
+/// The model runs a source range was SPLIT into after parse — a
+/// hyperlink, a style or a placeholder applied to PART of a run
+/// (`paged_mutate::split_run_at`) leaves the model with several runs
+/// where the source has one element. The provenance index still names
+/// the first piece; the pieces after it have no source element of their
+/// own, so without this they were simply never written: an
+/// `InsertHyperlink` over "Hello" in "Hello world" saved "Hello".
+///
+/// Detected by TEXT: the source range's text must equal the first piece
+/// followed by the next `k` runs exactly. Returns those `k` extra run
+/// indices (empty when the range is not a split, or the pieces were also
+/// edited — then the old single-run comparison applies).
+fn split_tail(
+    para: Option<&Paragraph>,
+    first: Option<usize>,
+    source_text: &str,
+    prev_br: bool,
+) -> Vec<usize> {
+    let (Some(para), Some(first)) = (para, first) else {
+        return Vec::new();
+    };
+    let Some(head) = para.runs.get(first) else {
+        return Vec::new();
+    };
+    let head_text = if prev_br {
+        head.text.strip_prefix('\n').unwrap_or(&head.text)
+    } else {
+        head.text.as_str()
+    };
+    if head_text == source_text || !source_text.starts_with(head_text) {
+        return Vec::new();
+    }
+    let mut acc = head_text.to_string();
+    let mut extras = Vec::new();
+    for (i, r) in para.runs.iter().enumerate().skip(first + 1) {
+        acc.push_str(&r.text);
+        extras.push(i);
+        if acc == source_text {
+            return extras;
+        }
+        if !source_text.starts_with(&acc) {
+            break;
+        }
+    }
+    Vec::new()
+}
+
+/// One `<CharacterStyleRange>` for a split-off model run (see
+/// [`split_tail`]), in the minted-story vocabulary.
+fn write_split_run(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    r: &CharacterRun,
+    wrap_source: bool,
+    mark: bool,
+) -> Result<(), quick_xml::Error> {
+    emit_start_with_attrs(
+        writer,
+        "CharacterStyleRange",
+        &crate::emit::character_run_attrs(r),
+    )?;
+    crate::emit::emit_applied_font(writer, &r.font)?;
+    match (&r.hyperlink_source, wrap_source) {
+        (Some(src), true) => {
+            emit_start_with_attrs(
+                writer,
+                "HyperlinkTextSource",
+                &[
+                    ("Self", src.clone()),
+                    ("Name", src.rsplit('/').next().unwrap_or(src).to_string()),
+                    ("Hidden", "false".to_string()),
+                ],
+            )?;
+            write_run_content(writer, &r.text)?;
+            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                "HyperlinkTextSource",
+            )))?;
+        }
+        _ => write_run_content(writer, &r.text)?,
+    }
+    if mark {
+        writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+    }
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+        "CharacterStyleRange",
+    )))?;
+    Ok(())
 }
 
 fn patch_paragraph_range(
@@ -4557,6 +5171,30 @@ pub(crate) fn attr_value(e: &BytesStart, key: &[u8]) -> Option<String> {
 // ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
+
+/// How many `<CrossReferenceSource>` elements in a story part name no
+/// `AppliedFormat` — the ones InDesign drops (see
+/// [`inject_story_navigation`]).
+pub(crate) fn unformatted_xref_sources(story: &[u8]) -> Result<usize, quick_xml::Error> {
+    let mut reader = Reader::from_reader(story);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut n = 0usize;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(ref e) | Event::Empty(ref e)
+                if e.name().as_ref() == b"CrossReferenceSource"
+                    && attr_value(e, b"AppliedFormat").is_none() =>
+            {
+                n += 1;
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(n)
+}
 
 #[cfg(test)]
 mod tests {

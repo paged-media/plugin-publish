@@ -15,7 +15,7 @@
 //! The `.paged` container writer (file-format.md).
 //!
 //! A `.paged` file is, at all times, a structurally-valid IDML package:
-//! the IDML parts stay canonical (written by [`write_idml`]), and each
+//! the IDML parts stay canonical (written by [`crate::write_idml`]), and each
 //! plugin owns a namespace of extra parts under `paged/<plugin>/<id>/…`
 //! that ride alongside as ZIP entries UNREFERENCED by `designmap.xml`
 //! (the EPUB/ODF private-parts idiom — InDesign ignores them on open).
@@ -44,12 +44,21 @@ use std::io::{Cursor, Read, Write};
 
 use paged_scene::Document;
 
-use crate::{write_idml, WriteError};
+use crate::WriteError;
 
 /// The top-level container metadata entry name.
 pub const MANIFEST_NAME: &str = "manifest.json";
 /// The plugin-parts namespace prefix.
 pub const PAGED_PREFIX: &str = "paged/";
+
+/// Whether a package entry is a `.paged` CONTAINER part rather than an
+/// IDML part: the `manifest.json` identity entry or anything under the
+/// `paged/` namespace (plugin parts, the native `document.pgm`). This is
+/// the same partition [`idml_parts_hash`] hashes by; [`crate::write_idml`] drops
+/// exactly these so an `.idml` never smuggles the container along.
+pub fn is_container_part(name: &str) -> bool {
+    name == MANIFEST_NAME || name.starts_with(PAGED_PREFIX)
+}
 
 /// FNV-1a 64-bit over a byte slice (the same family as
 /// `DisplayList::digest` — a fast change-detector, NOT a cryptographic or
@@ -180,7 +189,7 @@ fn build_manifest(
 }
 
 /// Write `doc` as a `.paged` container: a valid IDML package (via
-/// [`write_idml`]) plus the model-held `paged/` parts and a refreshed
+/// [`crate::write_idml`]) plus the model-held `paged/` parts and a refreshed
 /// `manifest.json`.
 ///
 /// `new_parts` are `paged/<…>` entries the model holds that the source
@@ -195,8 +204,9 @@ pub fn write_paged(
     paged_protocol: u32,
 ) -> Result<Vec<u8>, WriteError> {
     // 1. The canonical IDML write (carry-through + patch). Existing `paged/`
-    //    parts in `original` survive here untouched.
-    let idml = write_idml(doc, original)?;
+    //    parts + the manifest in `original` survive here untouched — the
+    //    container lane keeps them, unlike the pure-IDML `write_idml`.
+    let idml = crate::write_package(doc, original, true)?;
 
     // 2. The data-loss-guard hash over the IDML parts only, merged into the
     //    EXISTING manifest (carried through `write_idml` from `original`) so

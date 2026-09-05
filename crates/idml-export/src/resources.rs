@@ -229,7 +229,7 @@ fn push_style_common(
     attrs: &mut Vec<(&'static str, String)>,
     name: &Option<String>,
     based_on: &Option<String>,
-    font: &Option<String>,
+    _font: &Option<String>,
     font_style: &Option<String>,
     point_size: Option<f32>,
     fill_color: &Option<String>,
@@ -317,7 +317,9 @@ fn emit_style_element(
     writer.write_event(Event::Text(quick_xml::events::BytesText::new(family)))?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("AppliedFont")))?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
-    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(name.to_string())))?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+        name.to_string(),
+    )))?;
     Ok(())
 }
 
@@ -624,6 +626,132 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
     Ok(writer.into_inner().into_inner())
 }
 
+// ---- conditional text: `Resources/Styles.xml` is NOT where it lives ------
+
+/// The indicator colours of every `<Condition>` in `xml`, keyed by
+/// `Self`, read from either spelling (the engine's older
+/// `IndicatorColor="…"` attribute, or InDesign's
+/// `<Properties><IndicatorColor type="enumeration">` child). The model
+/// does not carry the colour, so the exporter scrapes it here to keep it
+/// when it re-spells a condition canonically.
+pub(crate) fn scan_condition_colors(
+    xml: &[u8],
+) -> Result<std::collections::HashMap<String, String>, quick_xml::Error> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut out = std::collections::HashMap::new();
+    let mut buf = Vec::new();
+    let mut current: Option<String> = None;
+    let mut pending = false;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(ref e) | Event::Empty(ref e) if e.name().as_ref() == b"Condition" => {
+                let id = attr_value(e, b"Self");
+                if let (Some(id), Some(c)) = (&id, attr_value(e, b"IndicatorColor")) {
+                    out.insert(id.clone(), c);
+                }
+                current = id;
+            }
+            Event::Start(ref e) if e.name().as_ref() == b"IndicatorColor" && current.is_some() => {
+                pending = true;
+            }
+            Event::Text(ref t) if pending => {
+                if let (Some(id), Ok(c)) = (
+                    current.as_ref(),
+                    t.xml_content(quick_xml::XmlVersion::Implicit1_0),
+                ) {
+                    let c = c.trim().to_string();
+                    if !c.is_empty() {
+                        out.insert(id.clone(), c);
+                    }
+                }
+                pending = false;
+            }
+            Event::End(ref e) if e.name().as_ref() == b"Condition" => current = None,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+/// Remove every `<Condition>` / `<ConditionSet>` — and the engine's
+/// invented `<RootConditionalTextGroup>` wrapper around them — from a
+/// `Resources/Styles.xml` part. InDesign 20.0.1 keeps conditions in
+/// `designmap.xml` and ignores everything inside the wrapper (measured:
+/// 0 conditions read), so the exporter moves them to the designmap
+/// (`navigation::patch_designmap_navigation`) and this pass takes them
+/// out of here. Byte-identical when the part carries none.
+pub(crate) fn strip_conditions(original: &[u8]) -> Result<Vec<u8>, quick_xml::Error> {
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    let mut depth = 0usize;
+    let mut skip_depth: Option<usize> = None;
+    let mut changed = false;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(e) => {
+                depth += 1;
+                if skip_depth.is_some() {
+                    buf.clear();
+                    continue;
+                }
+                if matches!(
+                    e.name().as_ref(),
+                    b"RootConditionalTextGroup" | b"Condition" | b"ConditionSet"
+                ) {
+                    skip_depth = Some(depth);
+                    changed = true;
+                } else {
+                    writer.write_event(Event::Start(e.into_owned()))?;
+                }
+            }
+            Event::Empty(e) => {
+                if skip_depth.is_some() {
+                    buf.clear();
+                    continue;
+                }
+                if matches!(
+                    e.name().as_ref(),
+                    b"RootConditionalTextGroup" | b"Condition" | b"ConditionSet"
+                ) {
+                    changed = true;
+                } else {
+                    writer.write_event(Event::Empty(e.into_owned()))?;
+                }
+            }
+            Event::End(e) => {
+                if let Some(d) = skip_depth {
+                    if d == depth {
+                        skip_depth = None;
+                    }
+                    depth = depth.saturating_sub(1);
+                    buf.clear();
+                    continue;
+                }
+                depth = depth.saturating_sub(1);
+                writer.write_event(Event::End(e))?;
+            }
+            other => {
+                if skip_depth.is_none() {
+                    writer.write_event(other)?;
+                }
+            }
+        }
+        buf.clear();
+    }
+    if !changed {
+        return Ok(original.to_vec());
+    }
+    Ok(writer.into_inner().into_inner())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -671,7 +799,8 @@ mod tests {
             "and it stays the <Tint> the source carried: {s}",
         );
         assert_eq!(
-            original, s.as_bytes(),
+            original,
+            s.as_bytes(),
             "nothing was missing, so the file is byte-identical",
         );
     }

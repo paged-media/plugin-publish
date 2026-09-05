@@ -262,16 +262,6 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                         out.stroke_styles.insert(def.self_id.clone(), def);
                     }
                 }
-                b"Condition" => {
-                    if let Some(def) = parse_condition(&e) {
-                        out.conditions.insert(def.self_id.clone(), def);
-                    }
-                }
-                b"ConditionSet" => {
-                    if let Some(def) = parse_condition_set(&e) {
-                        out.condition_sets.insert(def.self_id.clone(), def);
-                    }
-                }
                 b"NumberingList" => {
                     if let Some(def) = parse_numbering_list(&e) {
                         out.numbering_lists.insert(def.self_id.clone(), def);
@@ -477,16 +467,6 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                         }
                     }
                 }
-                b"Condition" => {
-                    if let Some(def) = parse_condition(&e) {
-                        out.conditions.insert(def.self_id.clone(), def);
-                    }
-                }
-                b"ConditionSet" => {
-                    if let Some(def) = parse_condition_set(&e) {
-                        out.condition_sets.insert(def.self_id.clone(), def);
-                    }
-                }
                 b"NumberingList" => {
                     if let Some(def) = parse_numbering_list(&e) {
                         out.numbering_lists.insert(def.self_id.clone(), def);
@@ -558,7 +538,88 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
         }
         buf.clear();
     }
+    // Conditions + sets: one reader for every spelling (see
+    // [`parse_conditions`]), so Styles.xml and designmap.xml read the
+    // same way.
+    let (conditions, condition_sets) = parse_conditions(xml)?;
+    out.conditions = conditions;
+    out.condition_sets = condition_sets;
     Ok(out)
+}
+
+/// The conditions and condition sets read from one part, keyed by `Self`.
+pub type ConditionTables = (
+    std::collections::BTreeMap<String, ConditionDef>,
+    std::collections::BTreeMap<String, ConditionSetDef>,
+);
+
+/// Parse every `<Condition>` / `<ConditionSet>` in `xml`, wherever it
+/// sits — the reader is deliberately position-blind because three
+/// spellings exist in the wild and all three must keep opening:
+///
+/// * InDesign's own (measured on InDesign 20.0.1, 2026-09-05): direct
+///   children of `<Document>` in `designmap.xml`, the set's members as
+///   `<Properties><SetConditions><VisibilityPair Condition="…"
+///   Visibility="true"/>…</SetConditions></Properties>` children;
+/// * the engine's pre-2026-09 fixtures: inside `Resources/Styles.xml`,
+///   wrapped in an invented `<RootConditionalTextGroup>` (InDesign
+///   drops everything inside it), the set's members as a
+///   space-separated `Conditions="a b"` attribute (InDesign ignores it);
+/// * the same without the wrapper (what InDesign tolerates in
+///   Styles.xml).
+///
+/// The importer accepts all of them; the exporter writes only the
+/// first. A `Conditions` attribute and `VisibilityPair` children on the
+/// same set merge (deduplicated, attribute order first).
+pub fn parse_conditions(xml: &[u8]) -> Result<ConditionTables, ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut conditions = std::collections::BTreeMap::new();
+    let mut sets = std::collections::BTreeMap::new();
+    let mut buf = Vec::new();
+    // The `<ConditionSet>` currently open (element form), so its
+    // `<VisibilityPair>` children attach to it.
+    let mut current_set: Option<String> = None;
+    loop {
+        let ev = reader.read_event_into(&mut buf)?;
+        match ev {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                let is_start = matches!(ev, Event::Start(_));
+                match e.name().as_ref() {
+                    b"Condition" => {
+                        if let Some(def) = parse_condition(e) {
+                            conditions.insert(def.self_id.clone(), def);
+                        }
+                    }
+                    b"ConditionSet" => {
+                        if let Some(def) = parse_condition_set(e) {
+                            if is_start {
+                                current_set = Some(def.self_id.clone());
+                            }
+                            sets.insert(def.self_id.clone(), def);
+                        }
+                    }
+                    b"VisibilityPair" => {
+                        if let (Some(id), Some(member)) =
+                            (current_set.as_deref(), attr(e, b"Condition"))
+                        {
+                            if let Some(set) = sets.get_mut(id) {
+                                if !set.conditions.contains(&member) {
+                                    set.conditions.push(member);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(ref e) if e.name().as_ref() == b"ConditionSet" => current_set = None,
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok((conditions, sets))
 }
 
 fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterStyleDef> {
