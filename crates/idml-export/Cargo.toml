@@ -11,6 +11,7 @@ description = "Export re-serialization (save-back). Carry-through writer: copies
 workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 idml-import = { path = "../idml-import" }
 paged-scene = { workspace = true }
 thiserror = { workspace = true }

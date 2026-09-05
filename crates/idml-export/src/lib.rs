@@ -340,7 +340,12 @@ pub(crate) fn write_package(
     let mut src = zip::ZipArchive::new(Cursor::new(original))?;
     // The files every placed image's `<Link>` will point at (empty
     // without a link base — see `images`).
-    let mut links = images::LinkCollector::new(opts.link_base.as_deref());
+    // A pure `.idml` with no link base embeds every picture's bytes
+    // (see `images::LinkCollector::embed`); a `.paged` write never does.
+    let mut links = images::LinkCollector::new(
+        opts.link_base.as_deref(),
+        !keep_container_parts && opts.link_base.is_none(),
+    );
     let out = Cursor::new(Vec::<u8>::new());
     let mut zip = zip::write::ZipWriter::new(out);
 

@@ -78,6 +78,12 @@ use crate::ExportedLink;
 #[derive(Debug, Default)]
 pub(crate) struct LinkCollector {
     base: Option<String>,
+    /// Embed the bytes a frame holds as the `<Image>`'s
+    /// `<Properties><Contents>` (base64, InDesign's own embedded-link
+    /// spelling, `StoredState="Embedded"`) — the pure-`.idml` export with
+    /// no link base, where a relative URI would resolve to nothing. A
+    /// `.paged` write never embeds: its model part holds the bytes.
+    embed: bool,
     links: Vec<ExportedLink>,
     /// model uri → the file name it was given (so two frames naming the
     /// same asset share one file).
@@ -86,9 +92,10 @@ pub(crate) struct LinkCollector {
 }
 
 impl LinkCollector {
-    pub(crate) fn new(base: Option<&str>) -> Self {
+    pub(crate) fn new(base: Option<&str>, embed: bool) -> Self {
         Self {
             base: base.map(|b| b.trim_end_matches('/').to_string()),
+            embed,
             ..Self::default()
         }
     }
@@ -265,6 +272,8 @@ struct LinkSpec {
     transform: Option<[f32; 6]>,
     bounds: Bounds,
     space: Option<String>,
+    /// The bytes to embed as `<Contents>` (see `LinkCollector::embed`).
+    embed: Option<Vec<u8>>,
 }
 
 fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, LinkSpec> {
@@ -278,10 +287,21 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
                    transform: Option<[f32; 6]>,
                    bounds: Bounds| {
         let Some(id) = id else { return };
+        let embed = if links.embed {
+            bytes.map(|b| b.to_vec())
+        } else {
+            None
+        };
         let uri = match (link, bytes) {
             (Some(uri), bytes) => links.uri_for_link(uri, bytes),
             (None, Some(bytes)) => match links.uri_for_bytes(id, bytes) {
                 Some(uri) => uri,
+                // No base to write the file under: an embedded picture
+                // still names itself (InDesign shows the name in Links).
+                None if embed.is_some() => match sniff_image_extension(bytes) {
+                    Some(ext) => format!("{id}.{ext}"),
+                    None => return,
+                },
                 None => return,
             },
             (None, None) => return,
@@ -293,6 +313,7 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
                 transform,
                 bounds,
                 space: space_of(id),
+                embed,
             },
         );
     };
@@ -352,6 +373,21 @@ fn link_resource_format(uri: &str) -> &'static str {
     }
 }
 
+/// `<Contents>BASE64</Contents>` — InDesign's spelling of an embedded
+/// picture's bytes, a typed child of the `<Image>`'s `<Properties>`
+/// (the importer's Q-03 lane reads it back).
+fn write_contents(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    bytes: &[u8],
+) -> Result<(), quick_xml::Error> {
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    writer.write_event(Event::Start(BytesStart::new("Contents")))?;
+    writer.write_event(Event::Text(quick_xml::events::BytesText::new(&encoded)))?;
+    writer.write_event(Event::End(BytesEnd::new("Contents")))?;
+    Ok(())
+}
+
 /// The frame's own `<Image>` block, in InDesign's spelling.
 fn write_image(
     writer: &mut Writer<Cursor<Vec<u8>>>,
@@ -383,6 +419,9 @@ fn write_image(
             ("Bottom", format_f32(spec.bounds.bottom)),
         ],
     )?;
+    if let Some(bytes) = &spec.embed {
+        write_contents(writer, bytes)?;
+    }
     writer.write_event(Event::End(BytesEnd::new("Properties")))?;
     emit_empty_with_attrs(
         writer,
@@ -394,7 +433,15 @@ fn write_image(
                 "LinkResourceFormat",
                 link_resource_format(&spec.uri).to_string(),
             ),
-            ("StoredState", "Normal".to_string()),
+            (
+                "StoredState",
+                if spec.embed.is_some() {
+                    "Embedded"
+                } else {
+                    "Normal"
+                }
+                .to_string(),
+            ),
             ("LinkClassID", "35906".to_string()),
             ("LinkClientID", "257".to_string()),
             ("LinkResourceModified", "false".to_string()),
@@ -422,7 +469,11 @@ fn is_placed_name(name: &[u8]) -> bool {
 
 /// Patch a `<Link>` (or a placed-image element carrying the URI itself)
 /// so `LinkResourceURI` names the model's asset; verbatim when it does.
-fn patch_uri(e: &BytesStart, uri: &str) -> Result<BytesStart<'static>, quick_xml::Error> {
+fn patch_uri(
+    e: &BytesStart,
+    uri: &str,
+    embedded: bool,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
     if attr_value(e, b"LinkResourceURI").is_none() {
         return Ok(e.clone().into_owned());
     }
@@ -433,6 +484,11 @@ fn patch_uri(e: &BytesStart, uri: &str) -> Result<BytesStart<'static>, quick_xml
                 Patch::Keep
             } else {
                 Patch::Set(uri.to_string())
+            }),
+            b"StoredState" if embedded => Some(if raw == b"Embedded" {
+                Patch::Keep
+            } else {
+                Patch::Set("Embedded".to_string())
             }),
             _ => None,
         },
@@ -468,6 +524,9 @@ pub(crate) fn rewrite_images(
     let mut depth = 0usize;
     // The open linked host: (depth, id, spec, placed child seen).
     let mut open: Option<(usize, String, &LinkSpec, bool)> = None;
+    // Whether the placed element's own `<Properties>` block already
+    // carries a `<Contents>` child (an embedded picture in the source).
+    let mut contents_seen = false;
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
@@ -478,6 +537,7 @@ pub(crate) fn rewrite_images(
                     if let Some(id) = attr_value(&e, b"Self") {
                         if let Some(spec) = specs.get(id.as_str()) {
                             open = Some((depth, id, spec, false));
+                            contents_seen = false;
                         }
                     }
                     writer.write_event(Event::Start(e.into_owned()))?;
@@ -485,10 +545,21 @@ pub(crate) fn rewrite_images(
                     if is_placed_name(&name) && depth == d + 1 {
                         let (d, id, spec, _) = open.take().expect("checked");
                         open = Some((d, id, spec, true));
-                        writer.write_event(Event::Start(patch_uri(&e, &spec.uri)?))?;
+                        writer.write_event(Event::Start(patch_uri(
+                            &e,
+                            &spec.uri,
+                            spec.embed.is_some(),
+                        )?))?;
                     } else if name == b"Link" && depth == d + 2 {
-                        writer.write_event(Event::Start(patch_uri(&e, &spec.uri)?))?;
+                        writer.write_event(Event::Start(patch_uri(
+                            &e,
+                            &spec.uri,
+                            spec.embed.is_some(),
+                        )?))?;
                     } else {
+                        if name == b"Contents" && depth == d + 3 {
+                            contents_seen = true;
+                        }
                         writer.write_event(Event::Start(e.into_owned()))?;
                     }
                 } else {
@@ -515,10 +586,21 @@ pub(crate) fn rewrite_images(
                     if is_placed_name(&name) && depth + 1 == d + 1 {
                         let (d, id, spec, _) = open.take().expect("checked");
                         open = Some((d, id, spec, true));
-                        writer.write_event(Event::Empty(patch_uri(&e, &spec.uri)?))?;
+                        writer.write_event(Event::Empty(patch_uri(
+                            &e,
+                            &spec.uri,
+                            spec.embed.is_some(),
+                        )?))?;
                     } else if name == b"Link" && depth + 1 == d + 2 {
-                        writer.write_event(Event::Empty(patch_uri(&e, &spec.uri)?))?;
+                        writer.write_event(Event::Empty(patch_uri(
+                            &e,
+                            &spec.uri,
+                            spec.embed.is_some(),
+                        )?))?;
                     } else {
+                        if name == b"Contents" && depth + 1 == d + 3 {
+                            contents_seen = true;
+                        }
                         writer.write_event(Event::Empty(e.into_owned()))?;
                     }
                 } else {
@@ -527,6 +609,18 @@ pub(crate) fn rewrite_images(
             }
             Event::End(e) => {
                 if let Some((d, id, spec, seen)) = open.as_ref() {
+                    // The placed element's `<Properties>` closes without
+                    // a `<Contents>`: the bytes to embed go in first.
+                    if *seen
+                        && depth == d + 2
+                        && e.name().as_ref() == b"Properties"
+                        && !contents_seen
+                    {
+                        if let Some(bytes) = &spec.embed {
+                            write_contents(&mut writer, bytes)?;
+                            contents_seen = true;
+                        }
+                    }
                     if *d == depth && is_host_name(e.name().as_ref()) {
                         if !seen {
                             write_image(&mut writer, id, spec)?;
@@ -579,7 +673,7 @@ mod tests {
 
     #[test]
     fn the_collector_dedupes_and_disambiguates() {
-        let mut c = LinkCollector::new(Some("/tmp/Links/"));
+        let mut c = LinkCollector::new(Some("/tmp/Links/"), false);
         let a = c.uri_for_link("assets/x/logo.png", None);
         let a2 = c.uri_for_link("assets/x/logo.png", Some(&[1, 2]));
         let b = c.uri_for_link("assets/y/logo.png", None);
@@ -601,7 +695,7 @@ mod tests {
 
     #[test]
     fn bytes_only_frames_get_a_name_from_their_magic() {
-        let mut c = LinkCollector::new(Some("/tmp/Links"));
+        let mut c = LinkCollector::new(Some("/tmp/Links"), false);
         let png = b"\x89PNG\r\n\x1a\n....".to_vec();
         assert_eq!(
             c.uri_for_bytes("Rectangle/u12", &png).as_deref(),
@@ -617,7 +711,7 @@ mod tests {
 
     #[test]
     fn without_a_base_nothing_is_rebased_or_collected() {
-        let mut c = LinkCollector::new(None);
+        let mut c = LinkCollector::new(None, false);
         assert_eq!(c.uri_for_link("assets/a.png", Some(&[1])), "assets/a.png");
         assert_eq!(c.uri_for_bytes("u1", b"\x89PNG\r\n\x1a\n"), None);
         assert!(c.into_links().is_empty());

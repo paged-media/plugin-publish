@@ -148,10 +148,16 @@ fn a_frame_holding_bytes_and_a_link_still_gets_its_link() {
         xml.contains(r#"<Link Self="r1Link" LinkResourceURI="assets/photos/apples.jpg""#),
         "{xml}"
     );
+    // No link base: the relative URI resolves to nothing wherever the
+    // file opens, so the bytes ride along EMBEDDED — InDesign's own
+    // spelling (`StoredState="Embedded"`, base64 `<Contents>`), which
+    // the importer reads back.
+    assert!(xml.contains(r#"<Contents>AQIDBA==</Contents>"#), "{xml}");
+    assert!(xml.contains(r#"StoredState="Embedded""#), "{xml}");
     let re = pkg::open(&out);
     let r = &re.spreads[0].spread.rectangles[0];
     assert_eq!(r.image_link.as_deref(), Some("assets/photos/apples.jpg"));
-    assert!(r.image_bytes.is_none(), "IDML carries no pixels");
+    assert_eq!(r.image_bytes.as_deref(), Some(&[1u8, 2, 3, 4][..]));
 }
 
 // ---- with a link base: URIs InDesign can resolve ----------------------------
@@ -211,12 +217,29 @@ fn a_bytes_placed_image_gets_a_file_under_the_base_and_its_bytes_come_back() {
     let mut doc = pkg::open(&src);
     let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
     doc.spreads[0].spread.rectangles[0].image_bytes = Some(png.clone());
-    // No base: an image that is only bytes has nothing to link — today's
-    // behaviour, the frame exports empty.
+    // No base: an image that is only bytes is EMBEDDED — named from its
+    // frame and its magic, the bytes as `<Contents>` — so the picture
+    // opens wherever the file does, and the re-parse holds the bytes.
     let plain = write_idml(&doc, &src).expect("write");
-    assert!(!pkg::entry(&plain, "Spreads/Spread_s1.xml")
-        .unwrap()
-        .contains("<Image "));
+    let plain_xml = pkg::entry(&plain, "Spreads/Spread_s1.xml").unwrap();
+    assert!(
+        plain_xml.contains(r#"LinkResourceURI="r1.png""#),
+        "{plain_xml}"
+    );
+    assert!(
+        plain_xml.contains(r#"StoredState="Embedded""#),
+        "{plain_xml}"
+    );
+    assert!(
+        plain_xml.contains("<Contents>iVBORw0KGgoAAAANSUhEUg==</Contents>"),
+        "{plain_xml}"
+    );
+    assert_eq!(
+        pkg::open(&plain).spreads[0].spread.rectangles[0]
+            .image_bytes
+            .as_deref(),
+        Some(png.as_slice())
+    );
 
     let out = with_base(&doc, &src, "/tmp/Links");
     let xml = pkg::entry(&out.bytes, "Spreads/Spread_s1.xml").expect("spread");
