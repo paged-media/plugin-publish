@@ -57,15 +57,25 @@ fn the_default_face_is_stated_and_declared_and_dangling_references_dropped() {
     assert!(prefs.contains(r#"<TextDefault FontStyle="Regular" PointSize="12"><Properties><AppliedFont type="string">Inter</AppliedFont><Leading type="enumeration">Auto</Leading></Properties></TextDefault>"#), "{prefs}");
 
     let fonts = pkg::entry(&out, "Resources/Fonts.xml").expect("fonts part");
-    assert!(fonts.contains(r#"FontFamily="Inter" Name="Inter Regular""#), "{fonts}");
+    assert!(
+        fonts.contains(r#"FontFamily="Inter" Name="Inter Regular""#),
+        "{fonts}"
+    );
 
     let story = pkg::entry(&out, "Stories/Story_st1.xml").expect("story part");
-    assert!(story.contains(r#"<ParagraphStyleRange><CharacterStyleRange><Content>lost styles</Content>"#), "{story}");
+    assert!(
+        story.contains(
+            r#"<ParagraphStyleRange><CharacterStyleRange><Content>lost styles</Content>"#
+        ),
+        "{story}"
+    );
     assert!(!story.contains("docx-"), "{story}");
 
     // Reopened, the export is its own word: a second save changes nothing.
     let doc2 = pkg::open(&out);
-    let twice = write_idml_with(&doc2, &out, &opts).expect("write again").bytes;
+    let twice = write_idml_with(&doc2, &out, &opts)
+        .expect("write again")
+        .bytes;
     pkg::assert_same_package(&out, &twice);
 }
 
@@ -76,7 +86,10 @@ fn without_a_default_face_only_the_dangling_references_go() {
     let out = write_idml(&doc, &src).expect("write");
     let prefs = pkg::entry(&out, "Resources/Preferences.xml").expect("preferences part");
     assert!(!prefs.contains("TextDefault"), "{prefs}");
-    assert!(prefs.contains(r#"<TextPreference UseOpticalSize="false"/>"#), "{prefs}");
+    assert!(
+        prefs.contains(r#"<TextPreference UseOpticalSize="false"/>"#),
+        "{prefs}"
+    );
     let story = pkg::entry(&out, "Stories/Story_st1.xml").expect("story part");
     assert!(!story.contains("docx-"), "{story}");
 }

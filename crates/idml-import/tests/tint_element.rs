@@ -56,11 +56,10 @@ const GRAPHIC: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 fn a_tint_element_is_read_and_resolves_through_its_base() {
     let g = parse_graphic(GRAPHIC).expect("parse Graphic.xml");
 
-    let tint = g
-        .colors
-        .get("Color/Vermilion20")
-        .expect("the <Tint> element must land in the swatch table — a file \
-                 using named tints must not lose them on the way in");
+    let tint = g.colors.get("Color/Vermilion20").expect(
+        "the <Tint> element must land in the swatch table — a file \
+                 using named tints must not lose them on the way in",
+    );
     assert_eq!(tint.tint, Some(20.0), "the tint value is read");
 
     // The channels come from the base, and the spot MODEL comes with
