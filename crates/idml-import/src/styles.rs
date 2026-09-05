@@ -173,6 +173,9 @@ enum CurrentStyle {
 enum CurrentProperty {
     AppliedFont,
     BasedOn,
+    /// `<Leading type="unit">13</Leading>` — InDesign's spelling of a
+    /// style's leading (an `enumeration` child, `Auto`, sets nothing).
+    Leading,
     /// `<NumberingExpression type="string">^#.^t</NumberingExpression>`
     /// inside a `ParagraphStyle`'s `<Properties>` block. Paragraph-only.
     NumberingExpression,
@@ -286,6 +289,14 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"BasedOn" if current_style.is_some() => {
                     pending_property = Some(CurrentProperty::BasedOn);
                 }
+                b"Leading"
+                    if matches!(
+                        current_style,
+                        Some(CurrentStyle::Paragraph) | Some(CurrentStyle::Character)
+                    ) =>
+                {
+                    pending_property = Some(CurrentProperty::Leading);
+                }
                 b"NumberingExpression"
                     if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
                 {
@@ -316,6 +327,11 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                                 p.based_on = Some(text);
                                             }
                                         }
+                                        CurrentProperty::Leading => {
+                                            if p.leading.is_none() {
+                                                p.leading = text.trim().parse().ok();
+                                            }
+                                        }
                                         CurrentProperty::NumberingExpression => {
                                             if p.numbering_expression.is_none() {
                                                 p.numbering_expression = Some(text);
@@ -337,6 +353,11 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         CurrentProperty::BasedOn => {
                                             if c.based_on.is_none() {
                                                 c.based_on = Some(text);
+                                            }
+                                        }
+                                        CurrentProperty::Leading => {
+                                            if c.leading.is_none() {
+                                                c.leading = text.trim().parse().ok();
                                             }
                                         }
                                         // NumberingExpression is paragraph-only.
@@ -524,7 +545,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"TOCStyle" => {
                     current_toc_style = None;
                 }
-                b"AppliedFont" | b"BasedOn" | b"NumberingExpression" => {
+                b"AppliedFont" | b"BasedOn" | b"Leading" | b"NumberingExpression" => {
                     // Pending property is consumed by the next
                     // Text event; clearing here prevents
                     // mismatched-tag leaks if the element was
@@ -636,6 +657,7 @@ fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterS
         font: attr(e, b"AppliedFont"),
         font_style: attr(e, b"FontStyle"),
         point_size: attr(e, b"PointSize").and_then(|s| s.parse().ok()),
+        leading: attr(e, b"Leading").and_then(|s| s.parse().ok()),
         fill_color: attr(e, b"FillColor"),
         fill_tint: parse_tint_attr(e, b"FillTint"),
         stroke_color: normalize(attr(e, b"StrokeColor")),
@@ -944,6 +966,7 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         font: attr(e, b"AppliedFont"),
         font_style: attr(e, b"FontStyle"),
         point_size: attr(e, b"PointSize").and_then(|s| s.parse().ok()),
+        leading: attr(e, b"Leading").and_then(|s| s.parse().ok()),
         fill_color: attr(e, b"FillColor"),
         fill_tint: parse_tint_attr(e, b"FillTint"),
         stroke_color: normalize(attr(e, b"StrokeColor")),
@@ -1925,5 +1948,43 @@ mod tests {
             Some("NumberingList/Steps")
         );
         assert_eq!(r.next_style.as_deref(), Some("ParagraphStyle/Base"));
+    }
+
+    #[test]
+    fn style_leading_is_read_from_the_attribute_and_the_typed_child() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+<RootCharacterStyleGroup Self="u9d"><CharacterStyle Self="CharacterStyle/Tight" Name="Tight"><Properties><Leading type="unit">8.5</Leading></Properties></CharacterStyle></RootCharacterStyleGroup>
+<RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/Attr" Name="Attr" Leading="14"/><ParagraphStyle Self="ParagraphStyle/Child" Name="Child" PointSize="6.5"><Properties><AppliedFont type="string">JetBrains Mono</AppliedFont><Leading type="unit">13</Leading></Properties></ParagraphStyle><ParagraphStyle Self="ParagraphStyle/Auto" Name="Auto"><Properties><Leading type="enumeration">Auto</Leading></Properties></ParagraphStyle><ParagraphStyle Self="ParagraphStyle/Derived" Name="Derived"><Properties><BasedOn type="object">ParagraphStyle/Child</BasedOn></Properties></ParagraphStyle></RootParagraphStyleGroup>
+</idPkg:Styles>"#;
+        let sheet = parse_stylesheet(xml).expect("parse");
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/Attr"].leading,
+            Some(14.0)
+        );
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/Child"].leading,
+            Some(13.0)
+        );
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/Child"]
+                .font
+                .as_deref(),
+            Some("JetBrains Mono")
+        );
+        assert_eq!(sheet.paragraph_styles["ParagraphStyle/Auto"].leading, None);
+        assert_eq!(
+            sheet.character_styles["CharacterStyle/Tight"].leading,
+            Some(8.5)
+        );
+        // … and it cascades.
+        assert_eq!(
+            sheet.resolve_paragraph("ParagraphStyle/Derived").leading,
+            Some(13.0)
+        );
+        assert_eq!(
+            sheet.resolve_paragraph("ParagraphStyle/Derived").point_size,
+            Some(6.5)
+        );
     }
 }
