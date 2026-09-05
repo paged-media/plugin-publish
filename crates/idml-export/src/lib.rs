@@ -77,6 +77,7 @@ use std::io::{Cursor, Read, Write};
 use paged_scene::{Document, ParsedStory};
 
 pub mod based_on;
+pub mod cell_insets;
 pub mod dangling;
 mod emit;
 pub mod face;
@@ -575,6 +576,11 @@ pub(crate) fn write_package(
                     source,
                 }
             })?;
+            let new =
+                cell_insets::spell_cell_insets(&new).map_err(|source| WriteError::Rewrite {
+                    entry: story.src.clone(),
+                    source,
+                })?;
             if new != orig.as_slice() {
                 patched.insert(story.src.clone(), new);
             }
@@ -629,6 +635,11 @@ pub(crate) fn write_package(
                             source,
                         }
                     })?;
+                let new =
+                    cell_insets::spell_cell_insets(&new).map_err(|source| WriteError::Rewrite {
+                        entry: entry_src.clone(),
+                        source,
+                    })?;
                 if new != orig.as_slice() {
                     patched.insert(entry_src, new);
                 }
@@ -657,6 +668,11 @@ pub(crate) fn write_package(
                         entry: entry_src.clone(),
                         source,
                     }
+                })?;
+            let body =
+                cell_insets::spell_cell_insets(&body).map_err(|source| WriteError::Rewrite {
+                    entry: entry_src.clone(),
+                    source,
                 })?;
             new_entries.push((entry_src.clone(), body));
             new_story_srcs.push(entry_src);

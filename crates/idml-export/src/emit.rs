@@ -452,21 +452,17 @@ pub(crate) fn write_table(
             ("ColumnSpan", cell.column_span.max(1).to_string()),
             ("CellType", "TextTypeCell".to_string()),
         ];
-        if cell.text_top_inset != 0.0 {
-            a.push(("TextTopInset", rewrite::format_f32(cell.text_top_inset)));
-        }
-        if cell.text_left_inset != 0.0 {
-            a.push(("TextLeftInset", rewrite::format_f32(cell.text_left_inset)));
-        }
-        if cell.text_bottom_inset != 0.0 {
-            a.push((
-                "TextBottomInset",
-                rewrite::format_f32(cell.text_bottom_inset),
-            ));
-        }
-        if cell.text_right_inset != 0.0 {
-            a.push(("TextRightInset", rewrite::format_f32(cell.text_right_inset)));
-        }
+        // Every inset is spelled, zero included: an absent inset is 4 pt
+        // to InDesign (its cell default) and the engine's 0 pt otherwise,
+        // and a row 8 pt taller in InDesign overflowed six of the
+        // annual's table frames (measured 2026-09-06).
+        a.push(("TextTopInset", rewrite::format_f32(cell.text_top_inset)));
+        a.push(("TextLeftInset", rewrite::format_f32(cell.text_left_inset)));
+        a.push((
+            "TextBottomInset",
+            rewrite::format_f32(cell.text_bottom_inset),
+        ));
+        a.push(("TextRightInset", rewrite::format_f32(cell.text_right_inset)));
         push_opt_str(&mut a, "AppliedCellStyle", &cell.applied_cell_style);
         push_opt_str(&mut a, "FillColor", &cell.fill_color);
         push_opt_str(&mut a, "TopEdgeStrokeColor", &cell.top_edge_stroke_color);

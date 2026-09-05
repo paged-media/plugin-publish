@@ -201,6 +201,11 @@ struct OpenRange {
     count: usize,
 }
 
+/// InDesign's cell inset when a `<Cell>` spells none — 0.0556 in, 4 pt
+/// (measured 2026-09-06 on every inset-less cell of the annual's tables).
+/// A fixture that omits the attribute composes the way InDesign composes it.
+const DEFAULT_CELL_INSET_PT: f32 = 4.0;
+
 pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
     parse_story_with_provenance(xml).map(|(story, _)| story)
 }
@@ -721,16 +726,16 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .unwrap_or(1),
                             text_top_inset: attr(&e, b"TextTopInset")
                                 .and_then(|s| s.parse().ok())
-                                .unwrap_or(0.0),
+                                .unwrap_or(DEFAULT_CELL_INSET_PT),
                             text_left_inset: attr(&e, b"TextLeftInset")
                                 .and_then(|s| s.parse().ok())
-                                .unwrap_or(0.0),
+                                .unwrap_or(DEFAULT_CELL_INSET_PT),
                             text_bottom_inset: attr(&e, b"TextBottomInset")
                                 .and_then(|s| s.parse().ok())
-                                .unwrap_or(0.0),
+                                .unwrap_or(DEFAULT_CELL_INSET_PT),
                             text_right_inset: attr(&e, b"TextRightInset")
                                 .and_then(|s| s.parse().ok())
-                                .unwrap_or(0.0),
+                                .unwrap_or(DEFAULT_CELL_INSET_PT),
                             applied_cell_style: attr(&e, b"AppliedCellStyle"),
                             top_edge_stroke_color: attr(&e, b"TopEdgeStrokeColor"),
                             top_edge_stroke_weight: attr(&e, b"TopEdgeStrokeWeight")
