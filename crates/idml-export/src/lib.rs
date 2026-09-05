@@ -77,6 +77,7 @@ use std::io::{Cursor, Read, Write};
 use paged_scene::{Document, ParsedStory};
 
 pub mod based_on;
+pub mod dangling;
 mod emit;
 pub mod face;
 pub mod fonts;
@@ -114,6 +115,14 @@ pub struct ExportOptions {
     /// axes when listed here — see [`fonts`] — and with synthesised
     /// names otherwise.
     pub fonts: Vec<FontFace>,
+    /// The face the engine composes text with when nothing in a run's
+    /// cascade names one — the host's fallback font. When given, it is
+    /// stated as the document's `<TextDefault>` (see [`preferences`])
+    /// and declared in `Resources/Fonts.xml`, so InDesign sets unstyled
+    /// text the way the engine did instead of in its own application
+    /// default (Minion Pro 12 pt — 4,449 characters of the annual,
+    /// measured 2026-09-05).
+    pub default_face: Option<FontFace>,
 }
 
 /// One file the export's image links point at. The caller writes
@@ -555,6 +564,12 @@ pub(crate) fn write_package(
                     source,
                 }
             })?;
+            let new = dangling::drop_dangling_style_refs(&new, &doc.styles).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: story.src.clone(),
+                    source,
+                }
+            })?;
             if new != orig.as_slice() {
                 patched.insert(story.src.clone(), new);
             }
@@ -602,6 +617,13 @@ pub(crate) fn write_package(
                         source,
                     }
                 })?;
+                let new =
+                    dangling::drop_dangling_style_refs(&new, &doc.styles).map_err(|source| {
+                        WriteError::Rewrite {
+                            entry: entry_src.clone(),
+                            source,
+                        }
+                    })?;
                 if new != orig.as_slice() {
                     patched.insert(entry_src, new);
                 }
@@ -624,6 +646,13 @@ pub(crate) fn write_package(
                     source,
                 }
             })?;
+            let body =
+                dangling::drop_dangling_style_refs(&body, &doc.styles).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: entry_src.clone(),
+                        source,
+                    }
+                })?;
             new_entries.push((entry_src.clone(), body));
             new_story_srcs.push(entry_src);
         }
@@ -644,7 +673,7 @@ pub(crate) fn write_package(
     // (see [`fonts`]). A part that already declares them all passes
     // through untouched; a package with no part gets one, referenced
     // from the designmap below.
-    let faces = fonts::used_faces(doc, &opts.fonts);
+    let faces = fonts::used_faces(doc, &opts.fonts, opts.default_face.as_ref());
     let mut mint_fonts = false;
     if let Some(orig) = entry_bytes(&mut src, FONTS_SRC)? {
         let new = fonts::patch_fonts(&orig, &faces, &opts.fonts).map_err(|source| {
@@ -672,10 +701,12 @@ pub(crate) fn write_package(
     // entry list of a package that changed nothing).
     const PREFERENCES_SRC: &str = "Resources/Preferences.xml";
     if let Some(orig) = entry_bytes(&mut src, PREFERENCES_SRC)? {
-        let new = preferences::patch_preferences(&orig).map_err(|source| WriteError::Rewrite {
-            entry: PREFERENCES_SRC.to_string(),
-            source,
-        })?;
+        let new = preferences::patch_preferences(&orig, opts.default_face.as_ref()).map_err(
+            |source| WriteError::Rewrite {
+                entry: PREFERENCES_SRC.to_string(),
+                source,
+            },
+        )?;
         if new != orig.as_slice() {
             patched.insert(PREFERENCES_SRC.to_string(), new);
         }

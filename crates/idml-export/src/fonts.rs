@@ -209,12 +209,23 @@ fn applied_pairs(doc: &Document) -> Vec<(String, String)> {
 /// style)` the document applies, resolved against `known` (the host's
 /// byte-derived faces) or synthesised — sorted by family then style so
 /// the output is deterministic.
-pub fn used_faces(doc: &Document, known: &[FontFace]) -> Vec<FontFace> {
+pub fn used_faces(
+    doc: &Document,
+    known: &[FontFace],
+    default_face: Option<&FontFace>,
+) -> Vec<FontFace> {
     let mut faces: BTreeMap<(String, String), FontFace> = BTreeMap::new();
     for (family, style) in applied_pairs(doc) {
         faces
             .entry((family.clone(), style.clone()))
             .or_insert_with(|| resolve_face(&family, &style, known));
+    }
+    // The face unstyled text composes in (the document's `<TextDefault>`,
+    // see `preferences`) is a face the document applies.
+    if let Some(face) = default_face {
+        faces
+            .entry((face.family.clone(), face.style.clone()))
+            .or_insert_with(|| face.clone());
     }
     faces.into_values().collect()
 }

@@ -46,13 +46,16 @@
 
 use std::io::Cursor;
 
-use quick_xml::events::{BytesEnd, BytesStart, Event};
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+
+use crate::fonts::FontFace;
 use quick_xml::{Reader, Writer};
 
 use crate::rewrite::emit_empty_with_attrs;
 
 const TEXT_PREFERENCE: &[u8] = b"TextPreference";
 const USE_OPTICAL_SIZE: &[u8] = b"UseOpticalSize";
+const TEXT_DEFAULT: &[u8] = b"TextDefault";
 const ROOT: &[u8] = b"idPkg:Preferences";
 
 /// Whether `<TextPreference>` carries the `UseOpticalSize` attribute.
@@ -60,6 +63,40 @@ fn has_use_optical_size(e: &BytesStart) -> bool {
     e.attributes()
         .flatten()
         .any(|a| a.key.as_ref() == USE_OPTICAL_SIZE)
+}
+
+/// `<TextDefault FontStyle="…" PointSize="12"><Properties><AppliedFont
+/// type="string">FAMILY</AppliedFont><Leading type="enumeration">Auto
+/// </Leading></Properties></TextDefault>` — InDesign's spelling of the
+/// document's text defaults (the face as a typed child, like a style's),
+/// carrying the engine's: its fallback face at 12 pt with auto leading
+/// (`paged-renderer` sets an unsized run at 12 pt and leads it at
+/// 120 %). Text no style reaches — a run with no paragraph style, or one
+/// naming a style the document does not define — composes in this in
+/// InDesign as it does in the engine (measured 2026-09-05: 4,449
+/// Minion Pro characters → 6).
+fn write_text_default(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    face: &FontFace,
+) -> Result<(), quick_xml::Error> {
+    let mut start = BytesStart::new("TextDefault");
+    start.push_attribute(("FontStyle", face.style.as_str()));
+    start.push_attribute(("PointSize", "12"));
+    writer.write_event(Event::Start(start))?;
+    writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    let mut af = BytesStart::new("AppliedFont");
+    af.push_attribute(("type", "string"));
+    writer.write_event(Event::Start(af))?;
+    writer.write_event(Event::Text(BytesText::new(&face.family)))?;
+    writer.write_event(Event::End(BytesEnd::new("AppliedFont")))?;
+    let mut leading = BytesStart::new("Leading");
+    leading.push_attribute(("type", "enumeration"));
+    writer.write_event(Event::Start(leading))?;
+    writer.write_event(Event::Text(BytesText::new("Auto")))?;
+    writer.write_event(Event::End(BytesEnd::new("Leading")))?;
+    writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+    writer.write_event(Event::End(BytesEnd::new("TextDefault")))?;
+    Ok(())
 }
 
 fn write_text_preference(writer: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), quick_xml::Error> {
@@ -74,19 +111,25 @@ fn write_text_preference(writer: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), qui
 /// composition: `<TextPreference UseOpticalSize="false"/>` when the part
 /// spells no optical-size preference (see the module doc). Byte-identical
 /// when the part already spells one.
-pub fn patch_preferences(original: &[u8]) -> Result<Vec<u8>, quick_xml::Error> {
+pub fn patch_preferences(
+    original: &[u8],
+    default_face: Option<&FontFace>,
+) -> Result<Vec<u8>, quick_xml::Error> {
     // First pass: what the part already says.
-    let (has_text_pref, has_attr) = {
+    let (has_text_pref, has_attr, has_text_default) = {
         let mut reader = Reader::from_reader(original);
         reader.config_mut().trim_text(false);
         let mut buf = Vec::new();
-        let mut found = (false, false);
+        let mut found = (false, false, false);
         loop {
             match reader.read_event_into(&mut buf)? {
                 Event::Eof => break,
                 Event::Empty(e) | Event::Start(e) if e.name().as_ref() == TEXT_PREFERENCE => {
-                    found = (true, has_use_optical_size(&e));
-                    break;
+                    found.0 = true;
+                    found.1 = has_use_optical_size(&e);
+                }
+                Event::Empty(e) | Event::Start(e) if e.name().as_ref() == TEXT_DEFAULT => {
+                    found.2 = true;
                 }
                 _ => {}
             }
@@ -94,7 +137,10 @@ pub fn patch_preferences(original: &[u8]) -> Result<Vec<u8>, quick_xml::Error> {
         }
         found
     };
-    if has_attr {
+    // The default to state, when the part has none and the host named
+    // the face it composes unstyled text with.
+    let text_default = default_face.filter(|_| !has_text_default);
+    if has_attr && text_default.is_none() {
         return Ok(original.to_vec());
     }
 
@@ -110,25 +156,40 @@ pub fn patch_preferences(original: &[u8]) -> Result<Vec<u8>, quick_xml::Error> {
             Event::Eof => break,
             // The element exists without the attribute: add it, keeping
             // the element's own shape (self-closing or not).
-            Event::Empty(ref e) if has_text_pref && e.name().as_ref() == TEXT_PREFERENCE => {
+            Event::Empty(ref e)
+                if has_text_pref && !has_attr && e.name().as_ref() == TEXT_PREFERENCE =>
+            {
                 let mut owned = e.to_owned();
                 owned.push_attribute((USE_OPTICAL_SIZE, b"false".as_slice()));
                 writer.write_event(Event::Empty(owned))?;
             }
-            Event::Start(ref e) if has_text_pref && e.name().as_ref() == TEXT_PREFERENCE => {
+            Event::Start(ref e)
+                if has_text_pref && !has_attr && e.name().as_ref() == TEXT_PREFERENCE =>
+            {
                 let mut owned = e.to_owned();
                 owned.push_attribute((USE_OPTICAL_SIZE, b"false".as_slice()));
                 writer.write_event(Event::Start(owned))?;
             }
-            // No element: a self-closing root opens up around it …
-            Event::Empty(ref e) if !has_text_pref && e.name().as_ref() == ROOT => {
+            // No element: a self-closing root opens up around it (and
+            // around the text default) …
+            Event::Empty(ref e) if e.name().as_ref() == ROOT => {
                 writer.write_event(Event::Start(e.to_owned()))?;
-                write_text_preference(&mut writer)?;
+                if !has_text_pref {
+                    write_text_preference(&mut writer)?;
+                }
+                if let Some(face) = text_default {
+                    write_text_default(&mut writer, face)?;
+                }
                 writer.write_event(Event::End(BytesEnd::new("idPkg:Preferences")))?;
             }
-            // … and an open root takes it as its last child.
-            Event::End(ref e) if !has_text_pref && e.name().as_ref() == ROOT => {
-                write_text_preference(&mut writer)?;
+            // … and an open root takes them as its last children.
+            Event::End(ref e) if e.name().as_ref() == ROOT => {
+                if !has_text_pref {
+                    write_text_preference(&mut writer)?;
+                }
+                if let Some(face) = text_default {
+                    write_text_default(&mut writer, face)?;
+                }
                 writer.write_event(Event::End(e.to_owned()))?;
             }
             other => writer.write_event(other)?,
@@ -146,7 +207,7 @@ mod tests {
 
     #[test]
     fn an_empty_part_gains_the_preference() {
-        let out = String::from_utf8(patch_preferences(EMPTY.as_bytes()).unwrap()).unwrap();
+        let out = String::from_utf8(patch_preferences(EMPTY.as_bytes(), None).unwrap()).unwrap();
         assert_eq!(
             out,
             r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><idPkg:Preferences xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0"><TextPreference UseOpticalSize="false"/></idPkg:Preferences>"#
@@ -156,7 +217,7 @@ mod tests {
     #[test]
     fn an_open_root_without_the_element_gains_it_last() {
         let src = r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><ViewPreference HorizontalMeasurementUnits="Points"/></idPkg:Preferences>"#;
-        let out = String::from_utf8(patch_preferences(src.as_bytes()).unwrap()).unwrap();
+        let out = String::from_utf8(patch_preferences(src.as_bytes(), None).unwrap()).unwrap();
         assert_eq!(
             out,
             r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><ViewPreference HorizontalMeasurementUnits="Points"/><TextPreference UseOpticalSize="false"/></idPkg:Preferences>"#
@@ -166,13 +227,13 @@ mod tests {
     #[test]
     fn an_element_without_the_attribute_gains_it() {
         let src = r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><TextPreference TypographersQuotes="true"/></idPkg:Preferences>"#;
-        let out = String::from_utf8(patch_preferences(src.as_bytes()).unwrap()).unwrap();
+        let out = String::from_utf8(patch_preferences(src.as_bytes(), None).unwrap()).unwrap();
         assert_eq!(
             out,
             r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><TextPreference TypographersQuotes="true" UseOpticalSize="false"/></idPkg:Preferences>"#
         );
         let open = r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference TypographersQuotes="true"><Properties/></TextPreference></idPkg:Preferences>"#;
-        let out = String::from_utf8(patch_preferences(open.as_bytes()).unwrap()).unwrap();
+        let out = String::from_utf8(patch_preferences(open.as_bytes(), None).unwrap()).unwrap();
         assert_eq!(
             out,
             r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference TypographersQuotes="true" UseOpticalSize="false"><Properties/></TextPreference></idPkg:Preferences>"#
@@ -185,7 +246,32 @@ mod tests {
             let src = format!(
                 r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><TextPreference TypographersQuotes="true" UseOpticalSize="{value}" SmallCap="70"/></idPkg:Preferences>"#
             );
-            assert_eq!(patch_preferences(src.as_bytes()).unwrap(), src.as_bytes());
+            assert_eq!(
+                patch_preferences(src.as_bytes(), None).unwrap(),
+                src.as_bytes()
+            );
         }
+    }
+
+    #[test]
+    fn the_hosts_default_face_becomes_the_text_default_once() {
+        let face = FontFace::synthesized("Inter", "Regular");
+        let out =
+            String::from_utf8(patch_preferences(EMPTY.as_bytes(), Some(&face)).unwrap()).unwrap();
+        assert!(out.contains(r#"<TextPreference UseOpticalSize="false"/><TextDefault FontStyle="Regular" PointSize="12"><Properties><AppliedFont type="string">Inter</AppliedFont><Leading type="enumeration">Auto</Leading></Properties></TextDefault></idPkg:Preferences>"#), "{out}");
+        // A part that already states its defaults keeps them.
+        let src = r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference UseOpticalSize="true"/><TextDefault PointSize="10"><Properties><AppliedFont type="string">Minion Pro</AppliedFont></Properties></TextDefault></idPkg:Preferences>"#;
+        assert_eq!(
+            patch_preferences(src.as_bytes(), Some(&face)).unwrap(),
+            src.as_bytes()
+        );
+        // And one stating the preference but not the defaults gains only the defaults.
+        let src = r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference UseOpticalSize="true"/></idPkg:Preferences>"#;
+        let out =
+            String::from_utf8(patch_preferences(src.as_bytes(), Some(&face)).unwrap()).unwrap();
+        assert_eq!(
+            out,
+            r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference UseOpticalSize="true"/><TextDefault FontStyle="Regular" PointSize="12"><Properties><AppliedFont type="string">Inter</AppliedFont><Leading type="enumeration">Auto</Leading></Properties></TextDefault></idPkg:Preferences>"#
+        );
     }
 }
