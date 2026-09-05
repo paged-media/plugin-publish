@@ -285,8 +285,16 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
                    link: Option<&str>,
                    bytes: Option<&[u8]>,
                    transform: Option<[f32; 6]>,
-                   bounds: Bounds| {
+                   bounds: Bounds,
+                   crops: [f32; 4]| {
         let Some(id) = id else { return };
+        // The picture's own box and its placement, in InDesign's
+        // spelling (see [`placement`]), whenever the bytes say how big
+        // the picture is; a link with no bytes keeps the frame box.
+        let (bounds, transform) = match bytes.and_then(image_dimensions) {
+            Some((w, h)) => placement(bounds, crops, transform, w, h),
+            None => (bounds, transform),
+        };
         let embed = if links.embed {
             bytes.map(|b| b.to_vec())
         } else {
@@ -318,12 +326,25 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
         );
     };
     for r in &spread.rectangles {
+        let crops = r
+            .frame_fitting
+            .as_ref()
+            .map(|f| {
+                [
+                    f.left_crop.unwrap_or(0.0),
+                    f.top_crop.unwrap_or(0.0),
+                    f.right_crop.unwrap_or(0.0),
+                    f.bottom_crop.unwrap_or(0.0),
+                ]
+            })
+            .unwrap_or([0.0; 4]);
         add(
             r.self_id.as_deref(),
             r.image_link.as_deref(),
             r.image_bytes.as_deref(),
             r.image_item_transform,
             r.bounds,
+            crops,
         );
     }
     for o in &spread.ovals {
@@ -333,6 +354,7 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
             o.image_bytes.as_deref(),
             o.image_item_transform,
             o.bounds,
+            [0.0; 4],
         );
     }
     for p in &spread.polygons {
@@ -342,9 +364,130 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
             p.image_bytes.as_deref(),
             p.image_item_transform,
             p.bounds,
+            [0.0; 4],
         );
     }
     out
+}
+
+/// The `<Image>`'s own box and its `ItemTransform`, in InDesign's
+/// spelling: `GraphicBounds` is the picture's PIXEL box (`0 0 w h`, a
+/// pixel a point — the space the engine's `image_item_transform` maps
+/// from) and the transform places it in the frame's space.
+///
+/// Measured 2026-09-06 in InDesign 20.0.1: a frame-box `GraphicBounds`
+/// with the identity transform scales the picture into the frame (what
+/// the engine draws for a frame with no transform: the picture
+/// stretched into the frame box, crops included), but the same box
+/// under an explicit transform lands a tiny picture far off the page —
+/// the annual's 2× cover exhibit opened blank. And the importer reads
+/// no `GraphicBounds` at all: it places the pixels through the
+/// transform alone, so a frame with no transform showed nothing in the
+/// export's twin. One spelling both read the same way: the pixel box
+/// and, for a frame with no transform of its own, the fit the engine
+/// composes — `[left + left_crop, top + top_crop]`, scaled so the
+/// picture fills the crop-adjusted box.
+fn placement(
+    frame: Bounds,
+    crops: [f32; 4],
+    transform: Option<[f32; 6]>,
+    w: u32,
+    h: u32,
+) -> (Bounds, Option<[f32; 6]>) {
+    let pixel_box = Bounds {
+        top: 0.0,
+        left: 0.0,
+        bottom: h as f32,
+        right: w as f32,
+    };
+    let transform = transform.or_else(|| {
+        let [left_crop, top_crop, right_crop, bottom_crop] = crops;
+        let box_w = (frame.right - frame.left - left_crop - right_crop).max(0.0);
+        let box_h = (frame.bottom - frame.top - top_crop - bottom_crop).max(0.0);
+        (w > 0 && h > 0).then_some([
+            box_w / w as f32,
+            0.0,
+            0.0,
+            box_h / h as f32,
+            frame.left + left_crop,
+            frame.top + top_crop,
+        ])
+    });
+    (pixel_box, transform)
+}
+
+/// The pixel size a picture's header declares — PNG, JPEG, GIF, BMP and
+/// WebP (VP8 / VP8L / VP8X). `None` for anything else (TIFF, PSD, EPS,
+/// PDF: no cheap header, the frame box stays).
+pub(crate) fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let be32 = |i: usize| -> Option<u32> {
+        bytes
+            .get(i..i + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let le32 = |i: usize| -> Option<u32> {
+        bytes
+            .get(i..i + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let le16 = |i: usize| -> Option<u32> {
+        bytes
+            .get(i..i + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as u32)
+    };
+    let be16 = |i: usize| -> Option<u32> {
+        bytes
+            .get(i..i + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]) as u32)
+    };
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some((be32(16)?, be32(20)?));
+    }
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        // Walk the markers to the first start-of-frame.
+        let mut i = 2;
+        while i + 9 < bytes.len() {
+            if bytes[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            let marker = bytes[i + 1];
+            if marker == 0xFF {
+                i += 1;
+                continue;
+            }
+            if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+                return Some((be16(i + 7)?, be16(i + 5)?));
+            }
+            let len = be16(i + 2)? as usize;
+            i += 2 + len.max(2);
+        }
+        return None;
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some((le16(6)?, le16(8)?));
+    }
+    if bytes.starts_with(b"BM") && bytes.len() > 26 {
+        return Some((le32(18)?, le32(22)?));
+    }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        match bytes.get(12..16)? {
+            b"VP8X" => {
+                let w = 1 + (le32(24)? & 0x00FF_FFFF);
+                let h = 1 + ((le32(26)? >> 8) & 0x00FF_FFFF);
+                return Some((w, h));
+            }
+            b"VP8L" => {
+                let bits = le32(21)?;
+                return Some((1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF)));
+            }
+            b"VP8 " => {
+                return Some((le16(26)? & 0x3FFF, le16(28)? & 0x3FFF));
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// InDesign's `LinkResourceFormat` name for an asset, by extension.
@@ -641,6 +784,43 @@ pub(crate) fn rewrite_images(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_dimensions_are_read_for_the_common_formats() {
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x08";
+        assert_eq!(image_dimensions(png), Some((16, 8)));
+        let gif = b"GIF89a\x20\0\x10\0";
+        assert_eq!(image_dimensions(gif), Some((32, 16)));
+        // A JPEG: SOI, an APP0 of length 16, then SOF0 with height 8 × width 24.
+        let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        jpg.extend_from_slice(&[0u8; 14]);
+        jpg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x08, 0x00, 0x18, 0x03]);
+        jpg.extend_from_slice(&[0u8; 12]);
+        assert_eq!(image_dimensions(&jpg), Some((24, 8)));
+        assert_eq!(image_dimensions(b"not a picture"), None);
+    }
+
+    #[test]
+    fn a_frame_with_no_transform_is_placed_the_way_the_engine_draws_it() {
+        let frame = Bounds {
+            top: 100.0,
+            left: 50.0,
+            bottom: 150.0,
+            right: 250.0,
+        };
+        // No crops: the picture fills the frame box.
+        let (b, t) = placement(frame, [0.0; 4], None, 20, 10);
+        assert_eq!((b.left, b.top, b.right, b.bottom), (0.0, 0.0, 20.0, 10.0));
+        assert_eq!(t, Some([10.0, 0.0, 0.0, 5.0, 50.0, 100.0]));
+        // Crops move the box (a negative crop overhangs the frame).
+        let (_, t) = placement(frame, [-10.0, 0.0, -10.0, 0.0], None, 20, 10);
+        assert_eq!(t, Some([11.0, 0.0, 0.0, 5.0, 40.0, 100.0]));
+        // An explicit transform is kept; only the box becomes the pixel box.
+        let own = Some([0.5, 0.0, 0.0, 0.5, 1.0, 2.0]);
+        let (b, t) = placement(frame, [0.0; 4], own, 20, 10);
+        assert_eq!((b.right, b.bottom), (20.0, 10.0));
+        assert_eq!(t, own);
+    }
 
     #[test]
     fn percent_encoding_matches_indesigns_spelling() {
