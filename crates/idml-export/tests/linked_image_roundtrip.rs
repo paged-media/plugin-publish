@@ -153,3 +153,136 @@ fn a_frame_holding_bytes_and_a_link_still_gets_its_link() {
     assert_eq!(r.image_link.as_deref(), Some("assets/photos/apples.jpg"));
     assert!(r.image_bytes.is_none(), "IDML carries no pixels");
 }
+
+// ---- with a link base: URIs InDesign can resolve ----------------------------
+
+use idml_export::{write_idml_with, ExportOptions};
+
+fn with_base(doc: &paged_scene::Document, src: &[u8], base: &str) -> idml_export::IdmlExport {
+    write_idml_with(
+        doc,
+        src,
+        &ExportOptions {
+            link_base: Some(base.into()),
+            ..Default::default()
+        },
+    )
+    .expect("write")
+}
+
+#[test]
+fn with_a_link_base_the_uri_is_absolute_in_indesigns_spelling_and_reads_back() {
+    let src = source(SPREAD_WITH_RECT);
+    let mut doc = pkg::open(&src);
+    doc.spreads[0].spread.rectangles[0].image_link = Some("assets/photos/apples.jpg".into());
+    let out = with_base(&doc, &src, "/Users/me/Book Links/Links/");
+    let xml = pkg::entry(&out.bytes, "Spreads/Spread_s1.xml").expect("spread");
+    assert!(
+        xml.contains(r#"<Link Self="r1Link" LinkResourceURI="file:/Users/me/Book%20Links/Links/apples.jpg" LinkResourceFormat="$ID/JPEG""#),
+        "InDesign's `file:` + absolute path, spaces percent-encoded:\n{xml}"
+    );
+    let re = pkg::open(&out.bytes);
+    assert_eq!(
+        re.spreads[0].spread.rectangles[0].image_link.as_deref(),
+        Some("file:/Users/me/Book%20Links/Links/apples.jpg"),
+        "the re-parsed link is the absolute URI"
+    );
+    // A link-only frame: the caller copies the file from `source_uri`.
+    assert_eq!(
+        out.links,
+        vec![idml_export::ExportedLink {
+            file_name: "apples.jpg".into(),
+            bytes: None,
+            source_uri: "assets/photos/apples.jpg".into(),
+        }]
+    );
+    // Without a base, today's behaviour: the model's URI, no links.
+    let plain = write_idml_with(&doc, &src, &ExportOptions::default()).expect("write");
+    assert!(pkg::entry(&plain.bytes, "Spreads/Spread_s1.xml")
+        .unwrap()
+        .contains(r#"LinkResourceURI="assets/photos/apples.jpg""#));
+    assert!(plain.links.is_empty());
+    assert_eq!(plain.bytes, write_idml(&doc, &src).expect("write"));
+}
+
+#[test]
+fn a_bytes_placed_image_gets_a_file_under_the_base_and_its_bytes_come_back() {
+    let src = source(SPREAD_WITH_RECT);
+    let mut doc = pkg::open(&src);
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    doc.spreads[0].spread.rectangles[0].image_bytes = Some(png.clone());
+    // No base: an image that is only bytes has nothing to link — today's
+    // behaviour, the frame exports empty.
+    let plain = write_idml(&doc, &src).expect("write");
+    assert!(!pkg::entry(&plain, "Spreads/Spread_s1.xml")
+        .unwrap()
+        .contains("<Image "));
+
+    let out = with_base(&doc, &src, "/tmp/Links");
+    let xml = pkg::entry(&out.bytes, "Spreads/Spread_s1.xml").expect("spread");
+    assert!(
+        xml.contains(r#"<Link Self="r1Link" LinkResourceURI="file:/tmp/Links/r1.png" LinkResourceFormat="$ID/Portable Network Graphics (PNG)""#),
+        "a name minted from the frame id + the bytes' magic:\n{xml}"
+    );
+    assert_eq!(
+        out.links,
+        vec![idml_export::ExportedLink {
+            file_name: "r1.png".into(),
+            bytes: Some(png),
+            source_uri: String::new(),
+        }]
+    );
+    assert_eq!(
+        pkg::open(&out.bytes).spreads[0].spread.rectangles[0]
+            .image_link
+            .as_deref(),
+        Some("file:/tmp/Links/r1.png")
+    );
+}
+
+#[test]
+fn a_frame_with_a_link_and_edited_bytes_hands_the_bytes_back_under_the_links_name() {
+    let src = source(SPREAD_WITH_RECT);
+    let mut doc = pkg::open(&src);
+    let r = &mut doc.spreads[0].spread.rectangles[0];
+    r.image_link = Some("file:C:/Users/SDR1/Desktop/Line%20Sheet/Links/CODE%201.jpg".into());
+    r.image_bytes = Some(vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]);
+    let out = with_base(&doc, &src, "/tmp/Links");
+    let xml = pkg::entry(&out.bytes, "Spreads/Spread_s1.xml").expect("spread");
+    assert!(
+        xml.contains(r#"LinkResourceURI="file:/tmp/Links/CODE%201.jpg""#),
+        "{xml}"
+    );
+    assert_eq!(out.links.len(), 1);
+    assert_eq!(
+        out.links[0].file_name, "CODE 1.jpg",
+        "the name on disk is decoded"
+    );
+    assert_eq!(
+        out.links[0].bytes.as_deref(),
+        Some(&[0xFFu8, 0xD8, 0xFF, 0xE0, 1, 2, 3][..])
+    );
+    assert_eq!(
+        out.links[0].source_uri,
+        "file:C:/Users/SDR1/Desktop/Line%20Sheet/Links/CODE%201.jpg"
+    );
+}
+
+#[test]
+fn an_existing_link_is_rebased_too() {
+    let spread = SPREAD_WITH_RECT.replace(
+        r#"<Rectangle Self="r1" GeometricBounds="450 100 600 300" ItemTransform="1 0 0 1 0 0"/>"#,
+        r#"<Rectangle Self="r1" GeometricBounds="450 100 600 300" ItemTransform="1 0 0 1 0 0"><Image Self="u7d8" ItemTransform="1 0 0 1 0 0"><Properties><GraphicBounds Left="0" Top="0" Right="200" Bottom="150" /></Properties><Link Self="u7db" AssetURL="$ID/" LinkResourceURI="file:/old/place/apples.png" LinkResourceFormat="$ID/Portable Network Graphics (PNG)" StoredState="Normal" /></Image></Rectangle>"#,
+    );
+    let src = source(&spread);
+    let doc = pkg::open(&src);
+    let out = with_base(&doc, &src, "/new/Links");
+    let xml = pkg::entry(&out.bytes, "Spreads/Spread_s1.xml").expect("spread");
+    assert!(
+        xml.contains(r#"<Link Self="u7db" AssetURL="$ID/" LinkResourceURI="file:/new/Links/apples.png" LinkResourceFormat="$ID/Portable Network Graphics (PNG)" StoredState="Normal"/>"#),
+        "{xml}"
+    );
+    assert_eq!(out.links[0].file_name, "apples.png");
+    assert_eq!(out.links[0].source_uri, "file:/old/place/apples.png");
+    assert!(out.links[0].bytes.is_none());
+}

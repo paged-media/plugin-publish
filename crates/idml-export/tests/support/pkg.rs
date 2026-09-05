@@ -165,3 +165,23 @@ pub fn assert_same_entries(expected: &[u8], actual: &[u8]) {
         }
     }
 }
+
+/// Place a story the test minted on `doc` (pushed onto `doc.stories`
+/// with no frame): a text frame `frame_id` on the first spread, cloned
+/// from the fixture's `tf1`, whose `ParentStory` is `story_id`. The
+/// writer drops a story no frame references (InDesign discards those),
+/// so a minted story must be framed to reach the package.
+pub fn place_story(doc: &mut paged_scene::Document, frame_id: &str, story_id: &str) {
+    let spread = &mut doc.spreads[0].spread;
+    let mut frame = spread.text_frames[0].clone();
+    frame.self_id = Some(frame_id.to_string());
+    frame.parent_story = Some(story_id.to_string());
+    frame.next_text_frame = None;
+    spread.text_frames.push(frame);
+    spread
+        .frames_in_order
+        .push(idml_import::FrameRef::TextFrame(
+            spread.text_frames.len() - 1,
+        ));
+    doc.rebuild_indexes();
+}

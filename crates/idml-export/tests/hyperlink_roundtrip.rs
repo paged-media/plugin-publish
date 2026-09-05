@@ -78,6 +78,7 @@ fn a_new_hyperlink_is_written_after_the_stories_in_indesigns_spelling() {
             ..Default::default()
         },
     });
+    pkg::place_story(&mut doc, "tf_u9", "Story/u9");
 
     let out = write_idml(&doc, &source).expect("write");
     let dm = pkg::entry(&out, "designmap.xml").expect("designmap");

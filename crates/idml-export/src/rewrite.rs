@@ -3280,14 +3280,22 @@ impl TransformPlan {
     }
 
     /// The value to APPEND when the source element carried no
-    /// `ItemTransform`. `None` when there is nothing to add — including
-    /// the case where the model matrix is exactly what an ABSENT
-    /// attribute already derives, which must stay absent.
+    /// `ItemTransform`: always one — the identity when that is what the
+    /// model derives. InDesign 20.0.1 does NOT read an absent
+    /// `ItemTransform` as identity (measured: every one of a book's 1438
+    /// transform-less items landed one page width to the left on its
+    /// facing spread, whole versos blank; the same file with
+    /// `ItemTransform="1 0 0 1 0 0"` added to each placed every item
+    /// correctly). InDesign's own packages carry it on every item, so
+    /// they never reach this branch and stay byte-identical. `None` only
+    /// for the degenerate group case where nothing can be patched.
     fn extra(&self) -> Option<String> {
-        if !self.patch || self.is_source(None) {
+        if !self.patch {
             return None;
         }
-        self.on_disk().map(|m| format_matrix(&m))
+        Some(format_matrix(
+            &self.on_disk().unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+        ))
     }
 }
 
@@ -3503,11 +3511,15 @@ fn patch_spread_item(
                 return Ok(None);
             };
             let corners = corner_attrs_of(g.corner_radius, &g.corner_option, &g.corners);
-            let start = patch_start(
-                e,
-                |k, raw| corner_attr_patch(k, raw, &corners),
-                &corner_attr_extras(&corners),
-            )?;
+            let mut extras = corner_attr_extras(&corners);
+            // A group written without an `ItemTransform` (an older
+            // export of ours) gets the identity spelled: InDesign does
+            // not read an absent one as identity — see
+            // `TransformPlan::extra`. InDesign's own groups carry it.
+            if attr_value(e, b"ItemTransform").is_none() {
+                extras.push(("ItemTransform", "1 0 0 1 0 0".to_string()));
+            }
+            let start = patch_start(e, |k, raw| corner_attr_patch(k, raw, &corners), &extras)?;
             Ok(Some(start.into_owned()))
         }
         _ => Ok(None),
@@ -5219,7 +5231,7 @@ mod tests {
     /// token (which the model's enum normalises to `Bevel`).
     const POLY_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
-<Spread Self="s"><Polygon Self="p" GeometricBounds="0 0 100 200" CornerOption="BevelCorner" CornerRadius="44.51279527491718" TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="44.51279527491718" TopRightCornerRadius="44.51279527491718" FillColor="Color/Black"/></Spread>
+<Spread Self="s"><Polygon Self="p" GeometricBounds="0 0 100 200" ItemTransform="1 0 0 1 0 0" CornerOption="BevelCorner" CornerRadius="44.51279527491718" TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="44.51279527491718" TopRightCornerRadius="44.51279527491718" FillColor="Color/Black"/></Spread>
 </idPkg:Spread>"#;
 
     fn parsed() -> idml_import::Spread {
@@ -5691,15 +5703,15 @@ mod tests {
     /// radii with NO option, which is the only shape the real corpus
     /// ever puts on a line.
     ///
-    /// The group's member carries an explicit `ItemTransform` so this
-    /// fixture isolates the CORNER lane: a group member without one gets
-    /// it appended by the pre-existing W1.15 transform-recovery lane
-    /// (the parser composes the group transform into the member, so the
-    /// model always has a value), which would otherwise show up as a
-    /// byte diff that has nothing to do with C-18.
+    /// Every item carries an explicit `ItemTransform`, as every
+    /// InDesign package does, so this fixture isolates the CORNER lane:
+    /// an item without one has the identity appended (InDesign does not
+    /// read an absent transform as identity — see
+    /// `TransformPlan::extra`), which would otherwise show up as a byte
+    /// diff that has nothing to do with C-18.
     const C18_SPREAD: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
-<Spread Self="s"><TextFrame Self="tf1" GeometricBounds="0 0 100 200" CornerOption="BevelCorner" CornerRadius="14.740157480314963" TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="14.740157480314963"/><Oval Self="ov1" GeometricBounds="0 0 80 80" CornerOption="RoundedCorner" CornerRadius="42.51968503937008" TopLeftCornerRadius="42.51968503937008"/><GraphicLine Self="gl1" GeometricBounds="0 0 10 10" CornerRadius="99.21259842519686" TopLeftCornerRadius="99.21259842519686"/><Group Self="g9" ItemTransform="1 0 0 1 0 0" CornerOption="RoundedCorner" CornerRadius="70.86614173228347" TopLeftCornerOption="RoundedCorner"><Rectangle Self="rg" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 5 5"/></Group></Spread>
+<Spread Self="s"><TextFrame Self="tf1" GeometricBounds="0 0 100 200" ItemTransform="1 0 0 1 0 0" CornerOption="BevelCorner" CornerRadius="14.740157480314963" TopLeftCornerOption="BevelCorner" TopLeftCornerRadius="14.740157480314963"/><Oval Self="ov1" GeometricBounds="0 0 80 80" ItemTransform="1 0 0 1 0 0" CornerOption="RoundedCorner" CornerRadius="42.51968503937008" TopLeftCornerRadius="42.51968503937008"/><GraphicLine Self="gl1" GeometricBounds="0 0 10 10" ItemTransform="1 0 0 1 0 0" CornerRadius="99.21259842519686" TopLeftCornerRadius="99.21259842519686"/><Group Self="g9" ItemTransform="1 0 0 1 0 0" CornerOption="RoundedCorner" CornerRadius="70.86614173228347" TopLeftCornerOption="RoundedCorner"><Rectangle Self="rg" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 5 5"/></Group></Spread>
 </idPkg:Spread>"#;
 
     fn c18_parsed() -> idml_import::Spread {

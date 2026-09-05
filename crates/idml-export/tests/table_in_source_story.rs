@@ -145,6 +145,7 @@ fn a_table_dropped_from_the_part_by_hand_comes_back_on_export() {
             ..Default::default()
         },
     });
+    pkg::place_story(&mut doc, "tf_u9", "Story/u9");
     let with_table = write_idml(&doc, &source).expect("first export");
     let reloaded = pkg::open(&with_table);
     let minted = reloaded
@@ -212,6 +213,7 @@ fn a_minted_story_whose_part_a_checkpoint_already_wrote_is_patched_not_skipped()
             ..Default::default()
         },
     });
+    pkg::place_story(&mut doc, "tf_u9b", "Story/u9");
     let checkpoint = write_idml(&doc, &source).expect("checkpoint");
     assert!(pkg::entry(&checkpoint, "Stories/Story_Story_u9.xml").is_some());
 

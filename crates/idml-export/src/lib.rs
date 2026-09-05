@@ -71,11 +71,13 @@
 //! [`emit`]). See [`rewrite`] for the per-element inventory and the
 //! documented losses (removed PAGES still leave an orphaned entry).
 
+use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
 
-use paged_scene::Document;
+use paged_scene::{Document, ParsedStory};
 
 mod emit;
+pub mod fonts;
 pub mod guides;
 pub mod images;
 mod navigation;
@@ -89,7 +91,55 @@ pub mod text_frame_prefs;
 /// cross-reference sources that name none (InDesign drops those).
 pub const XREF_FORMAT_ID: &str = "paged-xref-format";
 
+pub use fonts::FontFace;
 pub use paged::{idml_parts_hash, is_container_part, write_paged, MANIFEST_NAME, PAGED_PREFIX};
+
+/// What a caller can ask of [`write_idml_with`] beyond the bytes.
+#[derive(Debug, Clone, Default)]
+pub struct ExportOptions {
+    /// An ABSOLUTE directory the caller will write the returned
+    /// [`ExportedLink`]s into. When set, every placed image's
+    /// `LinkResourceURI` is rewritten to `file:<link_base>/<basename>`
+    /// in InDesign's own spelling so the links resolve on the host that
+    /// opens the file — see [`images`]. `None` writes each URI as the
+    /// model holds it (a relative `assets/…` path stays relative, which
+    /// InDesign cannot resolve) and returns no links.
+    pub link_base: Option<String>,
+    /// Faces the host knows from font BYTES (its registry, one per
+    /// variable-font named instance): a face the document applies is
+    /// declared in `Resources/Fonts.xml` with these names and design
+    /// axes when listed here — see [`fonts`] — and with synthesised
+    /// names otherwise.
+    pub fonts: Vec<FontFace>,
+}
+
+/// One file the export's image links point at. The caller writes
+/// `bytes` (when present) as `<link_base>/<file_name>`, or copies the
+/// file `source_uri` names there — then every `<Link>` in the package
+/// resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedLink {
+    /// The basename the link was written with (percent-DEcoded: the
+    /// name on disk, `CODE 1.jpg` for a URI ending `CODE%201.jpg`).
+    pub file_name: String,
+    /// The image's encoded file bytes when the model holds them
+    /// (`image_bytes`); `None` for a link-only frame, whose file the
+    /// caller copies from `source_uri`.
+    pub bytes: Option<Vec<u8>>,
+    /// The URI the model holds for the asset — empty for an image that
+    /// exists only as bytes (its name was minted from the frame id).
+    pub source_uri: String,
+}
+
+/// The product of [`write_idml_with`].
+#[derive(Debug, Clone)]
+pub struct IdmlExport {
+    /// The `.idml` package.
+    pub bytes: Vec<u8>,
+    /// The files the package's image links point at — empty unless
+    /// [`ExportOptions::link_base`] was given.
+    pub links: Vec<ExportedLink>,
+}
 
 /// Errors raised while re-serializing a document.
 #[derive(Debug, thiserror::Error)]
@@ -116,9 +166,16 @@ pub enum WriteError {
 /// stored, every other source entry preserved, the Spreads /
 /// MasterSpreads / Stories reflecting the current model state.
 ///
-/// An unmutated document round-trips byte-identically. A mutated
-/// document differs only in the Spreads / MasterSpreads / Stories whose
-/// model the mutation touched.
+/// An unmutated document round-trips byte-identically, with two
+/// deliberate exceptions measured against InDesign 20.0.1: a story no
+/// frame references is dropped with its designmap reference (InDesign
+/// discards it — see [`placed_story_ids`]), and `Resources/Fonts.xml`
+/// gains any face the document applies that it does not declare
+/// (undeclared faces come back NOT_AVAILABLE — see [`fonts`]). A
+/// package that places every story and declares every face — every
+/// InDesign-authored one — is untouched. A mutated document differs
+/// only in the Spreads / MasterSpreads / Stories whose model the
+/// mutation touched.
 /// Serialise one minted story part — the exact bytes [`write_idml`]
 /// would add for a story the model minted. Exposed so the paragraph-mark
 /// contract can be pinned directly (see
@@ -132,7 +189,117 @@ pub fn emit_story_part_for_test(
 }
 
 pub fn write_idml(doc: &Document, original: &[u8]) -> Result<Vec<u8>, WriteError> {
-    write_package(doc, original, false)
+    write_idml_with(doc, original, &ExportOptions::default()).map(|e| e.bytes)
+}
+
+/// [`write_idml`] with [`ExportOptions`]: a link base to rebase every
+/// placed image's URI under (and the files to write there come back in
+/// the result), and the host's byte-derived faces for `Fonts.xml`.
+pub fn write_idml_with(
+    doc: &Document,
+    original: &[u8],
+    opts: &ExportOptions,
+) -> Result<IdmlExport, WriteError> {
+    write_package(doc, original, false, opts)
+}
+
+/// The story ids some frame REFERENCES: every `TextFrame`'s
+/// `ParentStory` and every `TextPath`'s on every spread and master, plus
+/// — transitively — the stories anchored frames inside those stories
+/// host. A story outside this set is an ORPHAN: nothing places it, and
+/// InDesign discards it on open (measured on 20.0.1 — a book whose
+/// engine had kept a story after its frame was deleted opened with one
+/// story fewer than the package carried). Ids are returned as the
+/// frames spell them; use [`story_is_placed`] to test a model story,
+/// which also tries the sanitized entry-stem spelling a minted story
+/// takes on reopen.
+pub fn placed_story_ids(doc: &Document) -> HashSet<String> {
+    use idml_import::{AnchoredFrame, Paragraph, Spread};
+
+    let mut placed: HashSet<String> = HashSet::new();
+    // Both spellings of every reference, so a frame minted with the
+    // model id and a story reopened under the sanitized entry stem
+    // (or the reverse) still find each other.
+    fn insert(placed: &mut HashSet<String>, id: &str) {
+        placed.insert(emit::sanitize_id(id));
+        placed.insert(id.to_string());
+    }
+    fn seed(spread: &Spread, placed: &mut HashSet<String>) {
+        for f in &spread.text_frames {
+            if let Some(id) = &f.parent_story {
+                insert(placed, id);
+            }
+        }
+        for r in &spread.rectangles {
+            for tp in &r.text_paths {
+                insert(placed, &tp.parent_story);
+            }
+        }
+        for p in &spread.polygons {
+            for tp in &p.text_paths {
+                insert(placed, &tp.parent_story);
+            }
+        }
+        for l in &spread.graphic_lines {
+            for tp in &l.text_paths {
+                insert(placed, &tp.parent_story);
+            }
+        }
+    }
+    for s in &doc.spreads {
+        seed(&s.spread, &mut placed);
+    }
+    for m in doc.master_spreads.values() {
+        seed(&m.spread, &mut placed);
+    }
+    // Anchored frames host stories of their own; a story reachable only
+    // through one is placed by transitivity. Iterate to a fixpoint.
+    fn anchored(frames: &[AnchoredFrame], out: &mut Vec<String>) {
+        for f in frames {
+            if let Some(id) = &f.parent_story {
+                out.push(id.clone());
+            }
+            anchored(&f.children, out);
+        }
+    }
+    fn hosted(paras: &[Paragraph], out: &mut Vec<String>) {
+        for p in paras {
+            anchored(&p.anchored_frames, out);
+            if let Some(t) = &p.table {
+                for c in &t.cells {
+                    hosted(&c.paragraphs, out);
+                }
+            }
+            for f in &p.footnotes {
+                hosted(&f.paragraphs, out);
+            }
+        }
+    }
+    let mut visited: HashSet<String> = HashSet::new();
+    loop {
+        let mut found: Vec<String> = Vec::new();
+        for s in &doc.stories {
+            if !story_is_placed(&placed, &s.self_id) || !visited.insert(s.self_id.clone()) {
+                continue;
+            }
+            hosted(&s.story.paragraphs, &mut found);
+        }
+        let before = placed.len();
+        for id in &found {
+            insert(&mut placed, id);
+        }
+        if placed.len() == before {
+            break;
+        }
+    }
+    placed
+}
+
+/// Whether the story `id` is in `placed` (see [`placed_story_ids`]),
+/// under either its own spelling or the sanitized entry-stem spelling
+/// (`Story/u12` ⇄ `Story_u12`) a frame may reference it by.
+pub fn story_is_placed(placed: &HashSet<String>, id: &str) -> bool {
+    placed.contains(id) || placed.contains(&emit::sanitize_id(id))
 }
 
 /// The one writer both [`write_idml`] and [`write_paged`] run. The only
@@ -156,8 +323,12 @@ pub(crate) fn write_package(
     doc: &Document,
     original: &[u8],
     keep_container_parts: bool,
-) -> Result<Vec<u8>, WriteError> {
+    opts: &ExportOptions,
+) -> Result<IdmlExport, WriteError> {
     let mut src = zip::ZipArchive::new(Cursor::new(original))?;
+    // The files every placed image's `<Link>` will point at (empty
+    // without a link base — see `images`).
+    let mut links = images::LinkCollector::new(opts.link_base.as_deref());
     let out = Cursor::new(Vec::<u8>::new());
     let mut zip = zip::write::ZipWriter::new(out);
 
@@ -216,12 +387,12 @@ pub(crate) fn write_package(
                 })?;
             // Linked images last, over the rewritten bytes, so inserted
             // frames get theirs too.
-            let new = images::rewrite_images(&rewritten, &spread.spread).map_err(|source| {
-                WriteError::Rewrite {
+            let new = images::rewrite_images(&rewritten, &spread.spread, &mut links).map_err(
+                |source| WriteError::Rewrite {
                     entry: spread.src.clone(),
                     source,
-                }
-            })?;
+                },
+            )?;
             if new != orig.as_slice() {
                 patched.insert(spread.src.clone(), new);
             }
@@ -232,12 +403,13 @@ pub(crate) fn write_package(
                     source,
                 },
             )?;
-            let body = images::rewrite_images(&body, &spread.spread).map_err(|source| {
-                WriteError::Rewrite {
-                    entry: spread.src.clone(),
-                    source,
-                }
-            })?;
+            let body =
+                images::rewrite_images(&body, &spread.spread, &mut links).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: spread.src.clone(),
+                        source,
+                    }
+                })?;
             let anchor = doc.spreads[..i]
                 .iter()
                 .rev()
@@ -290,12 +462,12 @@ pub(crate) fn write_package(
                         source,
                     }
                 })?;
-            let new = images::rewrite_images(&rewritten, &master.spread).map_err(|source| {
-                WriteError::Rewrite {
+            let new = images::rewrite_images(&rewritten, &master.spread, &mut links).map_err(
+                |source| WriteError::Rewrite {
                     entry: master.src.clone(),
                     source,
-                }
-            })?;
+                },
+            )?;
             if new != orig.as_slice() {
                 patched.insert(master.src.clone(), new);
             }
@@ -340,7 +512,21 @@ pub(crate) fn write_package(
     // with no format (InDesign drops it); the designmap then gains the
     // exporter's one format and the source is pointed at it.
     let mut needs_xref_format = false;
+    // Orphan stories — referenced by no frame on any spread or master
+    // (nor by an anchored frame inside a placed story). InDesign
+    // discards them on open (measured), so writing their parts only
+    // makes the package's story count disagree with what InDesign
+    // shows; the engine keeps one after its frame is deleted. Neither
+    // the part nor its designmap reference is written; the loss ledger
+    // names each one so the drop is loud. A source whose every story is
+    // placed is unaffected (byte-identical when unmutated).
+    let placed = placed_story_ids(doc);
+    let mut dropped_story_srcs: Vec<String> = Vec::new();
     for story in &doc.stories {
+        if !story_is_placed(&placed, &story.self_id) {
+            dropped_story_srcs.push(story_entry_src(story));
+            continue;
+        }
         if let Some(orig) = entry_bytes(&mut src, &story.src)? {
             let anchors = anchors_for(story);
             let unformatted =
@@ -431,16 +617,57 @@ pub(crate) fn write_package(
     const DESIGNMAP_SRC: &str = "designmap.xml";
     const GRAPHIC_SRC: &str = "Resources/Graphic.xml";
     const STYLES_SRC: &str = "Resources/Styles.xml";
+    const FONTS_SRC: &str = "Resources/Fonts.xml";
     let styles_orig = entry_bytes(&mut src, STYLES_SRC)?;
+    // Every face the document applies, declared in `Resources/Fonts.xml`
+    // (see [`fonts`]). A part that already declares them all passes
+    // through untouched; a package with no part gets one, referenced
+    // from the designmap below.
+    let faces = fonts::used_faces(doc, &opts.fonts);
+    let mut mint_fonts = false;
+    if let Some(orig) = entry_bytes(&mut src, FONTS_SRC)? {
+        let new = fonts::patch_fonts(&orig, &faces, &opts.fonts).map_err(|source| {
+            WriteError::Rewrite {
+                entry: FONTS_SRC.to_string(),
+                source,
+            }
+        })?;
+        if new != orig.as_slice() {
+            patched.insert(FONTS_SRC.to_string(), new);
+        }
+    } else if !faces.is_empty() {
+        let body =
+            fonts::fonts_part(&faces, &dom_version).map_err(|source| WriteError::Rewrite {
+                entry: FONTS_SRC.to_string(),
+                source,
+            })?;
+        new_entries.push((FONTS_SRC.to_string(), body));
+        mint_fonts = true;
+    }
     if let Some(orig) = entry_bytes(&mut src, DESIGNMAP_SRC)? {
         let mut new = orig.clone();
         if !(new_spread_refs.is_empty() && new_story_srcs.is_empty()) {
-            new = emit::patch_designmap(&new, &new_spread_refs, &new_story_srcs).map_err(
+            new = emit::patch_designmap(&new, &new_spread_refs, &new_story_srcs, &[]).map_err(
                 |source| WriteError::Rewrite {
                     entry: DESIGNMAP_SRC.to_string(),
                     source,
                 },
             )?;
+        }
+        if !dropped_story_srcs.is_empty() {
+            new = emit::patch_designmap(&new, &[], &[], &dropped_story_srcs).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: DESIGNMAP_SRC.to_string(),
+                    source,
+                }
+            })?;
+        }
+        if mint_fonts {
+            new =
+                emit::ensure_fonts_ref(&new, FONTS_SRC).map_err(|source| WriteError::Rewrite {
+                    entry: DESIGNMAP_SRC.to_string(),
+                    source,
+                })?;
         }
         let plan = navigation_plan(doc, &orig, styles_orig.as_deref(), needs_xref_format).map_err(
             |source| WriteError::Rewrite {
@@ -518,6 +745,10 @@ pub(crate) fn write_package(
             // `write_package`'s doc. `write_paged` keeps them.
             continue;
         }
+        if dropped_story_srcs.contains(&name) {
+            // An orphan story's part (see the stories loop above).
+            continue;
+        }
         if let Some(body) = patched.get(&name) {
             zip.start_file(&name, deflated)?;
             zip.write_all(body)?;
@@ -536,7 +767,20 @@ pub(crate) fn write_package(
     }
 
     let cursor = zip.finish()?;
-    Ok(cursor.into_inner())
+    Ok(IdmlExport {
+        bytes: cursor.into_inner(),
+        links: links.into_links(),
+    })
+}
+
+/// The entry a story's part lives at: its source path, or — minted
+/// post-parse (`src: ""`) — the name derived from its id.
+fn story_entry_src(story: &ParsedStory) -> String {
+    if story.src.is_empty() {
+        emit::story_src_for(&story.self_id)
+    } else {
+        story.src.clone()
+    }
 }
 
 /// Read one entry's decompressed bytes out of the source archive.

@@ -75,10 +75,10 @@ const STROKED: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
 <Spread Self="s1">
 <Page Self="pg1" GeometricBounds="0 0 792 612"/>
-<GraphicLine Self="u1103" ContentType="Unassigned" Visible="true" Name="$ID/" StrokeWeight="0.7086614173228347" StrokeColor="Color/Paper" ItemLayer="u102" Locked="false"/>
-<Rectangle Self="r1" GeometricBounds="0 0 50 50" StrokeWeight="5.669291338582678" StrokeColor="Color/Black" FillColor="Color/Black"/>
-<Oval Self="o1" GeometricBounds="0 0 20 20" StrokeWeight="1.4173228346456694" StrokeColor="Color/Black" FillColor="Color/Black"/>
-<Polygon Self="p1" GeometricBounds="0 0 30 30" StrokeWeight="0.2990447182611103" StrokeColor="Color/Black" FillColor="Color/Black"/>
+<GraphicLine Self="u1103" ContentType="Unassigned" Visible="true" Name="$ID/" StrokeWeight="0.7086614173228347" StrokeColor="Color/Paper" ItemLayer="u102" Locked="false" ItemTransform="1 0 0 1 0 0"/>
+<Rectangle Self="r1" GeometricBounds="0 0 50 50" ItemTransform="1 0 0 1 0 0" StrokeWeight="5.669291338582678" StrokeColor="Color/Black" FillColor="Color/Black"/>
+<Oval Self="o1" GeometricBounds="0 0 20 20" ItemTransform="1 0 0 1 0 0" StrokeWeight="1.4173228346456694" StrokeColor="Color/Black" FillColor="Color/Black"/>
+<Polygon Self="p1" GeometricBounds="0 0 30 30" ItemTransform="1 0 0 1 0 0" StrokeWeight="0.2990447182611103" StrokeColor="Color/Black" FillColor="Color/Black"/>
 </Spread>
 </idPkg:Spread>"#;
 
@@ -270,7 +270,7 @@ fn a_new_stroke_weight_is_still_appended_to_an_item_that_had_none() {
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
 <Spread Self="s1">
 <Page Self="pg1" GeometricBounds="0 0 792 612"/>
-<Rectangle Self="r1" GeometricBounds="0 0 50 50" FillColor="Color/Black"/>
+<Rectangle Self="r1" GeometricBounds="0 0 50 50" ItemTransform="1 0 0 1 0 0" FillColor="Color/Black"/>
 </Spread>
 </idPkg:Spread>"#;
 

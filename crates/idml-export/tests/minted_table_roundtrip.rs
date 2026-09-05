@@ -117,6 +117,7 @@ fn a_table_in_a_minted_story_is_written_and_reads_back() {
             ..Default::default()
         },
     });
+    pkg::place_story(&mut doc, "tf_u1", "Story/u1");
 
     let out = write_idml(&doc, &source).expect("write");
     let xml = pkg::entry(&out, "Stories/Story_Story_u1.xml").expect("minted story");
@@ -176,7 +177,7 @@ fn a_table_in_a_minted_story_is_written_and_reads_back() {
 /// A bare `insertTable` (no sizing op) has rows and columns with no
 /// size; InDesign 20.0.1 dropped exactly that table. Both attributes are
 /// always spelled — 24 pt rows, 72 pt columns when no host frame width
-/// is known (a minted story has no frame here).
+/// is known (the frame here has no usable inner width).
 #[test]
 fn an_unsized_table_gets_the_fallback_row_height_and_column_width() {
     let source = pkg::simple("", pkg::STORY_BODY, pkg::STYLES);
@@ -197,6 +198,13 @@ fn an_unsized_table_gets_the_fallback_row_height_and_column_width() {
             ..Default::default()
         },
     });
+    // A story must be framed to reach the package (an orphan is
+    // dropped); the fallback fires when the frame yields no usable
+    // inner width — here a zero-width frame.
+    pkg::place_story(&mut doc, "tf_u2", "Story/u2");
+    let frame = doc.spreads[0].spread.text_frames.last_mut().unwrap();
+    frame.bounds.right = frame.bounds.left;
+    doc.rebuild_indexes();
     let out = write_idml(&doc, &source).expect("write");
     let xml = pkg::entry(&out, "Stories/Story_Story_u2.xml").expect("minted story");
     assert_eq!(xml.matches(r#"SingleRowHeight="24""#).count(), 2, "{xml}");

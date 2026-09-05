@@ -325,11 +325,15 @@ fn a_cleared_transform_still_drops_the_attribute() {
     );
 }
 
-/// A transform SET on an item whose source element carried none is still
-/// appended — the extras lane is only suppressed when the model matrix is
-/// what an ABSENT attribute already derives.
+/// An item whose source element carried no `ItemTransform` grows one
+/// on ANY save — the identity when that is what the model derives, the
+/// model's value otherwise. InDesign 20.0.1 does not read an absent
+/// transform as identity (measured: such items land one page width to
+/// the left on a facing spread), so absence is never preserved; its
+/// own packages spell the attribute on every item and never reach this
+/// lane.
 #[test]
-fn a_new_transform_is_still_appended_to_an_item_that_had_none() {
+fn an_item_that_had_no_transform_grows_the_identity_or_its_new_value() {
     const NO_TRANSFORM: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
 <Spread Self="s1">
@@ -344,9 +348,15 @@ fn a_new_transform_is_still_appended_to_an_item_that_had_none() {
         "premise: the parser leaves an absent transform absent"
     );
     let untouched = rewrite_spread(NO_TRANSFORM, &spread).expect("rewrite");
+    let xml = String::from_utf8(untouched).expect("utf8");
     assert_eq!(
-        untouched, NO_TRANSFORM,
-        "an item that never had the attribute must not grow one"
+        transforms_in(&xml),
+        vec!["1 0 0 1 0 0"],
+        "an item that never had the attribute grows the identity:\n{xml}"
+    );
+    assert!(
+        xml.contains(r#"<Rectangle Self="r1" GeometricBounds="0 0 50 50" FillColor="Color/Black" ItemTransform="1 0 0 1 0 0"/>"#),
+        "appended after the source attributes, nothing else touched:\n{xml}"
     );
 
     let mut spread = spread;
@@ -360,14 +370,14 @@ fn a_new_transform_is_still_appended_to_an_item_that_had_none() {
     );
 }
 
-/// The same rule on the ABSENT side. A group member with no
-/// `ItemTransform` of its own still has one in the model — the group's,
-/// composed in — so the writer used to de-compose it back to identity and
-/// APPEND `ItemTransform="1 0 0 1 0 0"` to an element that never carried
-/// the attribute. Absence is the source spelling of identity, and it has
-/// to survive as absence.
+/// The same rule for a group member. A member with no `ItemTransform`
+/// of its own has one in the model — the group's, composed in — which
+/// de-composes back to the identity; that identity is APPENDED (it used
+/// to be kept absent as "the source spelling of identity", which
+/// InDesign does not read as identity). The group's own high-precision
+/// transform is untouched.
 #[test]
-fn a_group_member_with_no_transform_does_not_grow_one() {
+fn a_group_member_with_no_transform_grows_the_identity() {
     const BARE_MEMBER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
 <Spread Self="s1">
@@ -384,10 +394,20 @@ fn a_group_member_with_no_transform_does_not_grow_one() {
         "premise: the member's composed transform IS the group's"
     );
     let out = rewrite_spread(BARE_MEMBER, &spread).expect("rewrite");
+    let xml = String::from_utf8(out).expect("utf8");
     assert_eq!(
-        String::from_utf8_lossy(&out),
-        String::from_utf8_lossy(BARE_MEMBER),
-        "an unmutated spread must round-trip byte-identically"
+        transforms_in(&xml),
+        vec![
+            "1 0 0 1 -294.4043156793173 -304.19133213498253",
+            "1 0 0 1 0 0"
+        ],
+        "the group's bytes verbatim, the member's identity appended:\n{xml}"
+    );
+    // Stable: the appended spelling is its own source on the next save.
+    let again = idml_import::parse_spread(xml.as_bytes()).expect("re-parse");
+    assert_eq!(
+        rewrite_spread(xml.as_bytes(), &again).expect("rewrite"),
+        xml.as_bytes()
     );
 }
 

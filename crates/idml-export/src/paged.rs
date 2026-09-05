@@ -206,7 +206,7 @@ pub fn write_paged(
     // 1. The canonical IDML write (carry-through + patch). Existing `paged/`
     //    parts + the manifest in `original` survive here untouched — the
     //    container lane keeps them, unlike the pure-IDML `write_idml`.
-    let idml = crate::write_package(doc, original, true)?;
+    let idml = crate::write_package(doc, original, true, &crate::ExportOptions::default())?.bytes;
 
     // 2. The data-loss-guard hash over the IDML parts only, merged into the
     //    EXISTING manifest (carried through `write_idml` from `original`) so

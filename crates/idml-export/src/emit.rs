@@ -41,6 +41,7 @@ use idml_import::{CharacterRun, Spread, Story};
 use crate::rewrite;
 
 const PKG_NS: &str = "http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging";
+const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 /// Sanitize a model `Self` id into an entry-name stem: `/` → `_`.
 /// Wire-minted stories are named `Story/u<n>`; an entry path can't
@@ -618,9 +619,14 @@ pub(crate) fn spread_part(
     if let Some(id) = &spread.self_id {
         attrs.push(("Self", id.clone()));
     }
-    if let Some(m) = &spread.item_transform {
-        attrs.push(("ItemTransform", rewrite::format_matrix(m)));
-    }
+    // Always spelled, identity included: InDesign 20.0.1 does not read
+    // an absent `ItemTransform` as identity (see
+    // `rewrite::TransformPlan::extra`); its own packages carry one on
+    // every `<Spread>`, `<Page>` and page item.
+    attrs.push((
+        "ItemTransform",
+        rewrite::format_matrix(&spread.item_transform.unwrap_or(IDENTITY)),
+    ));
     rewrite::emit_start_with_attrs(&mut writer, "Spread", &attrs)?;
     let page_count = spread.pages.len();
     // A guide lands in the page its index names, clamped to the last.
@@ -638,9 +644,10 @@ pub(crate) fn spread_part(
         if let Some(m) = &p.applied_master {
             pa.push(("AppliedMaster", m.clone()));
         }
-        if let Some(m) = &p.item_transform {
-            pa.push(("ItemTransform", rewrite::format_matrix(m)));
-        }
+        pa.push((
+            "ItemTransform",
+            rewrite::format_matrix(&p.item_transform.unwrap_or(IDENTITY)),
+        ));
         // GeometricBounds is the one attribute the parser requires to
         // accept a `<Page>` at all.
         pa.push((
@@ -720,6 +727,7 @@ pub(crate) fn patch_designmap(
     original: &[u8],
     new_spreads: &[(Option<String>, String)],
     new_stories: &[String],
+    dropped_stories: &[String],
 ) -> Result<Vec<u8>, quick_xml::Error> {
     // Pass 1 — count the existing story refs so "after the last one" is
     // recognisable in the single forward pass below.
@@ -788,7 +796,14 @@ pub(crate) fn patch_designmap(
             }
             Event::Empty(e) if e.name().as_ref() == b"idPkg:Story" => {
                 story_seen += 1;
-                writer.write_event(Event::Empty(e.into_owned()))?;
+                // An orphan story's part is not written (see
+                // `write_package`); its reference goes with it.
+                let dropped = attr_value(&e, b"src")
+                    .map(|src| dropped_stories.contains(&src))
+                    .unwrap_or(false);
+                if !dropped {
+                    writer.write_event(Event::Empty(e.into_owned()))?;
+                }
                 if story_seen == story_total && !stories_placed {
                     for src in new_stories {
                         write_ref(&mut writer, "idPkg:Story", src)?;
@@ -817,6 +832,89 @@ pub(crate) fn patch_designmap(
         buf.clear();
     }
 
+    Ok(writer.into_inner().into_inner())
+}
+
+/// Reference `Resources/Fonts.xml` from the designmap when it does not
+/// already: the `<idPkg:Fonts>` element goes where InDesign puts it —
+/// before `<idPkg:Styles>`, else before the first spread reference,
+/// else last. Byte-identical when the reference exists.
+pub(crate) fn ensure_fonts_ref(original: &[u8], src: &str) -> Result<Vec<u8>, quick_xml::Error> {
+    let has_ref = {
+        let mut reader = Reader::from_reader(original);
+        reader.config_mut().trim_text(false);
+        let mut buf = Vec::new();
+        let mut found = false;
+        loop {
+            match reader.read_event_into(&mut buf)? {
+                Event::Eof => break,
+                Event::Empty(e) | Event::Start(e) if e.name().as_ref() == b"idPkg:Fonts" => {
+                    found = true;
+                    break;
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+        found
+    };
+    if has_ref {
+        return Ok(original.to_vec());
+    }
+    let has_styles_ref = {
+        let mut reader = Reader::from_reader(original);
+        reader.config_mut().trim_text(false);
+        let mut buf = Vec::new();
+        let mut found = false;
+        loop {
+            match reader.read_event_into(&mut buf)? {
+                Event::Eof => break,
+                Event::Empty(e) | Event::Start(e) if e.name().as_ref() == b"idPkg:Styles" => {
+                    found = true;
+                    break;
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+        found
+    };
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    let mut placed = false;
+    let place = |writer: &mut Writer<Cursor<Vec<u8>>>| -> Result<(), quick_xml::Error> {
+        rewrite::emit_empty_with_attrs(writer, "idPkg:Fonts", &[("src", src.to_string())])
+    };
+    loop {
+        let ev = reader.read_event_into(&mut buf)?;
+        match ev {
+            Event::Eof => break,
+            Event::Empty(ref e) | Event::Start(ref e)
+                if !placed
+                    && ((has_styles_ref && e.name().as_ref() == b"idPkg:Styles")
+                        || (!has_styles_ref
+                            && matches!(
+                                e.name().as_ref(),
+                                b"idPkg:MasterSpread" | b"idPkg:Spread"
+                            ))) =>
+            {
+                place(&mut writer)?;
+                placed = true;
+                writer.write_event(ev.borrow())?;
+            }
+            Event::End(ref e) if !placed && e.name().as_ref() == b"Document" => {
+                place(&mut writer)?;
+                placed = true;
+                writer.write_event(ev.borrow())?;
+            }
+            _ => writer.write_event(ev.borrow())?,
+        }
+        buf.clear();
+    }
     Ok(writer.into_inner().into_inner())
 }
 
