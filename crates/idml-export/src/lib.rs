@@ -577,10 +577,11 @@ pub(crate) fn write_package(
                 }
             })?;
             let new =
-                cell_insets::spell_cell_insets(&new).map_err(|source| WriteError::Rewrite {
-                    entry: story.src.clone(),
-                    source,
-                })?;
+                cell_insets::spell_cell_insets(&new, &cell_insets::cell_insets_of(&story.story))
+                    .map_err(|source| WriteError::Rewrite {
+                        entry: story.src.clone(),
+                        source,
+                    })?;
             if new != orig.as_slice() {
                 patched.insert(story.src.clone(), new);
             }
@@ -635,11 +636,14 @@ pub(crate) fn write_package(
                             source,
                         }
                     })?;
-                let new =
-                    cell_insets::spell_cell_insets(&new).map_err(|source| WriteError::Rewrite {
-                        entry: entry_src.clone(),
-                        source,
-                    })?;
+                let new = cell_insets::spell_cell_insets(
+                    &new,
+                    &cell_insets::cell_insets_of(&story.story),
+                )
+                .map_err(|source| WriteError::Rewrite {
+                    entry: entry_src.clone(),
+                    source,
+                })?;
                 if new != orig.as_slice() {
                     patched.insert(entry_src, new);
                 }
@@ -670,7 +674,8 @@ pub(crate) fn write_package(
                     }
                 })?;
             let body =
-                cell_insets::spell_cell_insets(&body).map_err(|source| WriteError::Rewrite {
+                cell_insets::spell_cell_insets(&body, &cell_insets::cell_insets_of(&story.story))
+                    .map_err(|source| WriteError::Rewrite {
                     entry: entry_src.clone(),
                     source,
                 })?;
