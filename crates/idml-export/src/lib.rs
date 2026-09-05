@@ -91,6 +91,7 @@ mod reorder;
 pub mod resources;
 pub mod rewrite;
 pub mod text_frame_prefs;
+pub mod text_wrap;
 
 /// The `Self` of the one `<CrossReferenceFormat>` the exporter emits for
 /// cross-reference sources that name none (InDesign drops those).
@@ -411,6 +412,13 @@ pub(crate) fn write_package(
                     source,
                 },
             )?;
+            // … and every wrap the model composes around (see [`text_wrap`]).
+            let new = text_wrap::rewrite_text_wrap(&new, &spread.spread).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: spread.src.clone(),
+                    source,
+                }
+            })?;
             if new != orig.as_slice() {
                 patched.insert(spread.src.clone(), new);
             }
@@ -428,6 +436,12 @@ pub(crate) fn write_package(
                         source,
                     }
                 })?;
+            let body = text_wrap::rewrite_text_wrap(&body, &spread.spread).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: spread.src.clone(),
+                    source,
+                }
+            })?;
             let anchor = doc.spreads[..i]
                 .iter()
                 .rev()
@@ -486,6 +500,12 @@ pub(crate) fn write_package(
                     source,
                 },
             )?;
+            let new = text_wrap::rewrite_text_wrap(&new, &master.spread).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: master.src.clone(),
+                    source,
+                }
+            })?;
             if new != orig.as_slice() {
                 patched.insert(master.src.clone(), new);
             }
