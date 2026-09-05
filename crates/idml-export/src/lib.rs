@@ -77,11 +77,13 @@ use std::io::{Cursor, Read, Write};
 use paged_scene::{Document, ParsedStory};
 
 mod emit;
+pub mod face;
 pub mod fonts;
 pub mod guides;
 pub mod images;
 mod navigation;
 mod paged;
+pub mod preferences;
 mod reorder;
 pub mod resources;
 pub mod rewrite;
@@ -546,6 +548,12 @@ pub(crate) fn write_package(
                         entry: story.src.clone(),
                         source,
                     })?;
+            let new = face::patch_story_face(&new, &doc.styles).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: story.src.clone(),
+                    source,
+                }
+            })?;
             if new != orig.as_slice() {
                 patched.insert(story.src.clone(), new);
             }
@@ -587,6 +595,12 @@ pub(crate) fn write_package(
                             entry: entry_src.clone(),
                             source,
                         })?;
+                let new = face::patch_story_face(&new, &doc.styles).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: entry_src.clone(),
+                        source,
+                    }
+                })?;
                 if new != orig.as_slice() {
                     patched.insert(entry_src, new);
                 }
@@ -602,6 +616,12 @@ pub(crate) fn write_package(
             .map_err(|source| WriteError::Rewrite {
                 entry: entry_src.clone(),
                 source,
+            })?;
+            let body = face::patch_story_face(&body, &doc.styles).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: entry_src.clone(),
+                    source,
+                }
             })?;
             new_entries.push((entry_src.clone(), body));
             new_story_srcs.push(entry_src);
@@ -643,6 +663,21 @@ pub(crate) fn write_package(
             })?;
         new_entries.push((FONTS_SRC.to_string(), body));
         mint_fonts = true;
+    }
+    // The optical-size text preference the engine composed under (see
+    // [`preferences`]): a part that spells it passes through untouched.
+    // A package with no part is left without one (every generator and
+    // InDesign itself write the part; minting it here would change the
+    // entry list of a package that changed nothing).
+    const PREFERENCES_SRC: &str = "Resources/Preferences.xml";
+    if let Some(orig) = entry_bytes(&mut src, PREFERENCES_SRC)? {
+        let new = preferences::patch_preferences(&orig).map_err(|source| WriteError::Rewrite {
+            entry: PREFERENCES_SRC.to_string(),
+            source,
+        })?;
+        if new != orig.as_slice() {
+            patched.insert(PREFERENCES_SRC.to_string(), new);
+        }
     }
     if let Some(orig) = entry_bytes(&mut src, DESIGNMAP_SRC)? {
         let mut new = orig.clone();
@@ -717,6 +752,13 @@ pub(crate) fn write_package(
                 source,
             }
         })?;
+        // … and every paragraph style that names a font spells its
+        // face (see [`face`]).
+        let new =
+            face::patch_styles_face(&new, &doc.styles).map_err(|source| WriteError::Rewrite {
+                entry: STYLES_SRC.to_string(),
+                source,
+            })?;
         if new != orig.as_slice() {
             patched.insert(STYLES_SRC.to_string(), new);
         }
