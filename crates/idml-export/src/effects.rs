@@ -127,10 +127,15 @@ pub(crate) fn write_transparency(
         let mut attrs: Vec<(&'static str, String)> = vec![("Applied", "true".to_string())];
         push_f32(&mut attrs, "Opacity", g.opacity_pct);
         push_f32(&mut attrs, "Size", g.size);
-        push_f32(&mut attrs, "ChokeAmount", g.choke_pct);
+        // InDesign's inner glow has no ChokeAmount: its choke is `Spread`.
+        push_f32(&mut attrs, "Spread", g.choke_pct);
         push_f32(&mut attrs, "Noise", g.noise_pct);
         push_str(&mut attrs, "BlendMode", &g.blend_mode);
-        push_str(&mut attrs, "Source", &g.source);
+        push_str(
+            &mut attrs,
+            "Source",
+            &g.source.as_deref().map(inner_glow_source),
+        );
         push_str(&mut attrs, "EffectColor", &g.effect_color);
         emit_empty_with_attrs(writer, "InnerGlowSetting", &attrs)?;
     }
@@ -147,7 +152,11 @@ pub(crate) fn write_transparency(
         push_str(&mut attrs, "ShadowColor", &b.shadow_color);
         push_str(&mut attrs, "Style", &b.style);
         push_str(&mut attrs, "Direction", &b.direction);
-        push_str(&mut attrs, "Technique", &b.technique);
+        push_str(
+            &mut attrs,
+            "Technique",
+            &b.technique.as_deref().map(bevel_technique),
+        );
         emit_empty_with_attrs(writer, "BevelAndEmbossSetting", &attrs)?;
     }
     if let Some(s) = &e.satin {
@@ -159,12 +168,14 @@ pub(crate) fn write_transparency(
         push_str(&mut attrs, "BlendMode", &s.blend_mode);
         push_str(&mut attrs, "EffectColor", &s.effect_color);
         if let Some(i) = s.invert {
-            attrs.push(("Invert", i.to_string()));
+            attrs.push(("InvertEffect", i.to_string()));
         }
         emit_empty_with_attrs(writer, "SatinSetting", &attrs)?;
     }
     if let Some(f) = &e.feather {
-        let mut attrs: Vec<(&'static str, String)> = vec![("Applied", "true".to_string())];
+        // A basic feather has no `Applied`: InDesign switches it on with
+        // `Mode="Standard"` (default "None").
+        let mut attrs: Vec<(&'static str, String)> = vec![("Mode", "Standard".to_string())];
         push_f32(&mut attrs, "Width", f.width);
         push_f32(&mut attrs, "ChokeAmount", f.choke_pct);
         push_f32(&mut attrs, "Noise", f.noise_pct);
@@ -179,8 +190,7 @@ pub(crate) fn write_transparency(
         push_f32(&mut attrs, "BottomWidth", f.bottom_width);
         push_f32(&mut attrs, "Angle", f.angle_deg);
         push_f32(&mut attrs, "ChokeAmount", f.choke_pct);
-        push_f32(&mut attrs, "NoiseAmount", f.noise_pct);
-        push_str(&mut attrs, "CornerType", &f.corner_type);
+        push_f32(&mut attrs, "Noise", f.noise_pct);
         emit_empty_with_attrs(writer, "DirectionalFeatherSetting", &attrs)?;
     }
     if let Some(g) = &e.gradient_feather {
@@ -192,15 +202,36 @@ pub(crate) fn write_transparency(
                 format!("{} {}", format_f32(x), format_f32(y)),
             ));
         }
-        if let Some((x, y)) = g.end_point {
-            attrs.push((
-                "GradientEnd",
-                format!("{} {}", format_f32(x), format_f32(y)),
-            ));
+        if let (Some((sx, sy)), Some((ex, ey))) = (g.start_point, g.end_point) {
+            let length = ((ex - sx).powi(2) + (ey - sy).powi(2)).sqrt();
+            attrs.push(("Length", format_f32(length)));
         }
-        push_f32(&mut attrs, "GradientAngle", g.angle_deg);
+        push_f32(&mut attrs, "Angle", g.angle_deg);
         emit_empty_with_attrs(writer, "GradientFeatherSetting", &attrs)?;
     }
     writer.write_event(Event::End(BytesEnd::new("TransparencySetting")))?;
     Ok(())
+}
+
+/// InDesign's `InnerGlowSetting Source` enumerators (measured 2026-09-06
+/// on its own export): `EdgeSourced` / `CenterSourced`. The model still
+/// carries the older `EdgeGlow` / `CenterGlow` from files we wrote
+/// ourselves; either spelling goes out as InDesign's.
+fn inner_glow_source(s: &str) -> String {
+    match s {
+        "EdgeGlow" => "EdgeSourced".to_string(),
+        "CenterGlow" => "CenterSourced".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// InDesign's `BevelAndEmbossSetting Technique` enumerators:
+/// `SmoothContour` / `ChiselHard` / `ChiselSoft`. A bare `Smooth` (the
+/// engine's word) is `SmoothContour` to InDesign — an unknown enumerator
+/// left the whole effect unreadable and the object painted white.
+fn bevel_technique(s: &str) -> String {
+    match s {
+        "Smooth" => "SmoothContour".to_string(),
+        other => other.to_string(),
+    }
 }

@@ -1473,9 +1473,15 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // for round-trip preservation. Q-04: extended
                     // from Rectangle-only to all five shape kinds.
                     if let Some(kind) = current_frame.as_ref().map(|cf| cf.kind) {
+                        // A basic feather is switched on by `Mode="Standard"`
+                        // (InDesign's spelling; default "None"), every other
+                        // effect by `Applied="true"`. Our own older exports
+                        // wrote `Applied` on the feather too — still honoured.
                         let applied = attr(&e, b"Applied")
                             .and_then(|s| s.parse::<bool>().ok())
-                            .unwrap_or(false);
+                            .unwrap_or(false)
+                            || (e.name().as_ref() == b"FeatherSetting"
+                                && attr(&e, b"Mode").as_deref() == Some("Standard"));
                         if !applied {
                             // Effect is present but disabled; skip
                             // the parameter capture entirely so the
@@ -1516,7 +1522,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     size: parse_f(&e, b"Size"),
                                     opacity_pct: parse_f(&e, b"Opacity"),
                                     effect_color: attr(&e, b"EffectColor"),
-                                    choke_pct: parse_f(&e, b"ChokeAmount"),
+                                    // InDesign spells the inner glow's choke `Spread`.
+                                    choke_pct: parse_f(&e, b"Spread")
+                                        .or_else(|| parse_f(&e, b"ChokeAmount")),
                                     blend_mode: attr(&e, b"BlendMode"),
                                     source: attr(&e, b"Source"),
                                     noise_pct: parse_f(&e, b"Noise"),
@@ -1546,7 +1554,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     effect_color: attr(&e, b"EffectColor"),
                                     opacity_pct: parse_f(&e, b"Opacity"),
                                     blend_mode: attr(&e, b"BlendMode"),
-                                    invert: attr(&e, b"Invert")
+                                    invert: attr(&e, b"InvertEffect")
+                                        .or_else(|| attr(&e, b"Invert"))
                                         .and_then(|s| s.parse::<bool>().ok()),
                                 });
                             }
@@ -1565,7 +1574,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     top_width: parse_f(&e, b"TopWidth"),
                                     bottom_width: parse_f(&e, b"BottomWidth"),
                                     angle_deg: parse_f(&e, b"Angle"),
-                                    noise_pct: parse_f(&e, b"NoiseAmount"),
+                                    noise_pct: parse_f(&e, b"Noise")
+                                        .or_else(|| parse_f(&e, b"NoiseAmount")),
                                     choke_pct: parse_f(&e, b"ChokeAmount"),
                                     corner_type: attr(&e, b"CornerType"),
                                 });
