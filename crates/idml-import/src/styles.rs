@@ -1039,6 +1039,16 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         next_style: attr(e, b"NextStyle"),
         hyphenation: attr(e, b"Hyphenation").and_then(|s| s.parse().ok()),
         hyphenation_zone: attr(e, b"HyphenationZone").and_then(|s| s.parse().ok()),
+        hyphenate_after_first: attr(e, b"HyphenateAfterFirst").and_then(|s| s.parse().ok()),
+        hyphenate_before_last: attr(e, b"HyphenateBeforeLast").and_then(|s| s.parse().ok()),
+        hyphenate_words_longer_than: attr(e, b"HyphenateWordsLongerThan")
+            .and_then(|s| s.parse().ok()),
+        hyphenate_capitalized_words: attr(e, b"HyphenateCapitalizedWords")
+            .and_then(|s| s.parse().ok()),
+        hyphenate_last_word: attr(e, b"HyphenateLastWord").and_then(|s| s.parse().ok()),
+        hyphenate_across_columns: attr(e, b"HyphenateAcrossColumns").and_then(|s| s.parse().ok()),
+        hyphenate_ladder_limit: attr(e, b"HyphenateLadderLimit").and_then(|s| s.parse().ok()),
+        hyphen_weight: attr(e, b"HyphenWeight").and_then(|s| s.parse().ok()),
         applied_language: attr(e, b"AppliedLanguage"),
         minimum_word_spacing: attr(e, b"MinimumWordSpacing").and_then(|s| s.parse().ok()),
         desired_word_spacing: attr(e, b"DesiredWordSpacing").and_then(|s| s.parse().ok()),

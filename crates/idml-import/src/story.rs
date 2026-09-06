@@ -566,6 +566,24 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .unwrap_or(0),
                             hyphenation: attr(&e, b"Hyphenation")
                                 .and_then(|s| s.parse::<bool>().ok()),
+                            hyphenation_zone: attr(&e, b"HyphenationZone")
+                                .and_then(|s| s.parse::<f32>().ok()),
+                            hyphenate_after_first: attr(&e, b"HyphenateAfterFirst")
+                                .and_then(|s| s.parse::<u32>().ok()),
+                            hyphenate_before_last: attr(&e, b"HyphenateBeforeLast")
+                                .and_then(|s| s.parse::<u32>().ok()),
+                            hyphenate_words_longer_than: attr(&e, b"HyphenateWordsLongerThan")
+                                .and_then(|s| s.parse::<u32>().ok()),
+                            hyphenate_capitalized_words: attr(&e, b"HyphenateCapitalizedWords")
+                                .and_then(|s| s.parse::<bool>().ok()),
+                            hyphenate_last_word: attr(&e, b"HyphenateLastWord")
+                                .and_then(|s| s.parse::<bool>().ok()),
+                            hyphenate_across_columns: attr(&e, b"HyphenateAcrossColumns")
+                                .and_then(|s| s.parse::<bool>().ok()),
+                            hyphenate_ladder_limit: attr(&e, b"HyphenateLadderLimit")
+                                .and_then(|s| s.parse::<u32>().ok()),
+                            hyphen_weight: attr(&e, b"HyphenWeight")
+                                .and_then(|s| s.parse::<u32>().ok()),
                             keep_lines_together: attr(&e, b"KeepLinesTogether")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             keep_with_next: attr(&e, b"KeepWithNext")

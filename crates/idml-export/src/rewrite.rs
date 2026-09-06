@@ -5524,8 +5524,8 @@ pub(crate) fn paragraph_rule_patch(
 /// The `<ParagraphStyleRange>` attributes the model owns — every
 /// paragraph override InDesign reads from the range (the key set
 /// `emit::paragraph_attrs` writes). A key the model does not own passes
-/// through verbatim (`HyphenationZone`, `DropcapDetail` in InDesign's
-/// own lowercase-c spelling, …).
+/// through verbatim (`DropcapDetail` in InDesign's own lowercase-c
+/// spelling, …).
 pub(crate) fn paragraph_attr_patch(
     key: &[u8],
     raw: &[u8],
@@ -5548,6 +5548,19 @@ pub(crate) fn paragraph_attr_patch(
         b"DropCapLines" => Some(preserving_int_patch(raw, p.drop_cap_lines as i64)),
         b"DropCapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
         b"Hyphenation" => Some(opt_bool_patch(p.hyphenation)),
+        // The rest of InDesign's hyphenation panel. These used to fall
+        // through to the pass-through arm; now that the importer reads
+        // them, the model owns them and a mutation has to be able to
+        // rewrite them.
+        b"HyphenationZone" => Some(preserving_f32_patch(raw, p.hyphenation_zone)),
+        b"HyphenateCapitalizedWords" => Some(opt_bool_patch(p.hyphenate_capitalized_words)),
+        b"HyphenateLastWord" => Some(opt_bool_patch(p.hyphenate_last_word)),
+        b"HyphenateAcrossColumns" => Some(opt_bool_patch(p.hyphenate_across_columns)),
+        b"HyphenateAfterFirst" => Some(opt_u32_patch(raw, p.hyphenate_after_first)),
+        b"HyphenateBeforeLast" => Some(opt_u32_patch(raw, p.hyphenate_before_last)),
+        b"HyphenateWordsLongerThan" => Some(opt_u32_patch(raw, p.hyphenate_words_longer_than)),
+        b"HyphenateLadderLimit" => Some(opt_u32_patch(raw, p.hyphenate_ladder_limit)),
+        b"HyphenWeight" => Some(opt_u32_patch(raw, p.hyphen_weight)),
         b"KeepLinesTogether" => Some(opt_bool_patch(p.keep_lines_together)),
         b"KeepWithNext" => Some(opt_u32_patch(raw, p.keep_with_next)),
         b"BulletsAndNumberingListType" => Some(opt_string_patch(&p.bullets_list_type)),

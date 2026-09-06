@@ -661,13 +661,32 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if p.drop_cap_detail != 0 {
         out.push(("DropCapDetail", p.drop_cap_detail.to_string()));
     }
-    let bool_attrs: [(&'static str, Option<bool>); 2] = [
+    let bool_attrs: [(&'static str, Option<bool>); 5] = [
         ("Hyphenation", p.hyphenation),
         ("KeepLinesTogether", p.keep_lines_together),
+        // The paragraph-level half of InDesign's hyphenation panel.
+        ("HyphenateCapitalizedWords", p.hyphenate_capitalized_words),
+        ("HyphenateLastWord", p.hyphenate_last_word),
+        ("HyphenateAcrossColumns", p.hyphenate_across_columns),
     ];
     for (k, v) in bool_attrs {
         if let Some(b) = v {
             out.push((k, b.to_string()));
+        }
+    }
+    if let Some(z) = p.hyphenation_zone {
+        out.push(("HyphenationZone", rewrite::format_f32(z)));
+    }
+    let u32_attrs: [(&'static str, Option<u32>); 5] = [
+        ("HyphenateAfterFirst", p.hyphenate_after_first),
+        ("HyphenateBeforeLast", p.hyphenate_before_last),
+        ("HyphenateWordsLongerThan", p.hyphenate_words_longer_than),
+        ("HyphenateLadderLimit", p.hyphenate_ladder_limit),
+        ("HyphenWeight", p.hyphen_weight),
+    ];
+    for (k, v) in u32_attrs {
+        if let Some(n) = v {
+            out.push((k, n.to_string()));
         }
     }
     if let Some(n) = p.keep_with_next {
