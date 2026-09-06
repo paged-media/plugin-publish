@@ -983,6 +983,62 @@ fn write_contour_path_geometry(
 /// since load lost its tint and its `<BlendingSetting>` on save (the
 /// patch lane only reaches items that already exist in the source XML),
 /// which is exactly what paged.draw's per-layer appearance bake needs.
+/// The gradient geometry a page item carries beside its swatch
+/// references: `GradientFillAngle` / `GradientFillLength` and the stroke
+/// pair. Never written before 2026-09-06, so InDesign composed every
+/// minted gradient with its defaults (angle 0, length = the box) — the
+/// annual's "Ink Dawn" ran diagonally on the canvas and horizontally in
+/// InDesign. Both lanes now carry them.
+#[derive(Clone, Copy, Default)]
+struct GradientGeom {
+    fill_angle: Option<f32>,
+    fill_length: Option<f32>,
+    stroke_angle: Option<f32>,
+    stroke_length: Option<f32>,
+}
+
+impl GradientGeom {
+    fn keys(self) -> [(&'static str, Option<f32>); 4] {
+        [
+            ("GradientFillAngle", self.fill_angle),
+            ("GradientFillLength", self.fill_length),
+            ("GradientStrokeAngle", self.stroke_angle),
+            ("GradientStrokeLength", self.stroke_length),
+        ]
+    }
+
+    /// Attributes to append to a minted item (only the ones set).
+    fn push_attrs(self, attrs: &mut Vec<(&'static str, String)>) {
+        for (k, v) in self.keys() {
+            if let Some(v) = v {
+                attrs.push((k, format_f32(v)));
+            }
+        }
+    }
+}
+
+/// Second patch pass over a rebuilt start tag: the gradient geometry
+/// keys patch (or append) from the model; a key the model does not set
+/// passes through as the source spelled it.
+fn patch_gradient_geometry(
+    start: &BytesStart,
+    geom: GradientGeom,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
+    let keys = geom.keys();
+    let extras: Vec<(&str, String)> = keys
+        .iter()
+        .filter_map(|(k, v)| v.map(|v| (*k, format_f32(v))))
+        .collect();
+    patch_start(
+        start,
+        |k, raw| {
+            let (_, v) = keys.iter().find(|(key, _)| key.as_bytes() == k)?;
+            v.map(|v| preserving_f32_patch(std::str::from_utf8(raw).ok(), Some(v)))
+        },
+        &extras,
+    )
+}
+
 struct NewItemPaint<'a> {
     fill_color: &'a Option<String>,
     /// `FillTint` percent (0..=100). `None` ⇒ no tint override.
@@ -1008,6 +1064,8 @@ struct NewItemPaint<'a> {
     /// setting (see [`crate::effects`]).
     drop_shadow: Option<&'a idml_import::DropShadowSetting>,
     effects: Option<&'a idml_import::FrameEffects>,
+    /// `GradientFill*` / `GradientStroke*` — see [`GradientGeom`].
+    gradient: GradientGeom,
 }
 
 /// `Option<String>` has no `const` default that can be borrowed inline,
@@ -1034,6 +1092,7 @@ impl Default for NewItemPaint<'_> {
             item_layer: None,
             drop_shadow: None,
             effects: None,
+            gradient: GradientGeom::default(),
         }
     }
 }
@@ -1092,6 +1151,7 @@ fn push_common_item_attrs(
     if let Some(l) = paint.item_layer {
         attrs.push(("ItemLayer", l.to_string()));
     }
+    paint.gradient.push_attrs(attrs);
 }
 
 /// Emit the `<TransparencySetting><BlendingSetting …/></TransparencySetting>`
@@ -1235,6 +1295,12 @@ fn write_new_text_frame(
         item_layer: f.item_layer.as_deref(),
         drop_shadow: f.drop_shadow.as_ref(),
         effects: f.effects.as_ref(),
+        gradient: GradientGeom {
+            fill_angle: f.gradient_fill_angle,
+            fill_length: f.gradient_fill_length,
+            stroke_angle: f.gradient_stroke_angle,
+            stroke_length: f.gradient_stroke_length,
+        },
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     emit_start_with_attrs(writer, "TextFrame", &attrs)?;
@@ -1667,6 +1733,12 @@ fn write_new_item(
                         item_layer: rect.item_layer.as_deref(),
                         drop_shadow: rect.drop_shadow.as_ref(),
                         effects: rect.effects.as_ref(),
+                        gradient: GradientGeom {
+                            fill_angle: rect.gradient_fill_angle,
+                            fill_length: rect.gradient_fill_length,
+                            stroke_angle: rect.gradient_stroke_angle,
+                            stroke_length: rect.gradient_stroke_length,
+                        },
                     },
                     rect.bounds,
                     spread,
@@ -1692,6 +1764,11 @@ fn write_new_item(
                         item_layer: o.item_layer.as_deref(),
                         drop_shadow: None,
                         effects: o.effects.as_ref(),
+                        gradient: GradientGeom {
+                            fill_angle: o.gradient_fill_angle,
+                            fill_length: o.gradient_fill_length,
+                            ..GradientGeom::default()
+                        },
                     },
                     o.bounds,
                     spread,
@@ -1717,6 +1794,11 @@ fn write_new_item(
                         item_layer: p.item_layer.as_deref(),
                         drop_shadow: None,
                         effects: p.effects.as_ref(),
+                        gradient: GradientGeom {
+                            fill_angle: p.gradient_fill_angle,
+                            fill_length: p.gradient_fill_length,
+                            ..GradientGeom::default()
+                        },
                     },
                     p.bounds,
                     &p.anchors,
@@ -3500,6 +3582,15 @@ fn patch_spread_item(
                     frame.item_layer.as_deref(),
                 ),
             )?;
+            let start = patch_gradient_geometry(
+                &start,
+                GradientGeom {
+                    fill_angle: frame.gradient_fill_angle,
+                    fill_length: frame.gradient_fill_length,
+                    stroke_angle: frame.gradient_stroke_angle,
+                    stroke_length: frame.gradient_stroke_length,
+                },
+            )?;
             Ok(Some(start.into_owned()))
         }
         b"Rectangle" => {
@@ -3521,6 +3612,12 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
                     item_layer: r.item_layer.clone(),
+                    gradient: GradientGeom {
+                        fill_angle: r.gradient_fill_angle,
+                        fill_length: r.gradient_fill_length,
+                        stroke_angle: r.gradient_stroke_angle,
+                        stroke_length: r.gradient_stroke_length,
+                    },
                     start_arrow: None,
                     end_arrow: None,
                     corners: Some(corner_attrs_of(
@@ -3550,6 +3647,11 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
                     item_layer: r.item_layer.clone(),
+                    gradient: GradientGeom {
+                        fill_angle: r.gradient_fill_angle,
+                        fill_length: r.gradient_fill_length,
+                        ..GradientGeom::default()
+                    },
                     start_arrow: None,
                     end_arrow: None,
                     // C-18: the B-23 residual is closed — `Oval` now
@@ -3584,6 +3686,11 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
                     item_layer: r.item_layer.clone(),
+                    gradient: GradientGeom {
+                        fill_angle: r.gradient_fill_angle,
+                        fill_length: r.gradient_fill_length,
+                        ..GradientGeom::default()
+                    },
                     start_arrow: None,
                     end_arrow: None,
                     corners: Some(corner_attrs_of(
@@ -3612,6 +3719,7 @@ fn patch_spread_item(
                     bounds: r.bounds,
                     applied_object_style: r.applied_object_style.clone(),
                     item_layer: r.item_layer.clone(),
+                    gradient: GradientGeom::default(),
                     start_arrow: Some(r.start_arrow),
                     end_arrow: Some(r.end_arrow),
                     // C-18: the B-23 residual is closed — `GraphicLine`
@@ -3684,6 +3792,8 @@ struct VectorItem {
     /// `ItemLayer` — patched back when the model names a layer; never
     /// removed (see [`item_layer_patch`]).
     item_layer: Option<String>,
+    /// Gradient geometry — see [`GradientGeom`].
+    gradient: GradientGeom,
     /// v43 — `LeftLineEnd` / `RightLineEnd`. `None` for the kinds that
     /// don't carry the fields (Rectangle / Oval / Polygon), so their
     /// source attributes pass through verbatim.
@@ -3932,6 +4042,7 @@ fn patch_vector_item(
             item.item_layer.as_deref(),
         ),
     )?;
+    let start = patch_gradient_geometry(&start, item.gradient)?;
     Ok(Some(start.into_owned()))
 }
 
@@ -5993,6 +6104,40 @@ mod tests {
             String::from_utf8_lossy(&out),
             ellipse,
             "an InDesign ellipse keeps its bytes"
+        );
+    }
+
+    /// `GradientFillAngle` / `GradientFillLength` (and the stroke pair)
+    /// travel with the item in both lanes; a model that sets none leaves
+    /// the source bytes alone.
+    #[test]
+    fn gradient_geometry_is_written_and_patched() {
+        let mut spread = grouped();
+        spread.rectangles[0].gradient_fill_angle = Some(15.0);
+        spread.rectangles[0].gradient_fill_length = Some(432.0);
+        spread.rectangles[0].gradient_stroke_angle = Some(90.0);
+        let mut minted = spread.rectangles[0].clone();
+        minted.self_id = Some("rg".to_string());
+        spread.rectangles.push(minted);
+        spread
+            .frames_in_order
+            .push(idml_import::FrameRef::Rectangle(2));
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Rectangle Self="r1" ItemTransform="1 0 0 1 10 10" GeometricBounds="0 0 50 50" FillColor="Color/Black" GradientFillAngle="15" GradientFillLength="432" GradientStrokeAngle="90"/>"#),
+            "existing item: {s}"
+        );
+        assert!(
+            s.contains(
+                r#"GradientFillAngle="15" GradientFillLength="432" GradientStrokeAngle="90">"#
+            ) && s.contains(r#"<Rectangle Self="rg""#),
+            "minted item: {s}"
+        );
+        let out = rewrite_spread(GROUP_SPREAD, &grouped()).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(GROUP_SPREAD)
         );
     }
 
