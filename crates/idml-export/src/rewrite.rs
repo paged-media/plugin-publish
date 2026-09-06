@@ -1462,6 +1462,20 @@ pub(crate) fn nested_ref_self_id(spread: &Spread, r: idml_import::FrameRef) -> O
     }
 }
 
+/// The layer a group's members sit on: the first member (depth-first
+/// through nested groups) that names one.
+fn group_item_layer<'a>(spread: &'a Spread, group: &idml_import::Group) -> Option<&'a str> {
+    use idml_import::FrameRef;
+    group.members.iter().find_map(|&m| match m {
+        FrameRef::TextFrame(i) => spread.text_frames.get(i)?.item_layer.as_deref(),
+        FrameRef::Rectangle(i) => spread.rectangles.get(i)?.item_layer.as_deref(),
+        FrameRef::Oval(i) => spread.ovals.get(i)?.item_layer.as_deref(),
+        FrameRef::GraphicLine(i) => spread.graphic_lines.get(i)?.item_layer.as_deref(),
+        FrameRef::Polygon(i) => spread.polygons.get(i)?.item_layer.as_deref(),
+        FrameRef::Group(i) => group_item_layer(spread, spread.groups.get(i)?),
+    })
+}
+
 /// B-18: a container's composed (spread-space) model transform, looked
 /// up by `Self` id across the container-capable kinds.
 fn model_transform_of(spread: &Spread, id: &str) -> Option<[f32; 6]> {
@@ -1711,21 +1725,28 @@ fn write_new_group(
     let Some(self_id) = group.self_id.as_deref() else {
         return Ok(());
     };
-    emit_start_with_attrs(
-        writer,
-        "Group",
-        &[
-            ("Self", self_id.to_string()),
-            (
-                "ItemTransform",
-                format_matrix(
-                    &group
-                        .item_transform
-                        .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-                ),
+    let mut attrs = vec![
+        ("Self", self_id.to_string()),
+        (
+            "ItemTransform",
+            format_matrix(
+                &group
+                    .item_transform
+                    .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
             ),
-        ],
-    )?;
+        ),
+    ];
+    // InDesign keeps a group's members on the GROUP's layer: a `<Group>`
+    // without `ItemLayer` lands on the first layer of the document and
+    // takes its members with it, whatever their own `ItemLayer` says
+    // (measured 2026-09-06: the annual's 94 traced polygons, all on
+    // "Content", sat on "Grid" underneath the page background). The
+    // model has no group layer, so the group takes its members' — the
+    // layer InDesign itself would have put the group on.
+    if let Some(layer) = group_item_layer(spread, group) {
+        attrs.push(("ItemLayer", layer.to_string()));
+    }
+    emit_start_with_attrs(writer, "Group", &attrs)?;
     let accum = compose_opt(ancestor_accum, group.item_transform);
     for &m in &group.members {
         let Some(id) = nested_ref_self_id(spread, m) else {
@@ -5735,6 +5756,56 @@ mod tests {
     /// Count non-overlapping occurrences of `needle` in `hay`.
     fn count(hay: &str, needle: &str) -> usize {
         hay.matches(needle).count()
+    }
+
+    /// InDesign keeps a group's members on the GROUP's layer, and a
+    /// `<Group>` without `ItemLayer` lands on the document's first layer
+    /// (measured 2026-09-06: the annual's traced polygons, every one on
+    /// "Content", sat on "Grid" underneath the page background). A
+    /// minted group therefore names its members' layer.
+    #[test]
+    fn a_minted_group_sits_on_its_members_layer() {
+        let mut spread = grouped();
+        let base = spread.polygons[0].clone();
+        for id in ["u1", "u2"] {
+            let mut p = base.clone();
+            p.self_id = Some(id.to_string());
+            p.item_layer = Some("uContent".to_string());
+            spread.polygons.push(p);
+        }
+        let members = vec![
+            idml_import::FrameRef::Polygon(1),
+            idml_import::FrameRef::Polygon(2),
+        ];
+        spread.groups.push(new_group("gtrace", members, None));
+        let gref = idml_import::FrameRef::Group(spread.groups.len() - 1);
+        spread.frames_in_order.push(gref);
+
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Group Self="gtrace" ItemTransform="1 0 0 1 0 0" ItemLayer="uContent">"#),
+            "{s}"
+        );
+        // Members without a layer leave the group without one too.
+        let mut bare = grouped();
+        let mut p = bare.polygons[0].clone();
+        p.self_id = Some("u3".to_string());
+        p.item_layer = None;
+        bare.polygons.push(p);
+        bare.groups.push(new_group(
+            "gbare",
+            vec![idml_import::FrameRef::Polygon(1)],
+            None,
+        ));
+        let gref = idml_import::FrameRef::Group(bare.groups.len() - 1);
+        bare.frames_in_order.push(gref);
+        let out = rewrite_spread(GROUP_SPREAD, &bare).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Group Self="gbare" ItemTransform="1 0 0 1 0 0">"#),
+            "{s}"
+        );
     }
 
     /// THE PRIME INVARIANT. Every C-19 lane (group triage, the

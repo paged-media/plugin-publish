@@ -80,7 +80,7 @@ fn wraps_of(spread: &Spread) -> HashMap<String, TextWrap> {
     let mut add = |id: Option<&str>, w: Option<&TextWrap>| {
         if let (Some(id), Some(w)) = (id, w) {
             if wraps(w) {
-                out.insert(id.to_string(), w.clone());
+                out.insert(id.to_string(), *w);
             }
         }
     };
