@@ -580,6 +580,17 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         });
                     }
                     b"Table" => {
+                        // A break held from the run before the table is
+                        // a break in THAT run, not in the table's first
+                        // cell — where it used to land: a DOCX table's
+                        // first cell gained a leading newline on every
+                        // round trip (measured 2026-09-06).
+                        if pending_break {
+                            if let Some(run) = current_run.as_mut() {
+                                run.text.push('\n');
+                            }
+                            pending_break = false;
+                        }
                         // Tables nest inside a CharacterStyleRange; the
                         // run that hosts the table is typically
                         // contentless, so we let it pass through as-is.
