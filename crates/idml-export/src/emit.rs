@@ -245,6 +245,10 @@ pub(crate) fn write_paragraphs(
             rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &[])?;
             writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+        } else if p.runs.is_empty() {
+            // The last paragraph, empty: InDesign needs a range to see
+            // a paragraph at all (the spelling its own empty cells use).
+            writer.write_event(Event::Empty(BytesStart::new("CharacterStyleRange")))?;
         }
         writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;
     }

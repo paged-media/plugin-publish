@@ -923,6 +923,10 @@ struct NewItemPaint<'a> {
     /// lost on open (measured 2026-09-05 on the annual: 0 of 1932 items
     /// carried it, 1519 had a layer in the model).
     item_layer: Option<&'a str>,
+    /// The item's drop shadow and effect bag, written with the blending
+    /// setting (see [`crate::effects`]).
+    drop_shadow: Option<&'a idml_import::DropShadowSetting>,
+    effects: Option<&'a idml_import::FrameEffects>,
 }
 
 /// `Option<String>` has no `const` default that can be borrowed inline,
@@ -934,14 +938,6 @@ static NO_COLOR: Option<String> = None;
 /// is applied, so it is both the inserted-item default and what a
 /// CLEARED reference falls back to.
 pub(crate) const NONE_OBJECT_STYLE: &str = "ObjectStyle/$ID/[None]";
-
-impl NewItemPaint<'_> {
-    /// True when the item needs a `<TransparencySetting>` sibling after
-    /// its `<Properties>` block.
-    fn has_transparency(&self) -> bool {
-        self.opacity.is_some() || self.blend_mode.is_some()
-    }
-}
 
 impl Default for NewItemPaint<'_> {
     fn default() -> Self {
@@ -955,6 +951,8 @@ impl Default for NewItemPaint<'_> {
             nonprinting: false,
             applied_object_style: None,
             item_layer: None,
+            drop_shadow: None,
+            effects: None,
         }
     }
 }
@@ -1023,22 +1021,13 @@ fn write_transparency_setting(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     paint: &NewItemPaint<'_>,
 ) -> Result<(), quick_xml::Error> {
-    if !paint.has_transparency() {
-        return Ok(());
-    }
-    writer.write_event(Event::Start(BytesStart::new("TransparencySetting")))?;
-    let mut attrs: Vec<(&str, String)> = Vec::new();
-    if let Some(o) = paint.opacity {
-        attrs.push(("Opacity", format_f32(o)));
-    }
-    if let Some(m) = paint.blend_mode {
-        attrs.push(("BlendMode", m.to_string()));
-    }
-    emit_empty_with_attrs(writer, "BlendingSetting", &attrs)?;
-    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
-        "TransparencySetting",
-    )))?;
-    Ok(())
+    crate::effects::write_transparency(
+        writer,
+        paint.opacity,
+        paint.blend_mode,
+        paint.drop_shadow,
+        paint.effects,
+    )
 }
 
 /// Build a start/empty tag's `BytesStart` from `(key, value)` pairs
@@ -1163,6 +1152,8 @@ fn write_new_text_frame(
         nonprinting: f.nonprinting,
         applied_object_style: f.applied_object_style.as_deref(),
         item_layer: f.item_layer.as_deref(),
+        drop_shadow: f.drop_shadow.as_ref(),
+        effects: f.effects.as_ref(),
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     emit_start_with_attrs(writer, "TextFrame", &attrs)?;
@@ -1575,6 +1566,8 @@ fn write_new_item(
                         nonprinting: rect.nonprinting,
                         applied_object_style: rect.applied_object_style.as_deref(),
                         item_layer: rect.item_layer.as_deref(),
+                        drop_shadow: rect.drop_shadow.as_ref(),
+                        effects: rect.effects.as_ref(),
                     },
                     rect.bounds,
                     spread,
@@ -1598,6 +1591,8 @@ fn write_new_item(
                         nonprinting: o.nonprinting,
                         applied_object_style: o.applied_object_style.as_deref(),
                         item_layer: o.item_layer.as_deref(),
+                        drop_shadow: None,
+                        effects: o.effects.as_ref(),
                     },
                     o.bounds,
                     spread,
@@ -1621,6 +1616,8 @@ fn write_new_item(
                         nonprinting: p.nonprinting,
                         applied_object_style: p.applied_object_style.as_deref(),
                         item_layer: p.item_layer.as_deref(),
+                        drop_shadow: None,
+                        effects: p.effects.as_ref(),
                     },
                     p.bounds,
                     &p.anchors,
@@ -1661,6 +1658,8 @@ fn write_new_item(
                         nonprinting: l.nonprinting,
                         applied_object_style: l.applied_object_style.as_deref(),
                         item_layer: l.item_layer.as_deref(),
+                        drop_shadow: None,
+                        effects: l.effects.as_ref(),
                         ..Default::default()
                     },
                     l.bounds,
@@ -4124,6 +4123,7 @@ pub fn rewrite_story_in_frame(
     // How many story-level `<ParagraphStyleRange>`s the source carries —
     // so the LAST one is recognisable when the model appends paragraphs
     // after it (see the `</ParagraphStyleRange>` arm).
+    let mut mapped_top = 0usize;
     let source_psr_total = {
         let mut r = Reader::from_reader(original);
         r.config_mut().trim_text(false);
@@ -4131,6 +4131,7 @@ pub fn rewrite_story_in_frame(
         let mut depth_t = 0usize;
         let mut n = 0usize;
         loop {
+            let pos = r.buffer_position();
             match r.read_event_into(&mut b)? {
                 Event::Eof => break,
                 Event::Start(ref e) if e.name().as_ref() == b"Table" => depth_t += 1,
@@ -4140,6 +4141,9 @@ pub fn rewrite_story_in_frame(
                 Event::Start(ref e) | Event::Empty(ref e)
                     if depth_t == 0 && e.name().as_ref() == b"ParagraphStyleRange" =>
                 {
+                    if provenance.paragraph_at(pos).is_some() {
+                        mapped_top += 1;
+                    }
                     n += 1
                 }
                 _ => {}
@@ -4148,6 +4152,18 @@ pub fn rewrite_story_in_frame(
         }
         n
     };
+    // The model has FEWER story-level paragraphs than the part maps: a
+    // paragraph was deleted since the part was written, or the part
+    // carries empty ranges an older parser dropped and the model never
+    // held (the annual's captioned tables sat a blank line lower in
+    // InDesign than on the canvas). Positional patching cannot say which
+    // range went; the model is the truth, so the part is written fresh.
+    // (A minted story does not serialise footnotes yet, so a story that
+    // carries some keeps the positional lane rather than lose them.)
+    let has_footnotes = story.paragraphs.iter().any(|p| !p.footnotes.is_empty());
+    if provenance_ok && mapped_top > story.paragraphs.len() && !has_footnotes {
+        return fresh_story_part(original, story, host_width);
+    }
 
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
@@ -4930,6 +4946,43 @@ pub(crate) fn write_run_content(
 
 /// The model paragraph the `<ParagraphStyleRange>` at `pos` produced,
 /// within `scope` (the story's paragraph list, or a cell's).
+/// The story part written from the model alone, keeping the source's
+/// `Self`, `DOMVersion` and inline text-destination markers.
+fn fresh_story_part(
+    original: &[u8],
+    story: &Story,
+    host_width: Option<f32>,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let mut r = Reader::from_reader(original);
+    r.config_mut().trim_text(false);
+    let mut b = Vec::new();
+    let mut self_id: Option<String> = None;
+    let mut dom_version: Option<String> = None;
+    loop {
+        match r.read_event_into(&mut b)? {
+            Event::Eof => break,
+            Event::Start(ref e) | Event::Empty(ref e) => match e.name().as_ref() {
+                b"idPkg:Story" => dom_version = attr_value(e, b"DOMVersion"),
+                b"Story" => {
+                    self_id = attr_value(e, b"Self");
+                    break;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        b.clear();
+    }
+    let anchors = idml_import::story_text_anchors(original).unwrap_or_default();
+    crate::emit::story_part(
+        self_id.as_deref().unwrap_or("Story_u0"),
+        story,
+        dom_version.as_deref().unwrap_or("20.0"),
+        &anchors,
+        host_width,
+    )
+}
+
 pub(crate) fn resolve_paragraph<'a>(
     provenance: &idml_import::StoryProvenance,
     pos: u64,
@@ -4958,12 +5011,9 @@ fn paragraph_is_empty(p: &Paragraph) -> bool {
 /// never met their runs. Counting only the paragraphs the parser would
 /// have kept puts the two spaces back in step.
 fn model_paragraph_index(scope: &[Paragraph], parse_index: usize) -> Option<usize> {
-    scope
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| !paragraph_is_empty(p))
-        .nth(parse_index)
-        .map(|(i, _)| i)
+    // The parser keeps every range that had a child (an empty line is a
+    // paragraph), so parse space IS model space.
+    (parse_index < scope.len()).then_some(parse_index)
 }
 
 /// The model run the `<CharacterStyleRange>` at `pos` produced inside
@@ -5357,6 +5407,29 @@ pub(crate) fn unformatted_xref_sources(story: &[u8]) -> Result<usize, quick_xml:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_story_with_fewer_paragraphs_than_its_part_is_written_fresh() {
+        // The part carries an empty range the model never held (an
+        // older parser dropped it): InDesign showed a blank line the
+        // canvas did not. The model is the truth; the part is rewritten
+        // from it, Self and DOMVersion kept.
+        let src = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0"><Story Self="Story_u9"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Caption"><CharacterStyleRange><Content>Caption</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>Body</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(story.paragraphs.len(), 3, "the empty range is a paragraph");
+        assert_eq!(
+            rewrite_story(src, &story).unwrap(),
+            src.to_vec(),
+            "unchanged: byte-identical"
+        );
+        story.paragraphs.remove(1);
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Story Self="Story_u9"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Caption"><CharacterStyleRange><Content>Caption</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>Body</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#),
+            "{out}"
+        );
+        assert!(out.contains(r#"DOMVersion="20.0""#), "{out}");
+    }
 
     #[test]
     fn paragraph_overrides_are_patched_onto_the_range() {

@@ -167,7 +167,9 @@ fn a_table_in_a_minted_story_is_written_and_reads_back() {
         xml.contains(r#"Name="2:1" RowSpan="1" ColumnSpan="1" CellType="TextTypeCell" TextTopInset="4" TextLeftInset="4" TextBottomInset="4" TextRightInset="4" AppliedCellStyle="CellStyle/$ID/[None]"><ParagraphStyleRange><CharacterStyleRange/></ParagraphStyleRange></Cell>"#),
         "{xml}"
     );
-    assert!(t.cells[5].paragraphs.is_empty());
+    // … as InDesign's own empty cell: one paragraph, no runs.
+    assert_eq!(t.cells[5].paragraphs.len(), 1);
+    assert!(t.cells[5].paragraphs[0].runs.is_empty());
     assert_eq!(t.cells[1].text_top_inset, 4.0);
     assert_eq!(t.columns[1].single_column_width, Some(61.0));
     assert_eq!(t.rows[1].single_row_height, Some(18.5));

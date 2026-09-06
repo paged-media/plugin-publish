@@ -225,6 +225,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // popped on End, so it needs no parking in the table / footnote
     // context frames — the XML nesting IS the stack.
     let mut open_paragraphs: Vec<u64> = Vec::new();
+    // Per open `<ParagraphStyleRange>`: how many `<CharacterStyleRange>`
+    // children it had. A range with one is a paragraph to InDesign even
+    // when no text came out of it — an empty line — and stays one here
+    // (measured 2026-09-06: the annual's chart tables sat three blank
+    // lines lower in InDesign than on the canvas, which had dropped the
+    // empty ranges and composed the table at the top).
+    let mut psr_ranges: Vec<usize> = Vec::new();
     let mut open_ranges: Vec<OpenRange> = Vec::new();
 
     let mut out = Story::default();
@@ -525,6 +532,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     }
                     b"ParagraphStyleRange" => {
                         open_paragraphs.push(event_pos);
+                        psr_ranges.push(0);
                         current_paragraph = Some(Paragraph {
                             paragraph_style: attr(&e, b"AppliedParagraphStyle"),
                             justification: attr(&e, b"Justification")
@@ -806,6 +814,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         }
                     }
                     b"CharacterStyleRange" => {
+                        if let Some(c) = psr_ranges.last_mut() {
+                            *c += 1;
+                        }
                         open_ranges.push(OpenRange {
                             pos: event_pos,
                             first: None,
@@ -1112,11 +1123,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         // paragraph, it is not text inside it.
                         pending_break = false;
                         let open = open_paragraphs.pop();
+                        let had_range = psr_ranges.pop().unwrap_or(0) > 0;
                         if let Some(para) = current_paragraph.take() {
-                            // Keep paragraphs that have either a
-                            // shaped run or a hosted table; drop
-                            // truly empty ones.
-                            if !para.runs.is_empty() || para.table.is_some() {
+                            // Keep paragraphs that have a run, a table,
+                            // or at least one range (an empty line);
+                            // a range with nothing in it at all is not
+                            // a paragraph to InDesign either.
+                            if !para.runs.is_empty() || para.table.is_some() || had_range {
                                 // Route by parser nesting: footnote
                                 // wins over cell wins over story root.
                                 // The footnote check has to come
@@ -1201,6 +1214,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
             Event::Empty(e) => {
                 let n = e.name();
                 let name = n.as_ref();
+                if name == b"CharacterStyleRange" {
+                    if let Some(c) = psr_ranges.last_mut() {
+                        *c += 1;
+                    }
+                }
                 // Anchored-frame self-closing forms. These never
                 // visit the End arm so attribute capture must
                 // happen inline; nested self-closing frames push
@@ -1726,6 +1744,30 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_empty_range_is_a_paragraph() {
+        // InDesign shows a blank line for `<ParagraphStyleRange>
+        // <CharacterStyleRange><Br/></CharacterStyleRange></…>`; the
+        // model keeps it as a paragraph with no runs, so the engine
+        // advances a line for it as InDesign does.
+        let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/A"><CharacterStyleRange><Content>one</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/B"><CharacterStyleRange><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content></Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange/><ParagraphStyleRange><CharacterStyleRange><Content>two</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let (story, prov) = super::parse_story_with_provenance(xml).unwrap();
+        let texts: Vec<String> = story
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+            .collect();
+        assert_eq!(texts, vec!["one", "", "", "two"], "{texts:?}");
+        assert_eq!(
+            story.paragraphs[1].paragraph_style.as_deref(),
+            Some("ParagraphStyle/B")
+        );
+        let mapped = (0..xml.len() as u64)
+            .filter(|p| prov.paragraph_at(*p).is_some())
+            .count();
+        assert_eq!(mapped, 4, "every kept paragraph has a provenance entry");
+    }
+
     #[test]
     fn indesign_record_form_tab_list_reaches_the_paragraph() {
         // InDesign 20.0.1's own spelling (corpus packs, 2026-09-06): a

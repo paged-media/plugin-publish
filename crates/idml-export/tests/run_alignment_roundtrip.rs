@@ -205,20 +205,22 @@ fn a_table_only_range_keeps_its_own_character_attributes() {
     );
 }
 
-/// The same misalignment one level up, INSIDE a cell: the cell's first
-/// paragraph range is textless, so the parser drops it and the cell's
-/// second range is its FIRST model paragraph. Counting sent that range
-/// to `cell.paragraphs[1]`, which does not exist, and the writer resolved
-/// the miss as "no style" — deleting `AppliedParagraphStyle`.
+/// The same alignment one level up, INSIDE a cell: the cell's first
+/// paragraph range is textless — an empty paragraph, kept as one since
+/// 2026-09-06 (InDesign shows the blank line) — and the cell's second
+/// range is its SECOND model paragraph. Counting used to send that range
+/// to a paragraph that did not exist, and the writer resolved the miss
+/// as "no style" — deleting `AppliedParagraphStyle`.
 #[test]
 fn a_cell_paragraph_range_keeps_its_applied_style() {
     let story = idml_import::parse_story(TABLE_ONLY_RANGE).expect("parse");
     let table = story.paragraphs[0].table.as_ref().expect("table");
     assert_eq!(
         table.cells[0].paragraphs.len(),
-        1,
-        "premise: two range elements in the cell, one model paragraph"
+        2,
+        "premise: two range elements in the cell, two model paragraphs (the first empty)"
     );
+    assert!(table.cells[0].paragraphs[0].runs.is_empty());
 
     let xml = round_trip(TABLE_ONLY_RANGE);
     assert_eq!(
@@ -277,13 +279,14 @@ fn a_self_closing_empty_range_does_not_shift_the_ranges_after_it() {
 // ---------------------------------------------------------------------
 
 #[test]
-fn premise_an_empty_story_parses_to_no_paragraphs_at_all() {
+fn premise_an_empty_story_parses_to_one_empty_paragraph() {
     let story = idml_import::parse_story(EMPTY_STORY).expect("parse");
-    assert!(
-        story.paragraphs.is_empty(),
-        "the runless paragraph is dropped, so there is no model paragraph \
-         for the source's range to align with"
+    assert_eq!(
+        story.paragraphs.len(),
+        1,
+        "the runless range is a paragraph (InDesign shows the blank line)"
     );
+    assert!(story.paragraphs[0].runs.is_empty());
 }
 
 /// THE DEFECT, at its bluntest: "no model paragraph aligns here" is not
@@ -372,7 +375,9 @@ fn an_edit_to_the_aligned_run_still_saves() {
 fn an_edit_to_a_cell_run_still_saves() {
     let mut story = idml_import::parse_story(TABLE_ONLY_RANGE).expect("parse");
     let table = story.paragraphs[0].table.as_mut().expect("table");
-    table.cells[0].paragraphs[0].runs[0].point_size = Some(6.5);
+    // The cell's first paragraph is the empty range; the run lives in
+    // the second.
+    table.cells[0].paragraphs[1].runs[0].point_size = Some(6.5);
     let out = rewrite_story(TABLE_ONLY_RANGE, &story).expect("rewrite");
     let xml = String::from_utf8(out).expect("utf8");
     assert_eq!(

@@ -12,12 +12,13 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-//! The story parser drops a paragraph with neither a run nor a table; a
-//! model that came from the native part keeps it. The provenance map
-//! counts in parse space, so every source range after such a paragraph
-//! used to be patched against the model paragraph BEFORE the one it
-//! came from — the annual's DOCX-lowered story shifted its whole tail
-//! by one on save, and the two hyperlinks in it never met their runs.
+//! An empty range is a paragraph: InDesign shows a blank line for
+//! `<ParagraphStyleRange><CharacterStyleRange><Br/></…>`, so the parser
+//! keeps it (it used to drop it, and a model from the native part that
+//! kept it then patched every range after it against the wrong
+//! paragraph — the annual's DOCX-lowered story shifted its whole tail by
+//! one on save). Parse space is model space now; a model with FEWER
+//! paragraphs than its part maps is written fresh.
 
 #[path = "support/pkg.rs"]
 mod pkg;
@@ -28,17 +29,11 @@ use idml_import::Paragraph;
 const BODY: &str = r#"<ParagraphStyleRange><CharacterStyleRange><Content>Alpha</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>Gamma</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>Delta</Content></CharacterStyleRange></ParagraphStyleRange>"#;
 
 #[test]
-fn an_empty_model_paragraph_does_not_shift_the_ranges_after_it() {
+fn an_empty_range_is_a_paragraph_and_the_ranges_after_it_stay_aligned() {
     let source = pkg::simple("", BODY, pkg::STYLES);
     let mut doc = pkg::open(&source);
-    // The parser dropped the empty paragraph: 3 paragraphs.
-    assert_eq!(doc.stories[0].story.paragraphs.len(), 3);
-    // The native model keeps it: put it back, then edit the LAST paragraph.
-    doc.stories[0]
-        .story
-        .paragraphs
-        .insert(1, Paragraph::default());
     assert_eq!(doc.stories[0].story.paragraphs.len(), 4);
+    assert!(doc.stories[0].story.paragraphs[1].runs.is_empty());
     doc.stories[0].story.paragraphs[3].runs[0].text = "Delta edited".into();
 
     let out = write_idml(&doc, &source).expect("write");
@@ -59,16 +54,29 @@ fn an_empty_model_paragraph_does_not_shift_the_ranges_after_it() {
         .iter()
         .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect())
         .collect();
-    assert_eq!(texts, vec!["Alpha", "Gamma", "Delta edited"]);
+    assert_eq!(texts, vec!["Alpha", "", "Gamma", "Delta edited"]);
 }
 
 #[test]
-fn the_unmutated_story_with_an_empty_model_paragraph_is_byte_identical() {
+fn the_unmutated_story_with_an_empty_range_is_byte_identical() {
+    let source = pkg::simple("", BODY, pkg::STYLES);
+    let doc = pkg::open(&source);
+    pkg::assert_same_package(&source, &write_idml(&doc, &source).expect("write"));
+}
+
+#[test]
+fn a_model_that_lost_a_paragraph_rewrites_its_part_from_the_model() {
     let source = pkg::simple("", BODY, pkg::STYLES);
     let mut doc = pkg::open(&source);
-    doc.stories[0]
+    doc.stories[0].story.paragraphs.remove(1);
+    let out = write_idml(&doc, &source).expect("write");
+    let re = pkg::open(&out);
+    let texts: Vec<String> = re.stories[0]
         .story
         .paragraphs
-        .insert(1, Paragraph::default());
-    pkg::assert_same_package(&source, &write_idml(&doc, &source).expect("write"));
+        .iter()
+        .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect())
+        .collect();
+    assert_eq!(texts, vec!["Alpha", "Gamma", "Delta"]);
+    let _ = Paragraph::default();
 }
