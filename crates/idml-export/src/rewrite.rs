@@ -5003,8 +5003,9 @@ fn flush_run_body(
     Ok(())
 }
 
-/// Serialise a run's text body back into IDML `<Content>` / `<Br/>` /
-/// `<Tab/>` structure, byte-for-byte matching `paged_gen`'s emitter so
+/// Serialise a run's text body back into IDML `<Content>` / `<Br/>`
+/// structure (a tab stays a literal U+0009 inside `<Content>`, as
+/// InDesign writes it), byte-for-byte matching `paged_gen`'s emitter so
 /// a saved edit re-parses to the same model. Empty text emits an empty
 /// `<Content></Content>` (the IDML form for a zero-length run).
 pub(crate) fn write_run_content(
@@ -5029,12 +5030,15 @@ pub(crate) fn write_run_content(
         return Ok(());
     }
     let mut buf = String::new();
+    // A tab is a literal U+0009 inside `<Content>` — that is how InDesign
+    // writes one (measured 2026-09-06: `<Content>Largest single run
+    // (Q4)\t2,390 copies</Content>`). The `<Tab/>` element this used to
+    // emit was a private spelling InDesign ignores, so every tab in the
+    // annual's manuscript composed as nothing and its columns glued
+    // together ("Largest single run (Q4)2,390 copies"). The reader keeps
+    // accepting `<Tab/>` for parts written before this.
     for ch in text.chars() {
         match ch {
-            '\t' => {
-                flush(writer, &mut buf)?;
-                writer.write_event(Event::Empty(BytesStart::new("Tab")))?;
-            }
             '\n' => {
                 flush(writer, &mut buf)?;
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
@@ -5805,6 +5809,22 @@ mod tests {
         assert!(
             s.contains(r#"<Group Self="gbare" ItemTransform="1 0 0 1 0 0">"#),
             "{s}"
+        );
+    }
+
+    /// A tab is a literal U+0009 inside `<Content>` — InDesign's own
+    /// spelling (measured 2026-09-06). The `<Tab/>` element we used to
+    /// write was a private form InDesign ignores, gluing "Largest single
+    /// run (Q4)" to "2,390 copies" on the annual's page 117.
+    #[test]
+    fn a_tab_is_a_literal_character_inside_content() {
+        let mut w = Writer::new(Cursor::new(Vec::new()));
+        write_run_content(&mut w, "Largest single run (Q4)\t2,390 copies\nSpoilage")
+            .expect("write");
+        let s = String::from_utf8(w.into_inner().into_inner()).unwrap();
+        assert_eq!(
+            s,
+            "<Content>Largest single run (Q4)\t2,390 copies</Content><Br/><Content>Spoilage</Content>"
         );
     }
 
