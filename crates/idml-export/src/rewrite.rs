@@ -4741,6 +4741,7 @@ pub fn rewrite_story_in_frame(
                         body.active = true;
                         body.text.push('\t');
                         body.ends_with_br = false;
+                        body.has_tab_leaf = true;
                         body.events.push(Event::Empty(e.into_owned()));
                     }
                     _ => {
@@ -5074,6 +5075,14 @@ struct RunBody {
     /// text, and the comparison in [`flush_run_body`] must not read it
     /// as a difference.
     ends_with_br: bool,
+    /// The body carried a `<Tab/>` element — the PRIVATE spelling this
+    /// codebase used to write for a tab. InDesign ignores it entirely
+    /// (measured 2026-09-06: its own export writes a literal U+0009
+    /// inside `<Content>`), so a body that still carries one is
+    /// re-serialised even when its text is unchanged. Files written
+    /// before the fix are corrected as they pass through instead of
+    /// keeping a spelling the reference cannot read.
+    has_tab_leaf: bool,
 }
 
 /// Append one decoded `<Content>` fragment to a run's reconstructed
@@ -5172,7 +5181,9 @@ fn flush_run_body(
     // wrapped twice.
     let needs_wrap = wrap_source && run.is_some_and(|r| r.hyperlink_source.is_some());
     let replace = match run {
-        Some(r) => (model_text(r) != source_text || needs_wrap) && !body.foreign,
+        Some(r) => {
+            (model_text(r) != source_text || needs_wrap || body.has_tab_leaf) && !body.foreign
+        }
         None => false,
     };
     if replace {
@@ -5208,6 +5219,7 @@ fn flush_run_body(
     body.active = false;
     body.in_content = false;
     body.ends_with_br = false;
+    body.has_tab_leaf = false;
     body.events.clear();
     Ok(())
 }
