@@ -79,6 +79,7 @@ use paged_scene::{Document, ParsedStory};
 pub mod based_on;
 pub mod cell_insets;
 pub mod dangling;
+mod effects;
 mod emit;
 pub mod face;
 pub mod fonts;
