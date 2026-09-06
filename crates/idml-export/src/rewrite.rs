@@ -4124,29 +4124,60 @@ pub fn rewrite_story_in_frame(
     // so the LAST one is recognisable when the model appends paragraphs
     // after it (see the `</ParagraphStyleRange>` arm).
     let mut mapped_top = 0usize;
+    // Story-level ranges with nothing in them at all — `<ParagraphStyleRange/>`
+    // or a start tag followed by its end tag. Not a paragraph to InDesign,
+    // not one to the parser: dropped rather than passed through. An older
+    // emitter left one where a table failed to serialise, and the trailing
+    // mark then landed inside it as an empty line above every captioned
+    // table in the annual (2026-09-06).
+    let mut childless: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let source_psr_total = {
         let mut r = Reader::from_reader(original);
         r.config_mut().trim_text(false);
         let mut b = Vec::new();
         let mut depth_t = 0usize;
         let mut n = 0usize;
+        let mut open_psr: Option<u64> = None;
         loop {
             let pos = r.buffer_position();
             match r.read_event_into(&mut b)? {
                 Event::Eof => break,
-                Event::Start(ref e) if e.name().as_ref() == b"Table" => depth_t += 1,
-                Event::End(ref e) if e.name().as_ref() == b"Table" => {
-                    depth_t = depth_t.saturating_sub(1)
+                Event::Start(ref e) if e.name().as_ref() == b"Table" => {
+                    depth_t += 1;
+                    open_psr = None;
                 }
-                Event::Start(ref e) | Event::Empty(ref e)
+                Event::End(ref e) if e.name().as_ref() == b"Table" => {
+                    depth_t = depth_t.saturating_sub(1);
+                    open_psr = None;
+                }
+                Event::Start(ref e)
                     if depth_t == 0 && e.name().as_ref() == b"ParagraphStyleRange" =>
                 {
                     if provenance.paragraph_at(pos).is_some() {
                         mapped_top += 1;
                     }
-                    n += 1
+                    n += 1;
+                    open_psr = Some(pos);
                 }
-                _ => {}
+                Event::Empty(ref e)
+                    if depth_t == 0 && e.name().as_ref() == b"ParagraphStyleRange" =>
+                {
+                    if provenance.paragraph_at(pos).is_some() {
+                        mapped_top += 1;
+                    }
+                    n += 1;
+                    childless.insert(pos);
+                    open_psr = None;
+                }
+                Event::End(ref e)
+                    if depth_t == 0 && e.name().as_ref() == b"ParagraphStyleRange" =>
+                {
+                    if let Some(start) = open_psr.take() {
+                        childless.insert(start);
+                    }
+                }
+                Event::Text(ref t) if t.iter().all(|c| c.is_ascii_whitespace()) => {}
+                _ => open_psr = None,
             }
             b.clear();
         }
@@ -4219,6 +4250,8 @@ pub fn rewrite_story_in_frame(
     // end) and are written whole at `</Story>`.
     let mut max_story_para: Option<usize> = None;
     let mut source_psr_seen = 0usize;
+    // Inside a childless story-level range being dropped (see `childless`).
+    let mut skip_psr = false;
     // Whether the open story-level range carried a `<Table>` — a model
     // paragraph with a table the source range lacks gets it at the
     // range's close.
@@ -4316,7 +4349,6 @@ pub fn rewrite_story_in_frame(
                         writer.write_event(Event::Start(e.into_owned()))?;
                     }
                     b"ParagraphStyleRange" if table_depth == 0 => {
-                        prev_ended_with_br = false;
                         run_offset = 0;
                         table_in_para = false;
                         source_psr_seen += 1;
@@ -4328,7 +4360,14 @@ pub fn rewrite_story_in_frame(
                         }
                         story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
                         let start = patch_paragraph_range(&e, story_para)?;
-                        writer.write_event(Event::Start(start))?;
+                        if childless.contains(&event_pos) {
+                            // Dropped; the paragraph before it keeps its
+                            // mark state for the trailing-content rule.
+                            skip_psr = true;
+                        } else {
+                            prev_ended_with_br = false;
+                            writer.write_event(Event::Start(start))?;
+                        }
                     }
                     b"ParagraphStyleRange" if in_cell => {
                         prev_ended_with_br = false;
@@ -4403,7 +4442,9 @@ pub fn rewrite_story_in_frame(
                 // still advances the positional cursor + patches attrs.
                 match e.name().as_ref() {
                     b"ParagraphStyleRange" if table_depth == 0 => {
-                        prev_ended_with_br = false;
+                        if !childless.contains(&event_pos) {
+                            prev_ended_with_br = false;
+                        }
                         run_offset = 0;
                         source_psr_seen += 1;
                         if let Some(i) = provenance
@@ -4419,7 +4460,9 @@ pub fn rewrite_story_in_frame(
                         // resolves against the right scope.
                         story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
                         let start = patch_paragraph_range(&e, story_para)?;
-                        writer.write_event(Event::Empty(start))?;
+                        if !childless.contains(&event_pos) {
+                            writer.write_event(Event::Empty(start))?;
+                        }
                     }
                     b"ParagraphStyleRange" if in_cell => {
                         prev_ended_with_br = false;
@@ -4484,6 +4527,11 @@ pub fn rewrite_story_in_frame(
                 }
             }
             Event::Text(t) => {
+                if skip_psr {
+                    // Whitespace inside a dropped childless range.
+                    buf.clear();
+                    continue;
+                }
                 if body.active && body.in_content {
                     // Buffer — the replace decision happens at the run
                     // close once the whole (possibly entity-split) span
@@ -4525,6 +4573,7 @@ pub fn rewrite_story_in_frame(
                 }
             }
             Event::End(e) => {
+                let mut drop_this_end = false;
                 // Inside a footnote every End buffers into the host run
                 // (foreign) so the subtree replays verbatim; the matching
                 // `</Footnote>` (when depth returns to 0) restores normal
@@ -4650,6 +4699,36 @@ pub fn rewrite_story_in_frame(
                     b"HyperlinkTextSource" | b"CrossReferenceSource" if !csr_open => {
                         open_sources = open_sources.saturating_sub(1);
                     }
+                    b"ParagraphStyleRange" if table_depth == 0 && skip_psr => {
+                        skip_psr = false;
+                        drop_this_end = true;
+                        let trailing_from = max_story_para.map_or(0, |m| m + 1);
+                        let trailing_content = story
+                            .paragraphs
+                            .get(trailing_from..)
+                            .is_some_and(|t| t.iter().any(|p| !paragraph_is_empty(p)));
+                        if provenance_ok
+                            && source_psr_seen == source_psr_total
+                            && trailing_content
+                            && !prev_ended_with_br
+                        {
+                            // The paragraph before the dropped range never
+                            // ended, and text follows: it gets its mark in
+                            // a range of its own (an empty line, the price
+                            // of a source that lost one).
+                            emit_start_with_attrs(&mut writer, "ParagraphStyleRange", &[])?;
+                            emit_start_with_attrs(&mut writer, "CharacterStyleRange", &[])?;
+                            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+                            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                                "CharacterStyleRange",
+                            )))?;
+                            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                                "ParagraphStyleRange",
+                            )))?;
+                            prev_ended_with_br = true;
+                        }
+                        table_in_para = false;
+                    }
                     b"ParagraphStyleRange" if table_depth == 0 => {
                         // A table the model holds on this paragraph and the
                         // source range does not carry: written here, in the
@@ -4713,7 +4792,9 @@ pub fn rewrite_story_in_frame(
                     }
                     _ => {}
                 }
-                writer.write_event(Event::End(e))?;
+                if !drop_this_end {
+                    writer.write_event(Event::End(e))?;
+                }
             }
             other => {
                 if body.active {
@@ -5407,6 +5488,32 @@ pub(crate) fn unformatted_xref_sources(story: &[u8]) -> Result<usize, quick_xml:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_childless_range_is_dropped_and_the_appended_table_follows_the_caption() {
+        // An older emitter wrote the table paragraph as an empty range;
+        // the appended table used to land after a mark injected into
+        // that range — an empty line above every captioned table.
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Caption"><CharacterStyleRange><Content>Caption</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(story.paragraphs.len(), 1);
+        story.paragraphs.push(Paragraph {
+            table: Some(idml_import::Table {
+                self_id: Some("t".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Content>Caption</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Table Self="t""#),
+            "{out}"
+        );
+        assert!(
+            !out.contains("<ParagraphStyleRange></ParagraphStyleRange>"),
+            "{out}"
+        );
+    }
 
     #[test]
     fn a_story_with_fewer_paragraphs_than_its_part_is_written_fresh() {
