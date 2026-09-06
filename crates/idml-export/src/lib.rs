@@ -95,6 +95,7 @@ pub mod rewrite;
 mod style_attrs;
 pub mod text_frame_prefs;
 pub mod text_wrap;
+pub mod transparency;
 
 /// The `Self` of the one `<CrossReferenceFormat>` the exporter emits for
 /// cross-reference sources that name none (InDesign drops those).
@@ -422,6 +423,13 @@ pub(crate) fn write_package(
                     source,
                 }
             })?;
+            let new =
+                transparency::rewrite_transparency(&new, &spread.spread).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: spread.src.clone(),
+                        source,
+                    }
+                })?;
             if new != orig.as_slice() {
                 patched.insert(spread.src.clone(), new);
             }
@@ -445,6 +453,13 @@ pub(crate) fn write_package(
                     source,
                 }
             })?;
+            let body =
+                transparency::rewrite_transparency(&body, &spread.spread).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: spread.src.clone(),
+                        source,
+                    }
+                })?;
             let anchor = doc.spreads[..i]
                 .iter()
                 .rev()
