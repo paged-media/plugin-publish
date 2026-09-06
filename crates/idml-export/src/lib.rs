@@ -827,12 +827,11 @@ pub(crate) fn write_package(
                 entry: STYLES_SRC.to_string(),
                 source,
             })?;
-        let new = resources::patch_styles(&stripped, &doc.styles).map_err(|source| {
-            WriteError::Rewrite {
+        let new = resources::patch_styles_with(&stripped, &doc.styles, opts.default_face.is_some())
+            .map_err(|source| WriteError::Rewrite {
                 entry: STYLES_SRC.to_string(),
                 source,
-            }
-        })?;
+            })?;
         // … and every paragraph style that names a font spells its
         // face (see [`face`]).
         let new =

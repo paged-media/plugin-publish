@@ -502,7 +502,55 @@ fn scan_styles(original: &[u8]) -> Result<StylesLayout, quick_xml::Error> {
 ///
 /// "New" means absent from the WHOLE part, not merely unseen so far —
 /// see [`StylesLayout`].
+/// InDesign's `[Basic Paragraph]` — `ParagraphStyle/$ID/NormalParagraphStyle`
+/// — is what a range with no `AppliedParagraphStyle` composes in, and
+/// it is the app's own Minion Pro 12 pt unless the part defines it (the
+/// `<TextDefault>` face does not govern it; measured 2026-09-06 on
+/// InDesign 20.0.1). The engine composes such a range with the
+/// `[No paragraph style]` cascade, so when neither the part nor the
+/// model defines the basic style, one is written that says what
+/// `[No paragraph style]` says, based on it as InDesign's own is.
+const BASIC_PARAGRAPH: &str = "ParagraphStyle/$ID/NormalParagraphStyle";
+const NO_PARAGRAPH_STYLE: &str = "ParagraphStyle/$ID/[No paragraph style]";
+
+fn basic_paragraph_stand_in(
+    styles: &StyleSheet,
+    defined: &std::collections::HashSet<String>,
+) -> Option<ParagraphStyleDef> {
+    if defined.contains(BASIC_PARAGRAPH) || styles.paragraph_styles.contains_key(BASIC_PARAGRAPH) {
+        return None;
+    }
+    let root = styles.paragraph_styles.get(NO_PARAGRAPH_STYLE)?;
+    // Only a document that says what style-less text looks like (a root
+    // style naming a face) gets the stand-in; a part that leaves the
+    // root bare keeps its bytes.
+    root.font.as_ref()?;
+    Some(ParagraphStyleDef {
+        self_id: BASIC_PARAGRAPH.to_string(),
+        name: Some("$ID/NormalParagraphStyle".to_string()),
+        based_on: Some(NO_PARAGRAPH_STYLE.to_string()),
+        font: root.font.clone(),
+        font_style: root.font_style.clone(),
+        point_size: root.point_size,
+        leading: root.leading,
+        fill_color: root.fill_color.clone(),
+        ..Default::default()
+    })
+}
+
 pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, quick_xml::Error> {
+    patch_styles_with(original, styles, false)
+}
+
+/// [`patch_styles`], and — when `basic_paragraph` — the `[Basic Paragraph]`
+/// stand-in a document composed with a default face needs (see
+/// [`basic_paragraph_stand_in`]); an unmutated part stays byte-identical
+/// without it.
+pub fn patch_styles_with(
+    original: &[u8],
+    styles: &StyleSheet,
+    basic_paragraph: bool,
+) -> Result<Vec<u8>, quick_xml::Error> {
     let layout = scan_styles(original)?;
 
     let mut reader = Reader::from_reader(original);
@@ -623,6 +671,11 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                         write_paragraph_style(&mut writer, s)?;
                     }
                 }
+                if let Some(basic) =
+                    basic_paragraph_stand_in(styles, &layout.para).filter(|_| basic_paragraph)
+                {
+                    write_paragraph_style(&mut writer, &basic)?;
+                }
                 para_group_closed = true;
                 writer.write_event(ev.borrow())?;
             }
@@ -654,6 +707,11 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                         if !layout.para.contains(&s.self_id) {
                             write_paragraph_style(&mut writer, s)?;
                         }
+                    }
+                    if let Some(basic) =
+                        basic_paragraph_stand_in(styles, &layout.para).filter(|_| basic_paragraph)
+                    {
+                        write_paragraph_style(&mut writer, &basic)?;
                     }
                 }
                 if !char_group_closed {
@@ -910,6 +968,29 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn the_basic_paragraph_style_is_defined_after_no_paragraph_style() {
+        let src = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]" Name="$ID/[No paragraph style]" PointSize="12" FontStyle="Regular"><Properties><AppliedFont type="string">Open Sans</AppliedFont></Properties></ParagraphStyle></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let styles = idml_import::parse_stylesheet(src).unwrap();
+        assert_eq!(
+            patch_styles(src, &styles).unwrap(),
+            src.to_vec(),
+            "not asked for: byte-identical"
+        );
+        let out = String::from_utf8(patch_styles_with(src, &styles, true).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyle Self="ParagraphStyle/$ID/NormalParagraphStyle" Name="$ID/NormalParagraphStyle" FontStyle="Regular" PointSize="12"><Properties><BasedOn type="object">ParagraphStyle/$ID/[No paragraph style]</BasedOn><AppliedFont type="string">Open Sans</AppliedFont></Properties></ParagraphStyle></RootParagraphStyleGroup>"#),
+            "{out}"
+        );
+        // A part that defines it keeps its own.
+        let src2 = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]" Name="$ID/[No paragraph style]"/><ParagraphStyle Self="ParagraphStyle/$ID/NormalParagraphStyle" Name="$ID/NormalParagraphStyle" PointSize="9"/></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let styles2 = idml_import::parse_stylesheet(src2).unwrap();
+        assert_eq!(
+            patch_styles_with(src2, &styles2, true).unwrap(),
+            src2.to_vec()
+        );
+    }
 
     #[test]
     fn an_edited_style_is_re_dressed_in_place() {

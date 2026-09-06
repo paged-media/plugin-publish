@@ -589,16 +589,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     }
                     b"Table" => {
                         // A break held from the run before the table is
-                        // a break in THAT run, not in the table's first
-                        // cell — where it used to land: a DOCX table's
-                        // first cell gained a leading newline on every
-                        // round trip (measured 2026-09-06).
-                        if pending_break {
-                            if let Some(run) = current_run.as_mut() {
-                                run.text.push('\n');
-                            }
-                            pending_break = false;
-                        }
+                        // the seam between the text and the table — the
+                        // model's "runs, then table" paragraph — not text
+                        // in the run, and not the first cell's either
+                        // (where it used to land: a DOCX table's first
+                        // cell gained a leading newline on every round
+                        // trip, measured 2026-09-06).
+                        pending_break = false;
                         // Tables nest inside a CharacterStyleRange; the
                         // run that hosts the table is typically
                         // contentless, so we let it pass through as-is.
@@ -1744,6 +1741,16 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_break_between_text_and_a_table_is_neither_runs_nor_cells() {
+        let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>Lead</Content><Br/></CharacterStyleRange><CharacterStyleRange><Table Self="t" HeaderRowCount="0" FooterRowCount="0" BodyRowCount="1" ColumnCount="1"><Row Self="tRow0" Name="0" SingleRowHeight="20"/><Column Self="tColumn0" Name="0" SingleColumnWidth="100"/><Cell Self="ti0" Name="0:0" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>Cell</Content></CharacterStyleRange></ParagraphStyleRange></Cell></Table></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let story = super::parse_story(xml).unwrap();
+        let p = &story.paragraphs[0];
+        assert_eq!(p.runs[0].text, "Lead");
+        let t = p.table.as_ref().unwrap();
+        assert_eq!(t.cells[0].paragraphs[0].runs[0].text, "Cell");
+    }
+
     #[test]
     fn an_empty_range_is_a_paragraph() {
         // InDesign shows a blank line for `<ParagraphStyleRange>
