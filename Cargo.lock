@@ -161,6 +161,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 name = "idml-export"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "idml-import",
  "paged-scene",
  "quick-xml",
@@ -237,7 +238,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "paged-composition"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=115236e71ed999b12c792fb13df85ff762ef5921#115236e71ed999b12c792fb13df85ff762ef5921"
+source = "git+https://github.com/paged-media/core?rev=a6b8606ce1c0326b8301e5e0a58eb2cd435102a5#a6b8606ce1c0326b8301e5e0a58eb2cd435102a5"
 dependencies = [
  "paged-flow",
  "serde",
@@ -246,7 +247,7 @@ dependencies = [
 [[package]]
 name = "paged-flow"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=115236e71ed999b12c792fb13df85ff762ef5921#115236e71ed999b12c792fb13df85ff762ef5921"
+source = "git+https://github.com/paged-media/core?rev=a6b8606ce1c0326b8301e5e0a58eb2cd435102a5#a6b8606ce1c0326b8301e5e0a58eb2cd435102a5"
 dependencies = [
  "serde",
 ]
@@ -254,7 +255,7 @@ dependencies = [
 [[package]]
 name = "paged-model"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=115236e71ed999b12c792fb13df85ff762ef5921#115236e71ed999b12c792fb13df85ff762ef5921"
+source = "git+https://github.com/paged-media/core?rev=a6b8606ce1c0326b8301e5e0a58eb2cd435102a5#a6b8606ce1c0326b8301e5e0a58eb2cd435102a5"
 dependencies = [
  "serde",
 ]
@@ -262,7 +263,7 @@ dependencies = [
 [[package]]
 name = "paged-scene"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=115236e71ed999b12c792fb13df85ff762ef5921#115236e71ed999b12c792fb13df85ff762ef5921"
+source = "git+https://github.com/paged-media/core?rev=a6b8606ce1c0326b8301e5e0a58eb2cd435102a5#a6b8606ce1c0326b8301e5e0a58eb2cd435102a5"
 dependencies = [
  "blake3",
  "paged-composition",
@@ -276,7 +277,7 @@ dependencies = [
 [[package]]
 name = "paged-store"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=115236e71ed999b12c792fb13df85ff762ef5921#115236e71ed999b12c792fb13df85ff762ef5921"
+source = "git+https://github.com/paged-media/core?rev=a6b8606ce1c0326b8301e5e0a58eb2cd435102a5#a6b8606ce1c0326b8301e5e0a58eb2cd435102a5"
 dependencies = [
  "paged-scene",
  "serde",
