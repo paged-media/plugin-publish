@@ -3726,7 +3726,7 @@ pub(crate) fn preserving_f32_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
 ///
 /// The rule is not restated here — [`idml_import::parse_tint`] is the
 /// one the parser reads through, called directly.
-fn preserving_tint_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
+pub(crate) fn preserving_tint_patch(raw: Option<&str>, v: Option<f32>) -> Patch {
     if raw.and_then(idml_import::parse_tint) == v {
         return Patch::Keep;
     }
@@ -3987,7 +3987,7 @@ fn arrow_patch(v: Option<idml_import::ArrowheadType>) -> Option<Patch> {
     }
 }
 
-fn opt_string_patch(v: &Option<String>) -> Patch {
+pub(crate) fn opt_string_patch(v: &Option<String>) -> Patch {
     match v {
         Some(s) => Patch::Set(s.clone()),
         None => Patch::Remove,
@@ -5087,7 +5087,7 @@ fn patch_paragraph_range(
 /// `DropCapLines`, `DropCapDetail`): a source spelling of the model's
 /// value keeps its bytes, a zero drops the attribute, anything else is
 /// rewritten.
-fn preserving_int_patch(raw: Option<&str>, v: i64) -> Patch {
+pub(crate) fn preserving_int_patch(raw: Option<&str>, v: i64) -> Patch {
     if raw.and_then(|s| s.trim().parse::<i64>().ok()) == Some(v) {
         return Patch::Keep;
     }
@@ -5098,7 +5098,7 @@ fn preserving_int_patch(raw: Option<&str>, v: i64) -> Patch {
     }
 }
 
-fn opt_u32_patch(raw: Option<&str>, v: Option<u32>) -> Patch {
+pub(crate) fn opt_u32_patch(raw: Option<&str>, v: Option<u32>) -> Patch {
     match v {
         Some(n) => {
             if raw.and_then(|s| s.trim().parse::<u32>().ok()) == Some(n) {
@@ -5116,7 +5116,7 @@ fn opt_u32_patch(raw: Option<&str>, v: Option<u32>) -> Patch {
 /// `None`, so a `None` model keeps such a source spelling rather than
 /// deleting it, and only a real list name that the model dropped is
 /// rewritten to `n`.
-fn numbering_list_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
+pub(crate) fn numbering_list_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
     match v {
         Some(s) => Patch::Set(s.clone()),
         None => match raw {
@@ -5128,7 +5128,7 @@ fn numbering_list_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
     }
 }
 
-fn paragraph_rule_patch(
+pub(crate) fn paragraph_rule_patch(
     key: &[u8],
     raw: Option<&str>,
     keys: &crate::emit::RuleKeys,
@@ -5288,7 +5288,7 @@ fn character_extras(r: &CharacterRun) -> Vec<(&'static str, String)> {
     out
 }
 
-fn opt_bool_patch(v: Option<bool>) -> Patch {
+pub(crate) fn opt_bool_patch(v: Option<bool>) -> Patch {
     match v {
         Some(b) => Patch::Set(b.to_string()),
         None => Patch::Remove,

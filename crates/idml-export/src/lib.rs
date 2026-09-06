@@ -91,6 +91,7 @@ pub mod preferences;
 mod reorder;
 pub mod resources;
 pub mod rewrite;
+mod style_attrs;
 pub mod text_frame_prefs;
 pub mod text_wrap;
 
@@ -843,6 +844,14 @@ pub(crate) fn write_package(
         let new = based_on::patch_based_on(&new).map_err(|source| WriteError::Rewrite {
             entry: STYLES_SRC.to_string(),
             source,
+        })?;
+        // … and a paragraph style's tab stops, bullet and numbering are
+        // typed children too (see [`paragraph_props`]).
+        let new = paragraph_props::spell_styles(&new, &doc.styles).map_err(|source| {
+            WriteError::Rewrite {
+                entry: STYLES_SRC.to_string(),
+                source,
+            }
         })?;
         if new != orig.as_slice() {
             patched.insert(STYLES_SRC.to_string(), new);

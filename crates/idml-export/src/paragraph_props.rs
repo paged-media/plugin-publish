@@ -1,7 +1,10 @@
-//! Tab stops and bullet characters of a `<ParagraphStyleRange>` — the
-//! two paragraph overrides IDML spells as `<Properties>` children rather
-//! than attributes. InDesign 20.0.1 writes, and reads, exactly this
-//! (measured on the corpus's InDesign-authored packs, 2026-09-06):
+//! Tab stops, bullet character, numbering format, numbering list and
+//! numbering expression — the paragraph overrides IDML spells as
+//! `<Properties>` children rather than attributes, on a
+//! `<ParagraphStyleRange>` and on a `<ParagraphStyle>` alike. InDesign
+//! 20.0.1 writes, and reads, exactly this (measured on the corpus's
+//! InDesign-authored packs and in the app, 2026-09-06 — `NumberingFormat`
+//! and `AppliedNumberingList` as ATTRIBUTES are ignored outright):
 //!
 //! ```xml
 //! <ParagraphStyleRange …>
@@ -15,65 +18,254 @@
 //!       </ListItem>
 //!     </TabList>
 //!     <BulletChar BulletCharacterType="UnicodeOnly" BulletCharacterValue="42"/>
+//!     <NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat>
+//!     <AppliedNumberingList type="object">NumberingList/Steps</AppliedNumberingList>
 //!   </Properties>
 //!   <CharacterStyleRange …>
 //! ```
 //!
-//! A model paragraph's `tab_list` / `bullet_character` come out here. A
-//! source child the model still matches passes through byte for byte; one
-//! the model no longer carries is dropped; a paragraph that gained either
-//! gets them inside its existing `<Properties>`, or a new block as its
-//! first child. A range with no model counterpart (the provenance names
-//! none, or the story failed to parse) passes through untouched, children
-//! included. Story-level ranges only; cell paragraphs are the emitter's.
+//! A model paragraph's (or style's) values come out here. A source child
+//! the model still matches passes through byte for byte; one the model
+//! no longer carries is dropped; an element that gained any gets them
+//! inside its existing `<Properties>`, or a new block as its first
+//! child. An element with no model counterpart (the provenance names
+//! none, the `Self` is unknown, or the part failed to parse) passes
+//! through untouched, children included. Story-level ranges only; cell
+//! paragraphs are the emitter's.
 
 use std::io::Cursor;
 
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
+use idml_import::styles::{ParagraphStyleDef, StyleSheet};
 use idml_import::{Paragraph, Story, TabStop};
 
-use crate::emit::{paragraph_has_properties, write_bullet_char, write_tab_list};
+use crate::emit::{
+    paragraph_has_properties, write_applied_numbering_list, write_bullet_char,
+    write_numbering_expression, write_numbering_format, write_tab_list,
+};
 use crate::rewrite::resolve_paragraph;
 
-/// The open story-level range and what its model paragraph still owes.
+/// What a range or a paragraph style owns among the children this pass
+/// spells — one shape for both, so `<ParagraphStyle>` elements (keyed
+/// by `Self`) go through the same pass as `<ParagraphStyleRange>`s
+/// (keyed by provenance).
+pub(crate) struct Owner<'a> {
+    pub(crate) tabs: &'a [TabStop],
+    pub(crate) bullet: Option<u32>,
+    pub(crate) format: Option<&'a str>,
+    pub(crate) list: Option<&'a str>,
+    /// A style's `NumberingExpression`; a range has none.
+    pub(crate) expression: Option<&'a str>,
+}
+
+impl<'a> Owner<'a> {
+    pub(crate) fn of_paragraph(p: &'a Paragraph) -> Self {
+        Owner {
+            tabs: &p.tab_list,
+            bullet: p.bullet_character,
+            format: p.numbering_format.as_deref(),
+            list: p.applied_numbering_list.as_deref(),
+            expression: None,
+        }
+    }
+
+    pub(crate) fn of_style(s: &'a ParagraphStyleDef) -> Self {
+        Owner {
+            tabs: &s.tab_list,
+            bullet: s.bullet_character,
+            format: s.numbering_format.as_deref(),
+            list: s.applied_numbering_list.as_deref(),
+            expression: s.numbering_expression.as_deref(),
+        }
+    }
+
+    pub(crate) fn any(&self) -> bool {
+        !self.tabs.is_empty()
+            || self.bullet.is_some()
+            || self.format.is_some()
+            || self.list.is_some()
+            || self.expression.is_some()
+    }
+
+    /// Every child, in InDesign's order, for a freshly written element.
+    pub(crate) fn write_children(
+        &self,
+        writer: &mut Writer<Cursor<Vec<u8>>>,
+    ) -> Result<(), quick_xml::Error> {
+        if !self.tabs.is_empty() {
+            write_tab_list(writer, self.tabs)?;
+        }
+        if let Some(cp) = self.bullet {
+            write_bullet_char(writer, cp)?;
+        }
+        if let Some(f) = self.format {
+            write_numbering_format(writer, f)?;
+        }
+        if let Some(l) = self.list {
+            write_applied_numbering_list(writer, l)?;
+        }
+        if let Some(x) = self.expression {
+            write_numbering_expression(writer, x)?;
+        }
+        Ok(())
+    }
+}
+
+/// The open element and what its owner still owes.
 struct Open<'a> {
-    para: Option<&'a Paragraph>,
-    /// Element depth below the range's start tag.
+    owner: Option<Owner<'a>>,
+    /// Element depth below the element's start tag.
     depth: usize,
-    /// Inside the range's direct `<Properties>` child.
+    /// Inside the element's direct `<Properties>` child.
     in_props: bool,
-    /// The range's first child has been seen (so a missing `<Properties>`
-    /// block, when owed, was written before it).
+    /// The element's first child has been seen (so a missing
+    /// `<Properties>` block, when owed, was written before it).
     first_child_seen: bool,
     tabs_done: bool,
     bullet_done: bool,
+    format_done: bool,
+    list_done: bool,
+    expression_done: bool,
 }
 
-impl Open<'_> {
+impl<'a> Open<'a> {
+    fn new(owner: Option<Owner<'a>>) -> Self {
+        Open {
+            owner,
+            depth: 0,
+            in_props: false,
+            first_child_seen: false,
+            tabs_done: false,
+            bullet_done: false,
+            format_done: false,
+            list_done: false,
+            expression_done: false,
+        }
+    }
     fn owes_tabs(&self) -> bool {
-        !self.tabs_done && self.para.is_some_and(|p| !p.tab_list.is_empty())
+        !self.tabs_done && self.owner.as_ref().is_some_and(|o| !o.tabs.is_empty())
     }
     fn owes_bullet(&self) -> bool {
-        !self.bullet_done && self.para.is_some_and(|p| p.bullet_character.is_some())
+        !self.bullet_done && self.owner.as_ref().is_some_and(|o| o.bullet.is_some())
     }
+    fn owes_format(&self) -> bool {
+        !self.format_done && self.owner.as_ref().is_some_and(|o| o.format.is_some())
+    }
+    fn owes_list(&self) -> bool {
+        !self.list_done && self.owner.as_ref().is_some_and(|o| o.list.is_some())
+    }
+    fn owes_expression(&self) -> bool {
+        !self.expression_done && self.owner.as_ref().is_some_and(|o| o.expression.is_some())
+    }
+    fn owes_any(&self) -> bool {
+        self.owes_tabs()
+            || self.owes_bullet()
+            || self.owes_format()
+            || self.owes_list()
+            || self.owes_expression()
+    }
+}
+
+/// The text-valued children.
+#[derive(Clone, Copy)]
+enum TextChild {
+    Format,
+    List,
+    Expression,
+}
+
+/// InDesign's several spellings of "no numbering list", which the parser
+/// reads as `None`.
+fn is_no_list(text: &str) -> bool {
+    matches!(text, "n" | "NumberingList/n" | "") || text.ends_with("[No numbering list]")
+}
+
+/// The text of a collected subtree.
+fn subtree_text(inner: &[Event<'static>]) -> String {
+    let mut text = String::new();
+    for ev in inner {
+        if let Event::Text(t) = ev {
+            if let Ok(s) = t.decode() {
+                text.push_str(&s);
+            }
+        }
+    }
+    text.trim().to_string()
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
+fn source_has_any(original: &[u8]) -> bool {
+    contains(original, b"<TabList")
+        || contains(original, b"<BulletChar")
+        || contains(original, b"<NumberingFormat")
+        || contains(original, b"<AppliedNumberingList")
+        || contains(original, b"<NumberingExpression")
+}
+
+/// A story's ranges, matched to the model by provenance.
 pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml::Error> {
     let model_has = story.paragraphs.iter().any(paragraph_has_properties);
-    let source_has = contains(original, b"<TabList") || contains(original, b"<BulletChar");
-    if !model_has && !source_has {
+    if !model_has && !source_has_any(original) {
         return Ok(original.to_vec());
     }
     let Ok((_, provenance)) = idml_import::parse_story_with_provenance(original) else {
         return Ok(original.to_vec());
     };
+    spell_with(original, b"ParagraphStyleRange", |_, pos| {
+        resolve_paragraph(&provenance, pos, &story.paragraphs).map(Owner::of_paragraph)
+    })
+}
 
+/// A style part's `<ParagraphStyle>` elements, matched to the model by
+/// `Self`.
+pub(crate) fn spell_styles(
+    original: &[u8],
+    styles: &StyleSheet,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let model_has = styles
+        .paragraph_styles
+        .values()
+        .any(|s| Owner::of_style(s).any());
+    if !model_has && !source_has_any(original) {
+        return Ok(original.to_vec());
+    }
+    spell_with(original, b"ParagraphStyle", |e, _| {
+        let mut owner = attr_string(e, b"Self")
+            .and_then(|id| styles.paragraph_styles.get(&id))
+            .map(Owner::of_style)?;
+        // InDesign's own files spell the numbering expression as an
+        // ATTRIBUTE (and read it there); one that already says what the
+        // model says is not owed as a child.
+        if attr_string(e, b"NumberingExpression").as_deref() == owner.expression {
+            owner.expression = None;
+        }
+        Some(owner)
+    })
+}
+
+/// The `<Properties>` children this pass owns.
+fn is_owned_child(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"TabList"
+            | b"BulletChar"
+            | b"NumberingFormat"
+            | b"AppliedNumberingList"
+            | b"NumberingExpression"
+    )
+}
+
+fn spell_with<'m>(
+    original: &[u8],
+    element: &[u8],
+    resolve: impl Fn(&BytesStart<'_>, u64) -> Option<Owner<'m>>,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let element_name = std::str::from_utf8(element).unwrap_or("ParagraphStyleRange");
     let mut reader = Reader::from_reader(original);
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Cursor::new(Vec::with_capacity(original.len() + 256)));
@@ -90,15 +282,8 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
                 if name == b"Table" {
                     table_depth += 1;
                 }
-                if name == b"ParagraphStyleRange" && table_depth == 0 && open.is_none() {
-                    open = Some(Open {
-                        para: resolve_paragraph(&provenance, pos, &story.paragraphs),
-                        depth: 0,
-                        in_props: false,
-                        first_child_seen: false,
-                        tabs_done: false,
-                        bullet_done: false,
-                    });
+                if name == element && table_depth == 0 && open.is_none() {
+                    open = Some(Open::new(resolve(&e, pos)));
                     writer.write_event(Event::Start(e.into_owned()))?;
                     buf.clear();
                     continue;
@@ -116,10 +301,7 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
                         o.first_child_seen = true;
                         write_missing_block(&mut writer, o)?;
                     }
-                } else if o.depth == 1
-                    && o.in_props
-                    && (name == b"TabList" || name == b"BulletChar")
-                {
+                } else if o.depth == 1 && o.in_props && is_owned_child(&name) {
                     // The child's whole subtree, then the verdict.
                     let start = e.into_owned();
                     let inner = collect_subtree(&mut reader, &name)?;
@@ -128,9 +310,18 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
                             let stops = parse_tab_list(&inner);
                             settle_tabs(&mut writer, o, Some((&start, &inner)), &stops)?;
                         }
-                        _ => {
+                        b"BulletChar" => {
                             let cp = attr_u32(&start, b"BulletCharacterValue");
                             settle_bullet(&mut writer, o, Some((&start, &inner)), cp)?;
+                        }
+                        other => {
+                            let which = match other {
+                                b"NumberingFormat" => TextChild::Format,
+                                b"NumberingExpression" => TextChild::Expression,
+                                _ => TextChild::List,
+                            };
+                            let text = subtree_text(&inner);
+                            settle_text(&mut writer, o, Some((&start, &inner)), &text, which)?;
                         }
                     }
                     buf.clear();
@@ -141,23 +332,15 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
             }
             Event::Empty(e) => {
                 let name = e.name().as_ref().to_vec();
-                if name == b"ParagraphStyleRange" && table_depth == 0 && open.is_none() {
-                    // A self-closing range: opened around the block when
-                    // its paragraph owes one.
-                    let para = resolve_paragraph(&provenance, pos, &story.paragraphs);
-                    match para.filter(|p| paragraph_has_properties(p)) {
-                        Some(p) => {
+                if name == element && table_depth == 0 && open.is_none() {
+                    // A self-closing element: opened around the block
+                    // when its owner owes one.
+                    match resolve(&e, pos).filter(|o| o.any()) {
+                        Some(owner) => {
                             writer.write_event(Event::Start(e.borrow()))?;
-                            let mut o = Open {
-                                para: Some(p),
-                                depth: 0,
-                                in_props: false,
-                                first_child_seen: false,
-                                tabs_done: false,
-                                bullet_done: false,
-                            };
+                            let mut o = Open::new(Some(owner));
                             write_missing_block(&mut writer, &mut o)?;
-                            writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;
+                            writer.write_event(Event::End(BytesEnd::new(element_name)))?;
                         }
                         None => writer.write_event(Event::Empty(e.into_owned()))?,
                     }
@@ -171,10 +354,10 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
                 };
                 if o.depth == 0 {
                     if name == b"Properties" {
-                        // `<Properties/>`: opened when the paragraph owes
-                        // a child, kept self-closing otherwise.
+                        // `<Properties/>`: opened when the owner owes a
+                        // child, kept self-closing otherwise.
                         o.first_child_seen = true;
-                        if o.owes_tabs() || o.owes_bullet() {
+                        if o.owes_any() {
                             writer.write_event(Event::Start(BytesStart::new("Properties")))?;
                             write_missing_children(&mut writer, o)?;
                             writer.write_event(Event::End(BytesEnd::new("Properties")))?;
@@ -188,13 +371,22 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
                         o.first_child_seen = true;
                         write_missing_block(&mut writer, o)?;
                     }
-                } else if o.depth == 1 && o.in_props && name == b"TabList" {
-                    settle_tabs(&mut writer, o, Some((&e.borrow(), &[])), &[])?;
-                    buf.clear();
-                    continue;
-                } else if o.depth == 1 && o.in_props && name == b"BulletChar" {
-                    let cp = attr_u32(&e, b"BulletCharacterValue");
-                    settle_bullet(&mut writer, o, Some((&e.borrow(), &[])), cp)?;
+                } else if o.depth == 1 && o.in_props && is_owned_child(&name) {
+                    match name.as_slice() {
+                        b"TabList" => settle_tabs(&mut writer, o, Some((&e.borrow(), &[])), &[])?,
+                        b"BulletChar" => {
+                            let cp = attr_u32(&e, b"BulletCharacterValue");
+                            settle_bullet(&mut writer, o, Some((&e.borrow(), &[])), cp)?;
+                        }
+                        other => {
+                            let which = match other {
+                                b"NumberingFormat" => TextChild::Format,
+                                b"NumberingExpression" => TextChild::Expression,
+                                _ => TextChild::List,
+                            };
+                            settle_text(&mut writer, o, Some((&e.borrow(), &[])), "", which)?;
+                        }
+                    }
                     buf.clear();
                     continue;
                 }
@@ -207,9 +399,9 @@ pub(crate) fn spell(original: &[u8], story: &Story) -> Result<Vec<u8>, quick_xml
                 }
                 if let Some(o) = open.as_mut() {
                     if o.depth == 0 {
-                        // The range closes; a block it still owes goes
-                        // in before the end tag (a range with no children
-                        // at all).
+                        // The element closes; a block it still owes goes
+                        // in before the end tag (an element with no
+                        // children at all).
                         if !o.first_child_seen {
                             write_missing_block(&mut writer, o)?;
                         }
@@ -383,8 +575,8 @@ fn write_events(
 
 /// A source `<TabList>` (or none) against the model: verbatim when the
 /// model spells the same stops, the model's spelling when it differs,
-/// nothing when the model has none. A range without a model counterpart
-/// keeps its source.
+/// nothing when the model has none. An element without a model
+/// counterpart keeps its source.
 fn settle_tabs(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     o: &mut Open<'_>,
@@ -392,18 +584,25 @@ fn settle_tabs(
     source_stops: &[TabStop],
 ) -> Result<(), quick_xml::Error> {
     o.tabs_done = true;
-    let Some(p) = o.para else {
+    let Some(p) = o.owner.as_ref() else {
         if let Some((start, inner)) = source {
             write_events(writer, start, inner)?;
         }
         return Ok(());
     };
-    if p.tab_list.is_empty() {
+    if p.tabs.is_empty() {
+        // InDesign writes an empty `<TabList type="list">` on its own
+        // styles; with nothing to spell either way, it keeps its bytes.
+        if let Some((start, inner)) = source {
+            if source_stops.is_empty() {
+                write_events(writer, start, inner)?;
+            }
+        }
         return Ok(());
     }
     match source {
-        Some((start, inner)) if p.tab_list == source_stops => write_events(writer, start, inner),
-        _ => write_tab_list(writer, &p.tab_list),
+        Some((start, inner)) if p.tabs == source_stops => write_events(writer, start, inner),
+        _ => write_tab_list(writer, p.tabs),
     }
 }
 
@@ -414,13 +613,13 @@ fn settle_bullet(
     source_cp: Option<u32>,
 ) -> Result<(), quick_xml::Error> {
     o.bullet_done = true;
-    let Some(p) = o.para else {
+    let Some(p) = o.owner.as_ref() else {
         if let Some((start, inner)) = source {
             write_events(writer, start, inner)?;
         }
         return Ok(());
     };
-    let Some(cp) = p.bullet_character else {
+    let Some(cp) = p.bullet else {
         return Ok(());
     };
     match source {
@@ -429,7 +628,52 @@ fn settle_bullet(
     }
 }
 
-/// The children the paragraph still owes, inside an open `<Properties>`.
+/// A source `<NumberingFormat>` / `<AppliedNumberingList>` /
+/// `<NumberingExpression>` (or none) against the model, like
+/// [`settle_tabs`]. A "no list" spelling the parser reads as `None`
+/// keeps its bytes.
+fn settle_text(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    o: &mut Open<'_>,
+    source: Option<(&BytesStart<'_>, &[Event<'static>])>,
+    source_text: &str,
+    which: TextChild,
+) -> Result<(), quick_xml::Error> {
+    match which {
+        TextChild::Format => o.format_done = true,
+        TextChild::List => o.list_done = true,
+        TextChild::Expression => o.expression_done = true,
+    }
+    let Some(p) = o.owner.as_ref() else {
+        if let Some((start, inner)) = source {
+            write_events(writer, start, inner)?;
+        }
+        return Ok(());
+    };
+    let model = match which {
+        TextChild::Format => p.format,
+        TextChild::List => p.list,
+        TextChild::Expression => p.expression,
+    };
+    let Some(value) = model else {
+        if let (Some((start, inner)), TextChild::List) = (source, which) {
+            if is_no_list(source_text) {
+                write_events(writer, start, inner)?;
+            }
+        }
+        return Ok(());
+    };
+    match source {
+        Some((start, inner)) if source_text == value => write_events(writer, start, inner),
+        _ => match which {
+            TextChild::Format => write_numbering_format(writer, value),
+            TextChild::List => write_applied_numbering_list(writer, value),
+            TextChild::Expression => write_numbering_expression(writer, value),
+        },
+    }
+}
+
+/// The children the owner still owes, inside an open `<Properties>`.
 fn write_missing_children(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     o: &mut Open<'_>,
@@ -440,15 +684,24 @@ fn write_missing_children(
     if o.owes_bullet() {
         settle_bullet(writer, o, None, None)?;
     }
+    if o.owes_format() {
+        settle_text(writer, o, None, "", TextChild::Format)?;
+    }
+    if o.owes_list() {
+        settle_text(writer, o, None, "", TextChild::List)?;
+    }
+    if o.owes_expression() {
+        settle_text(writer, o, None, "", TextChild::Expression)?;
+    }
     Ok(())
 }
 
-/// A whole `<Properties>` block for a range that has none, when owed.
+/// A whole `<Properties>` block for an element that has none, when owed.
 fn write_missing_block(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     o: &mut Open<'_>,
 ) -> Result<(), quick_xml::Error> {
-    if !(o.owes_tabs() || o.owes_bullet()) {
+    if !o.owes_any() {
         return Ok(());
     }
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
@@ -552,6 +805,67 @@ mod tests {
         // The first paragraph, untouched, keeps its bytes.
         assert!(
             out.contains("\t\t\t\t\t\t<Position type=\"unit\">34</Position>\n"),
+            "{out}"
+        );
+    }
+
+    const NUMBERED: &[u8] = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Numbered 1" BulletsAndNumberingListType="NumberedList"><Properties><NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat><AppliedNumberingList type="object">NumberingList/Annual Steps</AppliedNumberingList></Properties><CharacterStyleRange><Content>Step</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>Plain</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+
+    #[test]
+    fn numbering_children_round_trip_respell_and_appear() {
+        let s = story(NUMBERED);
+        assert_eq!(
+            s.paragraphs[0].numbering_format.as_deref(),
+            Some("1, 2, 3, 4...")
+        );
+        assert_eq!(
+            s.paragraphs[0].applied_numbering_list.as_deref(),
+            Some("NumberingList/Annual Steps")
+        );
+        assert_eq!(
+            spell(NUMBERED, &s).unwrap(),
+            NUMBERED.to_vec(),
+            "unmutated: byte-identical"
+        );
+
+        let mut s = story(NUMBERED);
+        s.paragraphs[0].numbering_format = Some("I, II, III, IV...".into());
+        s.paragraphs[0].applied_numbering_list = None;
+        s.paragraphs[1].applied_numbering_list = Some("NumberingList/Other".into());
+        let out = String::from_utf8(spell(NUMBERED, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Properties><NumberingFormat type="string">I, II, III, IV...</NumberingFormat></Properties>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"<ParagraphStyleRange><Properties><AppliedNumberingList type="object">NumberingList/Other</AppliedNumberingList></Properties><CharacterStyleRange><Content>Plain"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_paragraph_style_gets_its_numbering_children() {
+        let src = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/Numbered 1" Name="Numbered 1" BulletsAndNumberingListType="NumberedList"/><ParagraphStyle Self="ParagraphStyle/Body" Name="Body"><Properties><BasedOn type="object">ParagraphStyle/X</BasedOn></Properties></ParagraphStyle></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let mut styles = idml_import::parse_stylesheet(src).unwrap();
+        assert_eq!(
+            spell_styles(src, &styles).unwrap(),
+            src.to_vec(),
+            "unchanged: byte-identical"
+        );
+        let n = styles
+            .paragraph_styles
+            .get_mut("ParagraphStyle/Numbered 1")
+            .unwrap();
+        n.numbering_format = Some("1, 2, 3, 4...".into());
+        n.applied_numbering_list = Some("NumberingList/Annual Steps".into());
+        n.numbering_expression = Some("^#.^t".into());
+        let out = String::from_utf8(spell_styles(src, &styles).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyle Self="ParagraphStyle/Numbered 1" Name="Numbered 1" BulletsAndNumberingListType="NumberedList"><Properties><NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat><AppliedNumberingList type="object">NumberingList/Annual Steps</AppliedNumberingList><NumberingExpression type="string">^#.^t</NumberingExpression></Properties></ParagraphStyle>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"<BasedOn type="object">ParagraphStyle/X</BasedOn></Properties>"#),
             "{out}"
         );
     }

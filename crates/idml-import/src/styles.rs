@@ -179,6 +179,13 @@ enum CurrentProperty {
     /// `<NumberingExpression type="string">^#.^t</NumberingExpression>`
     /// inside a `ParagraphStyle`'s `<Properties>` block. Paragraph-only.
     NumberingExpression,
+    /// `<NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat>` —
+    /// the only spelling InDesign reads (the attribute is ignored;
+    /// measured 2026-09-06). Paragraph-only.
+    NumberingFormat,
+    /// `<AppliedNumberingList type="object">NumberingList/X</AppliedNumberingList>`,
+    /// likewise. Paragraph-only.
+    AppliedNumberingList,
 }
 
 pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
@@ -302,6 +309,14 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 {
                     pending_property = Some(CurrentProperty::NumberingExpression);
                 }
+                b"NumberingFormat" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
+                    pending_property = Some(CurrentProperty::NumberingFormat);
+                }
+                b"AppliedNumberingList"
+                    if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
+                {
+                    pending_property = Some(CurrentProperty::AppliedNumberingList);
+                }
                 _ => {}
             },
             Event::Text(t) if pending_property.is_some() => {
@@ -337,6 +352,16 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                                 p.numbering_expression = Some(text);
                                             }
                                         }
+                                        CurrentProperty::NumberingFormat => {
+                                            p.numbering_format = Some(text);
+                                        }
+                                        CurrentProperty::AppliedNumberingList => {
+                                            p.applied_numbering_list = match text.as_str() {
+                                                "n" | "NumberingList/n" | "" => None,
+                                                v if v.ends_with("[No numbering list]") => None,
+                                                _ => Some(text),
+                                            };
+                                        }
                                     }
                                 }
                             }
@@ -361,7 +386,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                             }
                                         }
                                         // NumberingExpression is paragraph-only.
-                                        CurrentProperty::NumberingExpression => {}
+                                        CurrentProperty::NumberingExpression
+                                        | CurrentProperty::NumberingFormat
+                                        | CurrentProperty::AppliedNumberingList => {}
                                     }
                                 }
                             }

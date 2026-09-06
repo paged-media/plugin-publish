@@ -991,6 +991,25 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                     }
                                 }
                             }
+                            // InDesign spells a paragraph's numbering
+                            // format and list ONLY this way (the
+                            // attributes are ignored; measured 2026-09-06).
+                            (2, b"NumberingFormat") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    if !value.is_empty() {
+                                        p.numbering_format = Some(value);
+                                    }
+                                }
+                            }
+                            (2, b"AppliedNumberingList") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    p.applied_numbering_list = match value.as_str() {
+                                        "n" | "NumberingList/n" | "" => None,
+                                        v if v.ends_with("[No numbering list]") => None,
+                                        _ => Some(value),
+                                    };
+                                }
+                            }
                             // CharacterStyleRange Properties.
                             (1, b"AppliedFont") => {
                                 if let Some(run) = current_run.as_mut() {

@@ -221,47 +221,11 @@ pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quic
 // Styles.xml — paragraph + character styles
 // ---------------------------------------------------------------------
 
-/// Common authoring fields shared by paragraph + character styles. Only
-/// the high-frequency knobs are serialised; the rest cascade from
-/// `BasedOn` / the document default (a freshly-created style carries only
-/// name + based_on until a `SetStyleProperty` writes a field).
-fn push_style_common(
-    attrs: &mut Vec<(&'static str, String)>,
-    name: &Option<String>,
-    font_style: &Option<String>,
-    point_size: Option<f32>,
-    fill_color: &Option<String>,
-) {
-    if let Some(n) = name {
-        attrs.push(("Name", n.clone()));
-    }
-    // NOT `AppliedFont`, and NOT `BasedOn`: InDesign reads both as typed
-    // children of `<Properties>`, never as attributes (see
-    // [`emit_style_element`]). Both callers write them through the
-    // Properties block, after the start tag.
-    if let Some(fs) = font_style {
-        attrs.push(("FontStyle", fs.clone()));
-    }
-    if let Some(sz) = point_size {
-        attrs.push(("PointSize", format_f32(sz)));
-    }
-    if let Some(fc) = fill_color {
-        attrs.push(("FillColor", fc.clone()));
-    }
-}
-
 fn write_paragraph_style(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     s: &ParagraphStyleDef,
 ) -> Result<(), quick_xml::Error> {
-    let mut attrs: Vec<(&str, String)> = vec![("Self", s.self_id.clone())];
-    push_style_common(
-        &mut attrs,
-        &s.name,
-        &s.font_style,
-        s.point_size,
-        &s.fill_color,
-    );
+    let attrs = crate::style_attrs::paragraph_style_attrs(s);
     emit_style_element(
         writer,
         "ParagraphStyle",
@@ -269,6 +233,7 @@ fn write_paragraph_style(
         &s.based_on,
         &s.font,
         s.leading,
+        Some(&crate::paragraph_props::Owner::of_style(s)),
     )
 }
 
@@ -276,14 +241,7 @@ fn write_character_style(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     s: &CharacterStyleDef,
 ) -> Result<(), quick_xml::Error> {
-    let mut attrs: Vec<(&str, String)> = vec![("Self", s.self_id.clone())];
-    push_style_common(
-        &mut attrs,
-        &s.name,
-        &s.font_style,
-        s.point_size,
-        &s.fill_color,
-    );
+    let attrs = crate::style_attrs::character_style_attrs(s);
     emit_style_element(
         writer,
         "CharacterStyle",
@@ -291,6 +249,7 @@ fn write_character_style(
         &s.based_on,
         &s.font,
         s.leading,
+        None,
     )
 }
 
@@ -316,8 +275,10 @@ fn emit_style_element(
     based_on: &Option<String>,
     font: &Option<String>,
     leading: Option<f32>,
+    props: Option<&crate::paragraph_props::Owner<'_>>,
 ) -> Result<(), quick_xml::Error> {
-    if based_on.is_none() && font.is_none() && leading.is_none() {
+    let owes_props = props.is_some_and(|p| p.any());
+    if based_on.is_none() && font.is_none() && leading.is_none() && !owes_props {
         return emit_empty(writer, name, attrs);
     }
     let mut start = BytesStart::new(name.to_string());
@@ -349,6 +310,9 @@ fn emit_style_element(
             l,
         ))))?;
         writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Leading")))?;
+    }
+    if let Some(p) = props {
+        p.write_children(writer)?;
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
@@ -419,7 +383,15 @@ fn write_object_style(
     if let Some(r) = s.corner_radius {
         attrs.push(("CornerRadius", format_f32(r)));
     }
-    emit_style_element(writer, "ObjectStyle", &attrs, &s.based_on, &None, None)
+    emit_style_element(
+        writer,
+        "ObjectStyle",
+        &attrs,
+        &s.based_on,
+        &None,
+        None,
+        None,
+    )
 }
 
 /// The object styles `styles` carries that `seen` (the source part)
@@ -581,6 +553,49 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                 object_group_closed = true;
             }
             Event::Start(ref e) | Event::Empty(ref e) => {
+                // A style the model has is patched in place: every
+                // attribute InDesign reads, the way a range's are (a
+                // renamed or re-dressed style used to pass through with
+                // its source attributes — see `style_attrs`).
+                let patched: Option<BytesStart<'static>> = match e.name().as_ref() {
+                    b"ParagraphStyle" => attr_value(e, b"Self")
+                        .and_then(|id| styles.paragraph_styles.get(&id))
+                        .map(|def| {
+                            crate::rewrite::patch_start(
+                                e,
+                                |k, raw| {
+                                    crate::style_attrs::paragraph_style_attr_patch(k, raw, def)
+                                },
+                                &crate::style_attrs::paragraph_style_attrs(def),
+                            )
+                        })
+                        .transpose()?,
+                    b"CharacterStyle" => attr_value(e, b"Self")
+                        .and_then(|id| styles.character_styles.get(&id))
+                        .map(|def| {
+                            crate::rewrite::patch_start(
+                                e,
+                                |k, raw| {
+                                    crate::style_attrs::character_style_attr_patch(k, raw, def)
+                                },
+                                &crate::style_attrs::character_style_attrs(def),
+                            )
+                        })
+                        .transpose()?,
+                    _ => None,
+                };
+                // An unchanged tag keeps its bytes — InDesign's own
+                // `<… />` spelling included, which a rebuilt tag loses.
+                if let Some(start) =
+                    patched.filter(|p| p.as_ref().trim_ascii_end() != e.as_ref().trim_ascii_end())
+                {
+                    match ev {
+                        Event::Start(_) => writer.write_event(Event::Start(start))?,
+                        _ => writer.write_event(Event::Empty(start))?,
+                    }
+                    buf.clear();
+                    continue;
+                }
                 // Only the group counters need tracking here now; which
                 // styles exist was settled by the pre-pass.
                 match e.name().as_ref() {
@@ -895,6 +910,43 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn an_edited_style_is_re_dressed_in_place() {
+        let src = br#"<idPkg:Styles xmlns:idPkg="x"><RootCharacterStyleGroup Self="u9d"><CharacterStyle Self="CharacterStyle/Caps" Name="Caps" PointSize="8.5"/></RootCharacterStyleGroup><RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/Note" Name="Note" PointSize="8.5" FillColor="Color/Slate" OTFFigureStyle="ProportionalOldStyle"><Properties><BasedOn type="object">ParagraphStyle/Body</BasedOn></Properties></ParagraphStyle></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let mut styles = idml_import::parse_stylesheet(src).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&patch_styles(src, &styles).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unchanged: byte-identical"
+        );
+        let p = styles
+            .paragraph_styles
+            .get_mut("ParagraphStyle/Note")
+            .unwrap();
+        p.name = Some("Field Note".into());
+        p.tracking = Some(8.0);
+        p.space_before = Some(6.5);
+        p.space_after = Some(6.5);
+        p.justification = Some(idml_import::Justification::LeftAlign);
+        p.next_style = Some("ParagraphStyle/Body".into());
+        p.fill_color = None;
+        let c = styles
+            .character_styles
+            .get_mut("CharacterStyle/Caps")
+            .unwrap();
+        c.tracking = Some(70.0);
+        c.point_size = Some(9.0);
+        let out = String::from_utf8(patch_styles(src, &styles).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyle Self="ParagraphStyle/Note" Name="Field Note" PointSize="8.5" OTFFigureStyle="ProportionalOldStyle" Tracking="8" Justification="LeftAlign" SpaceBefore="6.5" SpaceAfter="6.5" NextStyle="ParagraphStyle/Body"><Properties>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"<CharacterStyle Self="CharacterStyle/Caps" Name="Caps" PointSize="9" Tracking="70"/>"#),
+            "{out}"
+        );
+    }
 
     #[test]
     fn a_numbering_list_the_source_lacks_is_defined_as_a_bare_child() {

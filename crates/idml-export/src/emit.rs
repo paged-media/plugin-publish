@@ -592,7 +592,7 @@ pub(crate) const RULE_BELOW: RuleKeys = RuleKeys {
     width: "RuleBelowWidth",
 };
 
-fn paragraph_rule_attrs(
+pub(crate) fn paragraph_rule_attrs(
     out: &mut Vec<(&'static str, String)>,
     keys: &RuleKeys,
     rule: &idml_import::ParagraphRule,
@@ -732,6 +732,16 @@ pub(crate) fn write_numbering_format(
     format: &str,
 ) -> Result<(), quick_xml::Error> {
     write_typed_text(writer, "NumberingFormat", "string", format)
+}
+
+/// `<NumberingExpression type="string">^#.^t</NumberingExpression>` —
+/// a paragraph style's numbering expression, a typed child like the
+/// format.
+pub(crate) fn write_numbering_expression(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    expression: &str,
+) -> Result<(), quick_xml::Error> {
+    write_typed_text(writer, "NumberingExpression", "string", expression)
 }
 
 /// `<AppliedNumberingList type="object">NumberingList/X</AppliedNumberingList>`
