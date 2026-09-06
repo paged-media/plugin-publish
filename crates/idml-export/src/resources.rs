@@ -463,6 +463,7 @@ struct StylesLayout {
     para: std::collections::HashSet<String>,
     character: std::collections::HashSet<String>,
     object: std::collections::HashSet<String>,
+    numbering_lists: std::collections::HashSet<String>,
     /// How many `<Root*StyleGroup>` elements of each kind the part
     /// carries. New definitions go into the LAST one, which is where a
     /// document that has both keeps its own styles.
@@ -500,6 +501,11 @@ fn scan_styles(original: &[u8]) -> Result<StylesLayout, quick_xml::Error> {
                 b"ObjectStyle" => {
                     if let Some(id) = attr_value(e, b"Self") {
                         out.object.insert(id);
+                    }
+                }
+                b"NumberingList" => {
+                    if let Some(id) = attr_value(e, b"Self") {
+                        out.numbering_lists.insert(id);
                     }
                 }
                 b"RootParagraphStyleGroup" => out.para_groups += 1,
@@ -659,6 +665,18 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
                         "RootObjectStyleGroup",
                     )))?;
                 }
+                // A numbering list the source never defined. InDesign
+                // reads `<NumberingList>` from designmap.xml (where it
+                // writes its own `[Default]`) or as a bare child of
+                // `<idPkg:Styles>` — never inside a wrapper group
+                // (`<RootNumberingListGroup>` hid it; measured
+                // 2026-09-06). Without the definition every
+                // `<AppliedNumberingList>` falls back to `[Default]`.
+                for l in styles.numbering_lists.values() {
+                    if !layout.numbering_lists.contains(&l.self_id) {
+                        write_numbering_list(&mut writer, l)?;
+                    }
+                }
                 writer.write_event(ev.borrow())?;
             }
             _ => writer.write_event(ev.borrow())?,
@@ -667,6 +685,35 @@ pub fn patch_styles(original: &[u8], styles: &StyleSheet) -> Result<Vec<u8>, qui
     }
 
     Ok(writer.into_inner().into_inner())
+}
+
+fn write_numbering_list(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    l: &idml_import::styles::NumberingListDef,
+) -> Result<(), quick_xml::Error> {
+    let name = l
+        .name
+        .clone()
+        .unwrap_or_else(|| l.self_id.trim_start_matches("NumberingList/").to_string());
+    let mut e = BytesStart::new("NumberingList");
+    e.push_attribute(("Self", l.self_id.as_str()));
+    e.push_attribute(("Name", name.as_str()));
+    e.push_attribute((
+        "ContinueNumbersAcrossStories",
+        l.continue_across_stories
+            .unwrap_or(false)
+            .to_string()
+            .as_str(),
+    ));
+    e.push_attribute((
+        "ContinueNumbersAcrossDocuments",
+        l.continue_across_documents
+            .unwrap_or(false)
+            .to_string()
+            .as_str(),
+    ));
+    writer.write_event(Event::Empty(e))?;
+    Ok(())
 }
 
 // ---- conditional text: `Resources/Styles.xml` is NOT where it lives ------
@@ -848,6 +895,33 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn a_numbering_list_the_source_lacks_is_defined_as_a_bare_child() {
+        let src = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]" Name="$ID/[No paragraph style]"/></RootParagraphStyleGroup><NumberingList Self="NumberingList/Old" Name="Old" ContinueNumbersAcrossStories="false" ContinueNumbersAcrossDocuments="false"/></idPkg:Styles>"#;
+        let mut styles = idml_import::parse_stylesheet(src).unwrap();
+        assert_eq!(
+            patch_styles(src, &styles).unwrap(),
+            src.to_vec(),
+            "unchanged: byte-identical"
+        );
+        styles.numbering_lists.insert(
+            "NumberingList/Annual Steps".into(),
+            idml_import::styles::NumberingListDef {
+                self_id: "NumberingList/Annual Steps".into(),
+                name: Some("Annual Steps".into()),
+                continue_across_stories: Some(true),
+                continue_across_documents: None,
+            },
+        );
+        let out = String::from_utf8(patch_styles(src, &styles).unwrap()).unwrap();
+        assert!(
+            out.ends_with(r#"<NumberingList Self="NumberingList/Annual Steps" Name="Annual Steps" ContinueNumbersAcrossStories="true" ContinueNumbersAcrossDocuments="false"/></idPkg:Styles>"#),
+            "{out}"
+        );
+        assert_eq!(out.matches("NumberingList/Old").count(), 1, "{out}");
+        assert!(!out.contains("RootNumberingListGroup"), "{out}");
+    }
     use idml_import::{ColorModel, ColorSpace, ObjectStyleDef};
 
     /// A minimal but REAL-SHAPED `Resources/Styles.xml`: the three root

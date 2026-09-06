@@ -123,7 +123,9 @@ fn a_table_in_a_minted_story_is_written_and_reads_back() {
     let xml = pkg::entry(&out, "Stories/Story_Story_u1.xml").expect("minted story");
     assert!(xml.contains(r#"<Table Self="u7" HeaderRowCount="1" FooterRowCount="0" BodyRowCount="1" ColumnCount="3" AppliedTableStyle="TableStyle/$ID/[Basic Table]" TableDirection="LeftToRightDirection">"#), "{xml}");
     assert!(
-        xml.contains(r#"<Row Self="u7Row0" Name="0" SingleRowHeight="22"/>"#),
+        xml.contains(
+            r#"<Row Self="u7Row0" Name="0" SingleRowHeight="22" MinimumHeight="22" AutoGrow="true"/>"#
+        ),
         "{xml}"
     );
     assert!(

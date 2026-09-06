@@ -389,17 +389,31 @@ pub(crate) fn write_table(
                     .unwrap_or_else(|| r.to_string()),
             ),
         ];
+        let single = row.and_then(|r| r.single_row_height);
         a.push((
             "SingleRowHeight",
-            rewrite::format_f32(
-                row.and_then(|r| r.single_row_height)
-                    .unwrap_or(FALLBACK_ROW_HEIGHT),
-            ),
+            rewrite::format_f32(single.unwrap_or(FALLBACK_ROW_HEIGHT)),
         ));
+        // To InDesign `SingleRowHeight` is only the row's CURRENT height;
+        // the floor a row keeps is `MinimumHeight`, and `AutoGrow` lets
+        // content raise it (its own export of an "at least 15 pt" row:
+        // `SingleRowHeight="16.72" MinimumHeight="15" AutoGrow="true"`).
+        // Without the floor a 15 pt chart row came back at 12.6 pt
+        // (measured 2026-09-06). The engine sizes a row at
+        // max(SingleRowHeight, MinimumHeight, content), so the floor is
+        // the larger of the two — and a row the model never sized keeps
+        // a zero floor, so InDesign sizes it to content as the engine
+        // does rather than to the stand-in height.
+        let floor = match (single, row.and_then(|r| r.minimum_height)) {
+            (Some(h), Some(m)) => h.max(m),
+            (Some(h), None) => h,
+            (None, m) => m.unwrap_or(0.0),
+        };
+        a.push(("MinimumHeight", rewrite::format_f32(floor)));
         if let Some(row) = row {
-            push_opt_f32(&mut a, "MinimumHeight", row.minimum_height);
             push_opt_f32(&mut a, "MaximumHeight", row.maximum_height);
         }
+        a.push(("AutoGrow", "true".to_string()));
         rewrite::emit_empty_with_attrs(writer, "Row", &a)?;
     }
     for c in 0..cols {
@@ -655,10 +669,12 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if let Some(n) = p.keep_with_next {
         out.push(("KeepWithNext", n.to_string()));
     }
-    let string_attrs: [(&'static str, &Option<String>); 4] = [
+    // NOT here: `NumberingFormat` and `AppliedNumberingList`. InDesign
+    // ignores both as attributes and reads them only as typed
+    // `<Properties>` children (measured 2026-09-06) —
+    // [`emit_paragraph_properties`].
+    let string_attrs: [(&'static str, &Option<String>); 2] = [
         ("BulletsAndNumberingListType", &p.bullets_list_type),
-        ("NumberingFormat", &p.numbering_format),
-        ("AppliedNumberingList", &p.applied_numbering_list),
         ("KinsokuSet", &p.kinsoku_set),
     ];
     for (k, v) in string_attrs {
@@ -671,14 +687,19 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     out
 }
 
-/// Whether a paragraph carries either `<Properties>` child.
+/// Whether a paragraph carries any `<Properties>` child: tab stops, a
+/// bullet character, a numbering format or a numbering list.
 pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
-    !p.tab_list.is_empty() || p.bullet_character.is_some()
+    !p.tab_list.is_empty()
+        || p.bullet_character.is_some()
+        || p.numbering_format.is_some()
+        || p.applied_numbering_list.is_some()
 }
 
-/// The paragraph's `<Properties>` block — its tab stops and bullet
-/// character in InDesign's own spelling (see `paragraph_props`).
-/// Nothing is written when the paragraph carries neither.
+/// The paragraph's `<Properties>` block — its tab stops, bullet
+/// character, numbering format and numbering list in InDesign's own
+/// spelling (see `paragraph_props`). Nothing is written when the
+/// paragraph carries none.
 pub(crate) fn emit_paragraph_properties(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     p: &idml_import::Paragraph,
@@ -693,11 +714,38 @@ pub(crate) fn emit_paragraph_properties(
     if let Some(cp) = p.bullet_character {
         write_bullet_char(writer, cp)?;
     }
+    if let Some(f) = &p.numbering_format {
+        write_numbering_format(writer, f)?;
+    }
+    if let Some(l) = &p.applied_numbering_list {
+        write_applied_numbering_list(writer, l)?;
+    }
     writer.write_event(Event::End(BytesEnd::new("Properties")))?;
     Ok(())
 }
 
-fn write_typed_text(
+/// `<NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat>` —
+/// the only spelling InDesign reads (the attribute is ignored; measured
+/// 2026-09-06).
+pub(crate) fn write_numbering_format(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    format: &str,
+) -> Result<(), quick_xml::Error> {
+    write_typed_text(writer, "NumberingFormat", "string", format)
+}
+
+/// `<AppliedNumberingList type="object">NumberingList/X</AppliedNumberingList>`
+/// — the only spelling InDesign binds (the attribute is ignored;
+/// measured 2026-09-06). The list itself must be defined: see
+/// `resources::patch_styles`.
+pub(crate) fn write_applied_numbering_list(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    list: &str,
+) -> Result<(), quick_xml::Error> {
+    write_typed_text(writer, "AppliedNumberingList", "object", list)
+}
+
+pub(crate) fn write_typed_text(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     name: &str,
     ty: &str,
