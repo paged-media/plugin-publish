@@ -2703,6 +2703,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 };
                 let patched = patch_spread_item(
                     &e,
+                    spread,
                     &frames,
                     &spread.rectangles,
                     &spread.ovals,
@@ -2909,6 +2910,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 };
                 let patched = patch_spread_item(
                     &e,
+                    spread,
                     &frames,
                     &spread.rectangles,
                     &spread.ovals,
@@ -3341,6 +3343,7 @@ impl TransformPlan {
 #[allow(clippy::too_many_arguments)]
 fn patch_spread_item(
     e: &BytesStart,
+    spread: &Spread,
     frames: &std::collections::HashMap<&str, &TextFrame>,
     rectangles: &[idml_import::Rectangle],
     ovals: &[idml_import::Oval],
@@ -3559,6 +3562,15 @@ fn patch_spread_item(
             // `TransformPlan::extra`. InDesign's own groups carry it.
             if attr_value(e, b"ItemTransform").is_none() {
                 extras.push(("ItemTransform", "1 0 0 1 0 0".to_string()));
+            }
+            // A group without `ItemLayer` lands on the document's first
+            // layer in InDesign and drags its members there (see
+            // `write_new_group`); spell its members' layer when the
+            // source never did. One the source names is kept as is.
+            if attr_value(e, b"ItemLayer").is_none() {
+                if let Some(layer) = group_item_layer(spread, g) {
+                    extras.push(("ItemLayer", layer.to_string()));
+                }
             }
             let start = patch_start(e, |k, raw| corner_attr_patch(k, raw, &corners), &extras)?;
             Ok(Some(start.into_owned()))
@@ -5825,6 +5837,32 @@ mod tests {
         assert_eq!(
             s,
             "<Content>Largest single run (Q4)\t2,390 copies</Content><Br/><Content>Spoilage</Content>"
+        );
+    }
+
+    /// An EXISTING `<Group>` the source wrote without `ItemLayer` (our
+    /// own earlier exports) gains its members' layer on the way out;
+    /// one the source names keeps its bytes.
+    #[test]
+    fn an_existing_group_without_a_layer_takes_its_members_layer() {
+        let mut spread = grouped();
+        // The fixture's g1 wraps r2; give r2 a layer in the model.
+        spread.rectangles[1].item_layer = Some("uContent".to_string());
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Group Self="g1" ItemTransform="1 0 0 1 100 0" ItemLayer="uContent">"#),
+            "{s}"
+        );
+        let named = String::from_utf8_lossy(GROUP_SPREAD).replace(
+            r#"<Group Self="g1" ItemTransform="1 0 0 1 100 0">"#,
+            r#"<Group Self="g1" ItemTransform="1 0 0 1 100 0" ItemLayer="uGrid">"#,
+        );
+        let out = rewrite_spread(named.as_bytes(), &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        assert!(
+            s.contains(r#"<Group Self="g1" ItemTransform="1 0 0 1 100 0" ItemLayer="uGrid">"#),
+            "{s}"
         );
     }
 
