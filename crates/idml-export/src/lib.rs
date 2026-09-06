@@ -93,6 +93,7 @@ mod reorder;
 pub mod resources;
 pub mod rewrite;
 mod style_attrs;
+pub mod table_regions;
 pub mod text_frame_prefs;
 pub mod text_wrap;
 pub mod transparency;
@@ -868,6 +869,13 @@ pub(crate) fn write_package(
                 source,
             }
         })?;
+        // … and a table style that names a REGION cell style carries the
+        // flag that turns the region on (see [`table_regions`]).
+        let new =
+            table_regions::spell_region_flags(&new).map_err(|source| WriteError::Rewrite {
+                entry: STYLES_SRC.to_string(),
+                source,
+            })?;
         if new != orig.as_slice() {
             patched.insert(STYLES_SRC.to_string(), new);
         }
