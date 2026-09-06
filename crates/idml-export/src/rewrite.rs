@@ -589,9 +589,52 @@ fn rect_corners(b: Bounds) -> Vec<PathAnchor> {
     ]
 }
 
+/// The four-arc Bézier circle constant.
+const OVAL_KAPPA: f32 = 0.552_284_8;
+
+/// InDesign's own `<Oval>` path (measured 2026-09-06 on a fresh oval
+/// exported from InDesign 20.0.1): four anchors at the edge midpoints
+/// in the order bottom, right, top, left, each with handles κ·r along
+/// its edge. An `<Oval>` is only an ellipse by its path — InDesign drew
+/// the four-corner box this used to write as a rectangle (the annual's
+/// blend-mode plates).
+fn oval_anchors(b: Bounds) -> Vec<PathAnchor> {
+    let cx = (b.left + b.right) * 0.5;
+    let cy = (b.top + b.bottom) * 0.5;
+    let kx = (b.right - b.left) * 0.5 * OVAL_KAPPA;
+    let ky = (b.bottom - b.top) * 0.5 * OVAL_KAPPA;
+    vec![
+        PathAnchor {
+            anchor: (cx, b.bottom),
+            left: (cx - kx, b.bottom),
+            right: (cx + kx, b.bottom),
+        },
+        PathAnchor {
+            anchor: (b.right, cy),
+            left: (b.right, cy + ky),
+            right: (b.right, cy - ky),
+        },
+        PathAnchor {
+            anchor: (cx, b.top),
+            left: (cx + kx, b.top),
+            right: (cx - kx, b.top),
+        },
+        PathAnchor {
+            anchor: (b.left, cy),
+            left: (b.left, cy - ky),
+            right: (b.left, cy + ky),
+        },
+    ]
+}
+
 /// The model's path geometry for one spread page item, plus a hint at
 /// how to reconcile a divergence.
 struct ModelGeometry {
+    /// The item is an `<Oval>`: its geometry is bounds-only in the
+    /// model, and its on-disk path is either InDesign's ellipse (kept)
+    /// or the four-corner box an older export of ours wrote (re-spelled
+    /// as the ellipse — see [`oval_anchors`]).
+    oval: bool,
     /// Flat anchor list across all contours (model order).
     anchors: Vec<PathAnchor>,
     /// Per-contour start offsets into `anchors` (see
@@ -613,6 +656,12 @@ impl ModelGeometry {
     /// A contour the MODEL has no entry for passes through — see
     /// [`ModelGeometry::contour_slice`].
     fn target_for_contour(&self, contour: usize, parsed: &[PathAnchor]) -> Option<Vec<PathAnchor>> {
+        if self.oval {
+            let respell = contour == 0
+                && (is_axis_aligned_rect(parsed)
+                    || !bounds_eq_formatted(self.bounds, bounds_of(parsed)));
+            return respell.then(|| oval_anchors(self.bounds));
+        }
         // Bounds-only model (a plain rectangle): the parser keeps no
         // anchors for a 4-corner AABB Rectangle — its geometry lives in
         // `bounds` alone. A `FrameBounds` resize moves `bounds` while the
@@ -742,11 +791,22 @@ fn model_geometry(
     self_id: &str,
     frames: &std::collections::HashMap<&str, &TextFrame>,
     rectangles: &[idml_import::Rectangle],
+    ovals: &[idml_import::Oval],
     polygons: &[idml_import::Polygon],
     graphic_lines: &[idml_import::GraphicLine],
 ) -> Option<ModelGeometry> {
     match name {
+        b"Oval" => ovals
+            .iter()
+            .find(|o| o.self_id.as_deref() == Some(self_id))
+            .map(|o| ModelGeometry {
+                oval: true,
+                anchors: Vec::new(),
+                subpath_starts: Vec::new(),
+                bounds: o.bounds,
+            }),
         b"TextFrame" => frames.get(self_id).map(|f| ModelGeometry {
+            oval: false,
             anchors: f.anchors.clone(),
             subpath_starts: f.subpath_starts.clone(),
             bounds: f.bounds,
@@ -755,6 +815,7 @@ fn model_geometry(
             .iter()
             .find(|r| r.self_id.as_deref() == Some(self_id))
             .map(|r| ModelGeometry {
+                oval: false,
                 anchors: r.anchors.clone(),
                 subpath_starts: r.subpath_starts.clone(),
                 bounds: r.bounds,
@@ -763,6 +824,7 @@ fn model_geometry(
             .iter()
             .find(|r| r.self_id.as_deref() == Some(self_id))
             .map(|r| ModelGeometry {
+                oval: false,
                 anchors: r.anchors.clone(),
                 subpath_starts: r.subpath_starts.clone(),
                 bounds: r.bounds,
@@ -771,6 +833,7 @@ fn model_geometry(
             .iter()
             .find(|r| r.self_id.as_deref() == Some(self_id))
             .map(|r| ModelGeometry {
+                oval: false,
                 anchors: r.anchors.clone(),
                 subpath_starts: r.subpath_starts.clone(),
                 bounds: r.bounds,
@@ -839,13 +902,31 @@ fn write_box_path_geometry(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     b: Bounds,
 ) -> Result<(), quick_xml::Error> {
+    write_closed_path_geometry(writer, &rect_corners(b))
+}
+
+/// `<PathGeometry>` for an `<Oval>`: the ellipse inscribed in the
+/// spread-space bounds, spelled as InDesign spells it (see
+/// [`oval_anchors`]). The anchors sit at the edge midpoints, so the
+/// parser's `bounds_from_anchors` reproduces these bounds exactly.
+fn write_oval_path_geometry(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    b: Bounds,
+) -> Result<(), quick_xml::Error> {
+    write_closed_path_geometry(writer, &oval_anchors(b))
+}
+
+fn write_closed_path_geometry(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    anchors: &[PathAnchor],
+) -> Result<(), quick_xml::Error> {
     writer.write_event(Event::Start(BytesStart::new("PathGeometry")))?;
     let mut gp = BytesStart::new("GeometryPathType");
     gp.push_attribute(("PathOpen", "false"));
     writer.write_event(Event::Start(gp))?;
     writer.write_event(Event::Start(BytesStart::new("PathPointArray")))?;
-    for a in rect_corners(b) {
-        write_path_point(writer, &a)?;
+    for a in anchors {
+        write_path_point(writer, a)?;
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
         "PathPointArray",
@@ -1384,7 +1465,11 @@ fn write_new_box_item(
     emit_start_with_attrs(writer, kind, &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
     write_item_label(writer, spread, self_id)?;
-    write_box_path_geometry(writer, bounds)?;
+    if kind == "Oval" {
+        write_oval_path_geometry(writer, bounds)?;
+    } else {
+        write_box_path_geometry(writer, bounds)?;
+    }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     write_transparency_setting(writer, paint)?;
     if let Some(children) = spread.nested_children.get(self_id) {
@@ -2770,6 +2855,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                                 id,
                                 &frames,
                                 &spread.rectangles,
+                                &spread.ovals,
                                 &spread.polygons,
                                 &spread.graphic_lines,
                             )
@@ -5863,6 +5949,50 @@ mod tests {
         assert!(
             s.contains(r#"<Group Self="g1" ItemTransform="1 0 0 1 100 0" ItemLayer="uGrid">"#),
             "{s}"
+        );
+    }
+
+    /// InDesign draws an `<Oval>` by its PATH. Ours used to spell the
+    /// four-corner box (a rectangle to InDesign — the annual's blend
+    /// plates); now an oval carries InDesign's own ellipse: midpoint
+    /// anchors bottom, right, top, left with κ·r handles (measured
+    /// 2026-09-06). An existing box-spelled oval is re-spelled; one
+    /// carrying InDesign's ellipse at the same bounds keeps its bytes.
+    #[test]
+    fn an_oval_is_spelled_as_indesign_spells_it() {
+        const BOX_OVAL: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><Oval Self="o1" ItemTransform="1 0 0 1 0 0" FillColor="Color/Black"><Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray><PathPointType Anchor="100 200" LeftDirection="100 200" RightDirection="100 200"/><PathPointType Anchor="100 400" LeftDirection="100 400" RightDirection="100 400"/><PathPointType Anchor="300 400" LeftDirection="300 400" RightDirection="300 400"/><PathPointType Anchor="300 200" LeftDirection="300 200" RightDirection="300 200"/></PathPointArray></GeometryPathType></PathGeometry></Properties></Oval></Spread>
+</idPkg:Spread>"#;
+        let spread = idml_import::parse_spread(BOX_OVAL).expect("parse");
+        let out = rewrite_spread(BOX_OVAL, &spread).expect("rewrite");
+        let s = String::from_utf8(out).unwrap();
+        // 200 × 200 at (100, 200): centre (200, 300), κ·r = 55.2285 (four decimals on disk).
+        assert!(
+            s.contains(r#"<PathPointType Anchor="200 400" LeftDirection="144.7715 400" RightDirection="255.2285 400"/>"#),
+            "{s}"
+        );
+        assert!(
+            s.contains(r#"<PathPointType Anchor="300 300" LeftDirection="300 355.2285" RightDirection="300 244.7715"/>"#),
+            "{s}"
+        );
+        assert!(
+            s.contains(r#"Anchor="200 200""#) && s.contains(r#"Anchor="100 300""#),
+            "{s}"
+        );
+        assert_eq!(s.matches("<PathPointType ").count(), 4);
+
+        // InDesign's own spelling round-trips byte-identically.
+        let ellipse = String::from_utf8_lossy(BOX_OVAL).replace(
+            r#"<PathPointType Anchor="100 200" LeftDirection="100 200" RightDirection="100 200"/><PathPointType Anchor="100 400" LeftDirection="100 400" RightDirection="100 400"/><PathPointType Anchor="300 400" LeftDirection="300 400" RightDirection="300 400"/><PathPointType Anchor="300 200" LeftDirection="300 200" RightDirection="300 200"/>"#,
+            r#"<PathPointType Anchor="200 400" LeftDirection="144.7715 400" RightDirection="255.2285 400"/><PathPointType Anchor="300 300" LeftDirection="300 355.2285" RightDirection="300 244.7715"/><PathPointType Anchor="200 200" LeftDirection="255.2285 200" RightDirection="144.7715 200"/><PathPointType Anchor="100 300" LeftDirection="100 244.7715" RightDirection="100 355.2285"/>"#,
+        );
+        let spread = idml_import::parse_spread(ellipse.as_bytes()).expect("parse");
+        let out = rewrite_spread(ellipse.as_bytes(), &spread).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            ellipse,
+            "an InDesign ellipse keeps its bytes"
         );
     }
 
