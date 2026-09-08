@@ -1379,14 +1379,24 @@ pub(crate) fn write_text_frame_preference(
     let Some(insets) = insets else {
         return emit_empty_with_attrs(writer, "TextFramePreference", &attrs);
     };
-    // The insets are a typed `<InsetSpacing>` child of `<Properties>`.
-    // InDesign ignores the attribute spelling outright (measured: an
-    // IDML carrying `InsetSpacing="4 4 4 4"` opens with
-    // `textFramePreferences.insetSpacing = [0]`), and writes one scalar
-    // when the four sides agree, a four-item list otherwise.
     emit_start_with_attrs(writer, "TextFramePreference", &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
-    let uniform = insets.iter().all(|v| *v == insets[0]);
+    write_inset_spacing(writer, insets)?;
+    writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+    writer.write_event(Event::End(BytesEnd::new("TextFramePreference")))?;
+    Ok(())
+}
+
+/// The typed `<InsetSpacing>` child of a `<TextFramePreference>`'s
+/// `<Properties>`. InDesign ignores the attribute spelling outright
+/// (measured: an IDML carrying `InsetSpacing="4 4 4 4"` opens with
+/// `textFramePreferences.insetSpacing = [0]`), and writes one scalar
+/// when the four sides agree, a four-item list in `[top, left, bottom,
+/// right]` order otherwise.
+pub(crate) fn write_inset_spacing(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    insets: [f32; 4],
+) -> Result<(), quick_xml::Error> {
     let unit = |writer: &mut Writer<Cursor<Vec<u8>>>,
                 name: &str,
                 v: f32|
@@ -1396,17 +1406,14 @@ pub(crate) fn write_text_frame_preference(
         writer.write_event(Event::End(BytesEnd::new(name)))?;
         Ok(())
     };
-    if uniform {
-        unit(writer, "InsetSpacing", insets[0])?;
-    } else {
-        emit_start_with_attrs(writer, "InsetSpacing", &[("type", "list".to_string())])?;
-        for v in insets {
-            unit(writer, "ListItem", v)?;
-        }
-        writer.write_event(Event::End(BytesEnd::new("InsetSpacing")))?;
+    if insets.iter().all(|v| *v == insets[0]) {
+        return unit(writer, "InsetSpacing", insets[0]);
     }
-    writer.write_event(Event::End(BytesEnd::new("Properties")))?;
-    writer.write_event(Event::End(BytesEnd::new("TextFramePreference")))?;
+    emit_start_with_attrs(writer, "InsetSpacing", &[("type", "list".to_string())])?;
+    for v in insets {
+        unit(writer, "ListItem", v)?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("InsetSpacing")))?;
     Ok(())
 }
 

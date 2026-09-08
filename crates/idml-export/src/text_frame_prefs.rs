@@ -12,7 +12,8 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-//! `<TextFramePreference>` auto-sizing save-back for EXISTING frames.
+//! `<TextFramePreference>` auto-sizing and inset save-back for
+//! EXISTING frames.
 //!
 //! Measured on InDesign 20.0.1: `<TextFramePreference
 //! AutoSizingType="HeightOnly" AutoSizingReferencePoint="TopCenterPoint"/>`
@@ -26,15 +27,86 @@
 
 use std::io::Cursor;
 
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::{Spread, TextFrame};
 
 use crate::rewrite::{
     attr_value, auto_sizing_idml, auto_sizing_reference_point_idml, format_f32, patch_start,
-    preserving_f32_patch, write_text_frame_preference, Patch,
+    preserving_f32_patch, write_inset_spacing, write_text_frame_preference, Patch,
 };
+
+/// The insets a SOURCE `<TextFrame>` already carries, keyed by `Self`.
+///
+/// Needed because "the model changed the insets" is not a question the
+/// parsed document can answer on its own — its value IS the source's
+/// unless something mutated it. A frame whose insets still agree with
+/// its source is left completely untouched, so an unmutated package
+/// stays byte-identical.
+fn source_insets(original: &[u8]) -> std::collections::HashMap<String, [f32; 4]> {
+    let mut out = std::collections::HashMap::new();
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut buf = Vec::new();
+    // (frame Self, inside its own TextFramePreference, list form, values, text)
+    let mut frame: Option<String> = None;
+    let mut in_pref = false;
+    let mut open: Option<(bool, Vec<f32>)> = None;
+    let mut text = String::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Err(_) | Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => match e.name().as_ref() {
+                b"TextFrame" => frame = attr_value(&e, b"Self"),
+                b"TextFramePreference" if frame.is_some() => in_pref = true,
+                b"InsetSpacing" if in_pref => {
+                    open = Some((
+                        attr_value(&e, b"type").as_deref() == Some("list"),
+                        Vec::new(),
+                    ));
+                    text.clear();
+                }
+                b"ListItem" if open.is_some() => text.clear(),
+                _ => {}
+            },
+            Ok(Event::Text(t)) if open.is_some() => {
+                text.push_str(&String::from_utf8_lossy(t.as_ref()));
+            }
+            Ok(Event::End(e)) => match e.name().as_ref() {
+                b"TextFrame" => frame = None,
+                b"TextFramePreference" => in_pref = false,
+                b"ListItem" => {
+                    if let Some((_, vals)) = open.as_mut() {
+                        if let Ok(v) = text.trim().parse::<f32>() {
+                            vals.push(v);
+                        }
+                        text.clear();
+                    }
+                }
+                b"InsetSpacing" => {
+                    if let (Some((list, vals)), Some(id)) = (open.take(), frame.as_ref()) {
+                        let insets = if list {
+                            (vals.len() == 4).then(|| [vals[0], vals[1], vals[2], vals[3]])
+                        } else {
+                            text.trim().parse::<f32>().ok().map(|v| [v; 4])
+                        };
+                        if let Some(insets) = insets {
+                            out.insert(id.clone(), insets);
+                        }
+                    }
+                    text.clear();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        buf.clear();
+    }
+    out
+}
 
 fn patch_preference(
     e: &BytesStart,
@@ -102,18 +174,33 @@ fn patch_preference(
     )
 }
 
-/// Bring every source `<TextFrame>`'s `<TextFramePreference>` auto-sizing
-/// in line with the model frame of the same `Self`. Frames the model does
-/// not auto-size are left exactly as they are.
+/// Bring every source `<TextFrame>`'s `<TextFramePreference>` in line
+/// with the model frame of the same `Self` — auto-sizing, and the text
+/// insets when the model has changed them. A frame the model neither
+/// auto-sizes nor re-insets is left exactly as it is.
 pub fn rewrite_text_frame_prefs(
     original: &[u8],
     spread: &Spread,
 ) -> Result<Vec<u8>, quick_xml::Error> {
+    // Insets are only rewritten where the model DISAGREES with the
+    // source, so an unmutated package is passed through untouched
+    // rather than reformatted into our own spelling.
+    let source = source_insets(original);
+    let moved_insets: std::collections::HashSet<&str> = spread
+        .text_frames
+        .iter()
+        .filter_map(|f| {
+            let id = f.self_id.as_deref()?;
+            let model = f.inset_spacing.unwrap_or([0.0; 4]);
+            let src = source.get(id).copied().unwrap_or([0.0; 4]);
+            (model != src).then_some(id)
+        })
+        .collect();
     let frames: std::collections::HashMap<&str, &TextFrame> = spread
         .text_frames
         .iter()
-        .filter(|f| f.auto_sizing.is_some())
         .filter_map(|f| f.self_id.as_deref().map(|id| (id, f)))
+        .filter(|(id, f)| f.auto_sizing.is_some() || moved_insets.contains(id))
         .collect();
     if frames.is_empty() {
         return Ok(original.to_vec());
@@ -127,6 +214,12 @@ pub fn rewrite_text_frame_prefs(
     let mut depth = 0usize;
     // The open model-matched `<TextFrame>`: (depth, frame, preference seen).
     let mut open: Option<(usize, &TextFrame, bool)> = None;
+    // The open `<TextFramePreference>` whose insets must be rewritten:
+    // (its depth, the values, whether they have been written, whether a
+    // `<Properties>` child has been seen). `skip` holds the depth of an
+    // existing `<InsetSpacing>` subtree being dropped in favour of it.
+    let mut pref: Option<(usize, [f32; 4], bool, bool)> = None;
+    let mut skip: Option<usize> = None;
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
@@ -145,7 +238,22 @@ pub fn rewrite_text_frame_prefs(
                         let (d, f, _) = open.expect("checked");
                         open = Some((d, f, true));
                         writer.write_event(Event::Start(patch_preference(&e, f)?))?;
+                        if moved_insets.contains(f.self_id.as_deref().unwrap_or_default()) {
+                            pref = Some((depth, f.inset_spacing.unwrap_or([0.0; 4]), false, false));
+                        }
                     }
+                    // The model's insets replace whatever the source
+                    // carried; the rest of `<Properties>` is untouched.
+                    b"Properties" if pref.is_some_and(|(d, _, _, _)| d + 1 == depth) => {
+                        writer.write_event(Event::Start(e.into_owned()))?;
+                        let (d, insets, _, _) = pref.expect("checked");
+                        write_inset_spacing(&mut writer, insets)?;
+                        pref = Some((d, insets, true, true));
+                    }
+                    b"InsetSpacing" if pref.is_some_and(|(_, _, w, _)| w) && skip.is_none() => {
+                        skip = Some(depth);
+                    }
+                    _ if skip.is_some() => {}
                     _ => writer.write_event(Event::Start(e.into_owned()))?,
                 }
             }
@@ -153,8 +261,20 @@ pub fn rewrite_text_frame_prefs(
                 b"TextFramePreference" if open.is_some_and(|(d, _, _)| d + 1 == depth + 1) => {
                     let (d, f, _) = open.expect("checked");
                     open = Some((d, f, true));
-                    writer.write_event(Event::Empty(patch_preference(&e, f)?))?;
+                    let start = patch_preference(&e, f)?;
+                    if moved_insets.contains(f.self_id.as_deref().unwrap_or_default()) {
+                        // A self-closing preference has nowhere to put
+                        // the insets — open it around a `<Properties>`.
+                        writer.write_event(Event::Start(start))?;
+                        writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+                        write_inset_spacing(&mut writer, f.inset_spacing.unwrap_or([0.0; 4]))?;
+                        writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+                        writer.write_event(Event::End(BytesEnd::new("TextFramePreference")))?;
+                    } else {
+                        writer.write_event(Event::Empty(start))?;
+                    }
                 }
+                _ if skip.is_some() => {}
                 // A self-closing frame the model auto-sizes: expand it
                 // around the preference it needs.
                 b"TextFrame" if open.is_none() => {
@@ -173,6 +293,27 @@ pub fn rewrite_text_frame_prefs(
                 _ => writer.write_event(Event::Empty(e.into_owned()))?,
             },
             Event::End(e) => {
+                if let Some(d) = skip {
+                    // Inside the source `<InsetSpacing>` we replaced.
+                    if d == depth && e.name().as_ref() == b"InsetSpacing" {
+                        skip = None;
+                    }
+                    depth = depth.saturating_sub(1);
+                    buf.clear();
+                    continue;
+                }
+                if let Some((d, insets, written, saw_props)) = pref {
+                    if d == depth && e.name().as_ref() == b"TextFramePreference" {
+                        if !saw_props {
+                            // No `<Properties>` at all: give it one.
+                            writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+                            write_inset_spacing(&mut writer, insets)?;
+                            writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+                        }
+                        let _ = written;
+                        pref = None;
+                    }
+                }
                 if let Some((d, f, seen)) = open {
                     if d == depth && e.name().as_ref() == b"TextFrame" {
                         if !seen {
@@ -184,7 +325,8 @@ pub fn rewrite_text_frame_prefs(
                 depth = depth.saturating_sub(1);
                 writer.write_event(Event::End(e))?;
             }
-            other => writer.write_event(other)?,
+            other if skip.is_none() => writer.write_event(other)?,
+            _ => {}
         }
         buf.clear();
     }

@@ -113,3 +113,108 @@ fn no_insets_writes_no_preference() {
     assert!(!xml.contains("InsetSpacing"), "nothing written:\n{xml}");
     pkg::assert_same_package(&source, &out);
 }
+
+// ---------------------------------------------------------------------
+// An EXISTING frame whose insets the model changed
+// ---------------------------------------------------------------------
+
+/// A source frame carrying its own typed `<InsetSpacing>` follows the
+/// model when the model moves it — and the rest of its `<Properties>`
+/// survives untouched.
+#[test]
+fn a_changed_inset_on_a_source_frame_is_written_back() {
+    let spread = pkg::SPREAD.replace(
+        r#"<TextFrame Self="tf1" ParentStory="st1" GeometricBounds="100 100 400 400" ItemTransform="1 0 0 1 0 0"/>"#,
+        r#"<TextFrame Self="tf1" ParentStory="st1" GeometricBounds="100 100 400 400" ItemTransform="1 0 0 1 0 0"><TextFramePreference TextColumnCount="2"><Properties><InsetSpacing type="unit">4</InsetSpacing><VerticalThreshold type="unit">7</VerticalThreshold></Properties></TextFramePreference></TextFrame>"#,
+    );
+    let source = pkg::package(&[
+        ("designmap.xml", &pkg::designmap("")),
+        ("Resources/Styles.xml", pkg::STYLES),
+        ("Spreads/Spread_s1.xml", &spread),
+        ("Stories/Story_st1.xml", &pkg::story(pkg::STORY_BODY)),
+    ]);
+    let mut doc = pkg::open(&source);
+    assert_eq!(
+        doc.spreads[0].spread.text_frames[0].inset_spacing,
+        Some([4.0; 4])
+    );
+    doc.spreads[0].spread.text_frames[0].inset_spacing = Some([9.0, 3.0, 9.0, 3.0]);
+
+    let out = write_idml(&doc, &source).expect("write");
+    let xml = pkg::entry(&out, "Spreads/Spread_s1.xml").expect("spread");
+    assert!(
+        xml.contains(r#"<InsetSpacing type="list">"#)
+            && xml.contains(r#"<ListItem type="unit">9</ListItem>"#),
+        "the model's insets replace the source's:\n{xml}"
+    );
+    assert!(
+        !xml.contains(r#"<InsetSpacing type="unit">4</InsetSpacing>"#),
+        "the source's insets are gone, not duplicated:\n{xml}"
+    );
+    assert!(
+        xml.contains(r#"<VerticalThreshold type="unit">7</VerticalThreshold>"#),
+        "its sibling property survives:\n{xml}"
+    );
+    assert!(
+        xml.contains(r#"TextColumnCount="2""#),
+        "the preference's own attributes survive:\n{xml}"
+    );
+    let re = pkg::open(&out);
+    assert_eq!(
+        re.spreads[0].spread.text_frames[0].inset_spacing,
+        Some([9.0, 3.0, 9.0, 3.0])
+    );
+}
+
+/// A source frame with a preference but NO `<Properties>` gains one.
+#[test]
+fn a_frame_whose_preference_has_no_properties_gains_them() {
+    let spread = pkg::SPREAD.replace(
+        r#"<TextFrame Self="tf1" ParentStory="st1" GeometricBounds="100 100 400 400" ItemTransform="1 0 0 1 0 0"/>"#,
+        r#"<TextFrame Self="tf1" ParentStory="st1" GeometricBounds="100 100 400 400" ItemTransform="1 0 0 1 0 0"><TextFramePreference TextColumnCount="1"/></TextFrame>"#,
+    );
+    let source = pkg::package(&[
+        ("designmap.xml", &pkg::designmap("")),
+        ("Resources/Styles.xml", pkg::STYLES),
+        ("Spreads/Spread_s1.xml", &spread),
+        ("Stories/Story_st1.xml", &pkg::story(pkg::STORY_BODY)),
+    ]);
+    let mut doc = pkg::open(&source);
+    assert_eq!(doc.spreads[0].spread.text_frames[0].inset_spacing, None);
+    doc.spreads[0].spread.text_frames[0].inset_spacing = Some([5.0; 4]);
+
+    let out = write_idml(&doc, &source).expect("write");
+    let xml = pkg::entry(&out, "Spreads/Spread_s1.xml").expect("spread");
+    assert!(
+        xml.contains(r#"<Properties><InsetSpacing type="unit">5</InsetSpacing></Properties>"#),
+        "a Properties block is created for them:\n{xml}"
+    );
+    let re = pkg::open(&out);
+    assert_eq!(
+        re.spreads[0].spread.text_frames[0].inset_spacing,
+        Some([5.0; 4])
+    );
+}
+
+/// An UNCHANGED inset is not rewritten — the source's own bytes stand,
+/// so a package nobody edited comes back identical.
+#[test]
+fn an_unchanged_inset_leaves_the_source_alone() {
+    let spread = pkg::SPREAD.replace(
+        r#"<TextFrame Self="tf1" ParentStory="st1" GeometricBounds="100 100 400 400" ItemTransform="1 0 0 1 0 0"/>"#,
+        r#"<TextFrame Self="tf1" ParentStory="st1" GeometricBounds="100 100 400 400" ItemTransform="1 0 0 1 0 0"><TextFramePreference TextColumnCount="1"><Properties><InsetSpacing type="list"><ListItem type="unit">1</ListItem><ListItem type="unit">2</ListItem><ListItem type="unit">3</ListItem><ListItem type="unit">4</ListItem></InsetSpacing></Properties></TextFramePreference></TextFrame>"#,
+    );
+    let source = pkg::package(&[
+        ("designmap.xml", &pkg::designmap("")),
+        ("Resources/Styles.xml", pkg::STYLES),
+        ("Spreads/Spread_s1.xml", &spread),
+        ("Stories/Story_st1.xml", &pkg::story(pkg::STORY_BODY)),
+    ]);
+    let doc = pkg::open(&source);
+    assert_eq!(
+        doc.spreads[0].spread.text_frames[0].inset_spacing,
+        Some([1.0, 2.0, 3.0, 4.0])
+    );
+    let out = write_idml(&doc, &source).expect("write");
+    pkg::assert_same_package(&source, &out);
+}
