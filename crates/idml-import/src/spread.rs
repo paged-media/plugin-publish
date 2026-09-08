@@ -570,6 +570,16 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
     // outer group's `members` can carry a `FrameRef::Group(idx)`.
     let mut group_builders: Vec<GroupBuilder> = Vec::new();
     let mut current_frame: Option<CurrentFrame> = None;
+    // `ShowMasterItems` is a SPREAD attribute, not a page one. InDesign
+    // writes it on `<Spread>` (1,006 times across the corpus packs) and
+    // `<MasterSpread>` (296) and never once on `<Page>` — and it
+    // IGNORES a `<Page ShowMasterItems="false">`, which is what this
+    // reader used to require: measured 2026-09-08, InDesign's export of
+    // the `masters` fixture drew every master item the page asked to
+    // hide, and hid them once the attribute moved to the spread.
+    // Captured here because `<Spread>` opens before its `<Page>`
+    // children, so it can serve as their default.
+    let mut spread_show_master_items: Option<bool> = None;
     // B-18 paste-into: stack of page items whose element is still
     // open while a CHILD page item is being parsed. Parked at the
     // child's open tag, restored at its close — so the container's
@@ -928,6 +938,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         out.item_transform =
                             attr(&e, b"ItemTransform").and_then(|s| parse_matrix(&s));
                     }
+                    if let Some(v) = attr(&e, b"ShowMasterItems").and_then(|s| s.parse().ok()) {
+                        spread_show_master_items = Some(v);
+                    }
                 }
                 b"Group" => {
                     // B-18 residual: a <Group> pasted into a container
@@ -998,8 +1011,13 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                 .map(|s| s.split_whitespace().map(str::to_string).collect())
                                 .unwrap_or_default(),
                             name: attr(&e, b"Name"),
+                            // A per-page spelling still wins if one is
+                            // present — our own writer emitted it there
+                            // for a while — but the spread is where the
+                            // format actually carries it.
                             show_master_items: attr(&e, b"ShowMasterItems")
-                                .and_then(|s| s.parse().ok()),
+                                .and_then(|s| s.parse().ok())
+                                .or(spread_show_master_items),
                         });
                     }
                 }
@@ -3045,6 +3063,33 @@ mod tests {
         assert_eq!(
             s.pages[2].show_master_items, None,
             "absent ⇒ stamp as usual"
+        );
+    }
+
+    #[test]
+    fn show_master_items_is_a_spread_attribute() {
+        // This is where IDML actually carries it: InDesign writes it on
+        // `<Spread>` 1,006 times and `<MasterSpread>` 296 times across
+        // the corpus packs, and on `<Page>` never — and it IGNORES a
+        // page-level one. Reading only the page spelling meant a real
+        // document that hides its master items still had them drawn.
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s" ShowMasterItems="false">
+            <Page Self="p1" GeometricBounds="0 0 792 612"/>
+            <Page Self="p2" GeometricBounds="0 0 792 612" ShowMasterItems="true"/>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(
+            s.pages[0].show_master_items,
+            Some(false),
+            "the spread's flag reaches a page that declares none"
+        );
+        assert_eq!(
+            s.pages[1].show_master_items,
+            Some(true),
+            "a page-level spelling still wins — our own writer emitted one for a while"
         );
     }
 
