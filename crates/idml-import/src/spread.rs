@@ -100,6 +100,20 @@ struct GroupBuilder {
     content_transparency_depth: u32,
 }
 
+/// Open `<InsetSpacing>` capture — see `current_insets`. IDML writes
+/// either one scalar (all four sides equal) or a four-item list in
+/// `[top, left, bottom, right]` order; both arrive as element text, so
+/// the values are collected across `Event::Text` and settled at the
+/// end tag.
+struct InsetCapture {
+    /// Index into `out.text_frames` of the frame the preference belongs to.
+    frame: usize,
+    /// `true` for `type="list"` — values arrive one `<ListItem>` at a
+    /// time; `false` for the `type="unit"` scalar.
+    list: bool,
+    values: Vec<f32>,
+}
+
 /// Per-frame parser state held while a shape element is open.
 /// Tracks whether the bounds came from a `GeometricBounds` attribute
 /// (the legacy synthetic-IDML shape) or need to be derived from the
@@ -608,6 +622,21 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
     // Q-03 capture below would decode PostScript and hand it to the image
     // decoder as if it were a JPEG.
     let mut in_eps_element = false;
+    // `<TextFramePreference><Properties><InsetSpacing>` capture.
+    //
+    // InDesign never writes the insets as an attribute: measured across
+    // 271 real-world packages there are 0 `InsetSpacing="…"` attributes,
+    // 13,893 `type="list"` children and 45 `type="unit"` ones — and
+    // asked to open an IDML carrying the attribute form it reports
+    // `insetSpacing = [0]`. So the typed child is the spelling, and the
+    // attribute (which `paged-gen` used to write) is only kept as a
+    // fallback for documents this project generated.
+    //
+    // `Some(..)` between `<InsetSpacing>` and its end tag: the frame it
+    // belongs to, whether the scalar or the four-item list form is open,
+    // and the values collected so far.
+    let mut current_insets: Option<InsetCapture> = None;
+    let mut current_inset_buf = String::new();
     let mut current_contents_buf: Vec<u8> = Vec::new();
     let mut buf = Vec::new();
 
@@ -1991,6 +2020,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         {
                             f.minimum_first_baseline_offset = Some(min_fbo);
                         }
+                        // The attribute form is not InDesign's (see
+                        // `current_insets`); a typed `<InsetSpacing>`
+                        // child arriving later overwrites whatever it
+                        // sets.
                         if let Some(insets) =
                             attr(&e, b"InsetSpacing").and_then(|s| parse_insets(&s))
                         {
@@ -2039,6 +2072,25 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                             f.column_balance = Some(cb);
                         }
                     }
+                }
+                b"InsetSpacing" => {
+                    // The typed child InDesign actually writes. Only
+                    // `<TextFramePreference>` carries one in a spread,
+                    // and only a text frame has insets to carry.
+                    if let Some(CurrentFrameKind::Text(i)) =
+                        current_frame.as_ref().map(|cf| cf.kind)
+                    {
+                        let list = attr(&e, b"type").as_deref() == Some("list");
+                        current_insets = Some(InsetCapture {
+                            frame: i,
+                            list,
+                            values: Vec::new(),
+                        });
+                        current_inset_buf.clear();
+                    }
+                }
+                b"ListItem" if current_insets.is_some() => {
+                    current_inset_buf.clear();
                 }
                 b"Image" | b"EPS" | b"PDF" | b"ImportedPage" | b"Link" => {
                     // IDML's image-bearing frame nests an
@@ -2588,6 +2640,31 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // doesn't accidentally route to this rect.
                     current_gradient_feather = None;
                 }
+                b"ListItem" => {
+                    if let Some(cap) = current_insets.as_mut() {
+                        if let Ok(v) = current_inset_buf.trim().parse::<f32>() {
+                            cap.values.push(v);
+                        }
+                        current_inset_buf.clear();
+                    }
+                }
+                b"InsetSpacing" => {
+                    if let Some(cap) = current_insets.take() {
+                        let insets = if cap.list {
+                            (cap.values.len() == 4).then(|| {
+                                [cap.values[0], cap.values[1], cap.values[2], cap.values[3]]
+                            })
+                        } else {
+                            current_inset_buf.trim().parse::<f32>().ok().map(|v| [v; 4])
+                        };
+                        if let (Some(insets), Some(f)) =
+                            (insets, out.text_frames.get_mut(cap.frame))
+                        {
+                            f.inset_spacing = Some(insets);
+                        }
+                        current_inset_buf.clear();
+                    }
+                }
                 b"Contents" => {
                     // Q-03: close the inline-image base64 capture.
                     // Decode and stash on the parent shape; clear
@@ -2603,6 +2680,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                 }
                 _ => {}
             },
+            Event::Text(t) if current_insets.is_some() => {
+                current_inset_buf.push_str(&String::from_utf8_lossy(t.as_ref()));
+            }
             Event::Text(t) if current_image_contents_target.is_some() => {
                 // base64 CDATA can also arrive as Text events
                 // (whitespace-padded between tags). Trim during
@@ -3385,6 +3465,83 @@ mod tests {
         );
         assert_eq!(f.minimum_first_baseline_offset, Some(14.0));
         assert_eq!(f.inset_spacing, Some([6.0, 8.0, 10.0, 12.0]));
+    }
+
+    /// InDesign's own spelling: the insets are a typed `<InsetSpacing>`
+    /// child of `<Properties>`, never an attribute. The four-item list
+    /// form carries `[top, left, bottom, right]`.
+    #[test]
+    fn parses_inset_spacing_written_as_a_typed_list_child() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="frameA" ParentStory="u1" GeometricBounds="0 0 200 300">
+              <TextFramePreference TextColumnCount="1">
+                <Properties>
+                  <InsetSpacing type="list">
+                    <ListItem type="unit">6</ListItem>
+                    <ListItem type="unit">8</ListItem>
+                    <ListItem type="unit">10</ListItem>
+                    <ListItem type="unit">12</ListItem>
+                  </InsetSpacing>
+                </Properties>
+              </TextFramePreference>
+            </TextFrame>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.text_frames[0].inset_spacing, Some([6.0, 8.0, 10.0, 12.0]));
+    }
+
+    /// The scalar form InDesign writes when all four sides agree —
+    /// what an oval frame with a 4 pt inset comes out as.
+    #[test]
+    fn parses_inset_spacing_written_as_a_scalar_child() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="frameA" ParentStory="u1" GeometricBounds="0 0 200 300">
+              <TextFramePreference TextColumnCount="1">
+                <Properties>
+                  <InsetSpacing type="unit">4</InsetSpacing>
+                </Properties>
+              </TextFramePreference>
+            </TextFrame>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.text_frames[0].inset_spacing, Some([4.0; 4]));
+    }
+
+    /// A `<ListItem>` outside an open `<InsetSpacing>` — every other
+    /// typed list in a spread — must not feed the capture, and a
+    /// malformed list (three items) leaves the frame with no insets
+    /// rather than a partial guess.
+    #[test]
+    fn inset_capture_ignores_foreign_list_items_and_short_lists() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="frameA" ParentStory="u1" GeometricBounds="0 0 200 300">
+              <Properties>
+                <PathGeometry>
+                  <ListItem type="unit">99</ListItem>
+                </PathGeometry>
+              </Properties>
+              <TextFramePreference TextColumnCount="1">
+                <Properties>
+                  <InsetSpacing type="list">
+                    <ListItem type="unit">6</ListItem>
+                    <ListItem type="unit">8</ListItem>
+                    <ListItem type="unit">10</ListItem>
+                  </InsetSpacing>
+                </Properties>
+              </TextFramePreference>
+            </TextFrame>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(s.text_frames[0].inset_spacing, None);
     }
 
     // W0.3 — text-frame column prefs + balance.

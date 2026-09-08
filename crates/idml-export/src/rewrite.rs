@@ -224,7 +224,7 @@
 use std::io::Cursor;
 
 use quick_xml::events::attributes::Attribute;
-use quick_xml::events::{BytesStart, BytesText, Event};
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::{
@@ -1353,11 +1353,14 @@ pub(crate) fn write_text_frame_preference(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     f: &TextFrame,
 ) -> Result<(), quick_xml::Error> {
-    let Some(kind) = f.auto_sizing else {
+    let insets = f.inset_spacing.filter(|i| i.iter().any(|v| *v != 0.0));
+    if f.auto_sizing.is_none() && insets.is_none() {
         return Ok(());
-    };
-    let mut attrs: Vec<(&str, String)> =
-        vec![("AutoSizingType", auto_sizing_idml(kind).to_string())];
+    }
+    let mut attrs: Vec<(&str, String)> = Vec::new();
+    if let Some(kind) = f.auto_sizing {
+        attrs.push(("AutoSizingType", auto_sizing_idml(kind).to_string()));
+    }
     if let Some(p) = f.auto_sizing_reference_point {
         attrs.push((
             "AutoSizingReferencePoint",
@@ -1373,7 +1376,38 @@ pub(crate) fn write_text_frame_preference(
     if let Some(v) = f.use_minimum_height_for_auto_sizing {
         attrs.push(("UseMinimumHeightForAutoSizing", v.to_string()));
     }
-    emit_empty_with_attrs(writer, "TextFramePreference", &attrs)
+    let Some(insets) = insets else {
+        return emit_empty_with_attrs(writer, "TextFramePreference", &attrs);
+    };
+    // The insets are a typed `<InsetSpacing>` child of `<Properties>`.
+    // InDesign ignores the attribute spelling outright (measured: an
+    // IDML carrying `InsetSpacing="4 4 4 4"` opens with
+    // `textFramePreferences.insetSpacing = [0]`), and writes one scalar
+    // when the four sides agree, a four-item list otherwise.
+    emit_start_with_attrs(writer, "TextFramePreference", &attrs)?;
+    writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    let uniform = insets.iter().all(|v| *v == insets[0]);
+    let unit = |writer: &mut Writer<Cursor<Vec<u8>>>,
+                name: &str,
+                v: f32|
+     -> Result<(), quick_xml::Error> {
+        emit_start_with_attrs(writer, name, &[("type", "unit".to_string())])?;
+        writer.write_event(Event::Text(BytesText::new(&format_f32(v))))?;
+        writer.write_event(Event::End(BytesEnd::new(name)))?;
+        Ok(())
+    };
+    if uniform {
+        unit(writer, "InsetSpacing", insets[0])?;
+    } else {
+        emit_start_with_attrs(writer, "InsetSpacing", &[("type", "list".to_string())])?;
+        for v in insets {
+            unit(writer, "ListItem", v)?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("InsetSpacing")))?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+    writer.write_event(Event::End(BytesEnd::new("TextFramePreference")))?;
+    Ok(())
 }
 
 /// Bring a CARRIED-THROUGH story in line with InDesign's navigation
