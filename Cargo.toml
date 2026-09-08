@@ -21,12 +21,12 @@ too_many_arguments = "allow"
 # Pinned to a rev; when core builds the adapter back (Phase 2) a core-side
 # [patch] redirects these to core's local copies so crate identity unifies.
 # Bump the rev as the model evolves (the two-repo rev-pin dance).
-paged-model = { git = "https://github.com/paged-media/core", rev = "c5e0d90f55455febeae8268da30bb84872290bb8" }
-paged-scene = { git = "https://github.com/paged-media/core", rev = "c5e0d90f55455febeae8268da30bb84872290bb8" }
+paged-model = { git = "https://github.com/paged-media/core", rev = "e1fc9d872cb42ca005dc2e930ed0ed5814d425d5" }
+paged-scene = { git = "https://github.com/paged-media/core", rev = "e1fc9d872cb42ca005dc2e930ed0ed5814d425d5" }
 # The native `.paged` model codec (pgm to_bytes/from_bytes) — the PDF import
 # builds a Document and persists it natively (no IDML round-trip), same rev so
 # crate identity unifies with paged-model/paged-scene.
-paged-store = { git = "https://github.com/paged-media/core", rev = "c5e0d90f55455febeae8268da30bb84872290bb8" }
+paged-store = { git = "https://github.com/paged-media/core", rev = "e1fc9d872cb42ca005dc2e930ed0ed5814d425d5" }
 
 thiserror = "2"
 bytes = "1"
@@ -36,3 +36,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 base64 = "0.22"
+
+# LOCAL ONLY — never commit. Redirects the core model crates to the sibling
+# checkout so plugin-publish builds against core's working tree (the reverse of
+# core's own [patch] onto this repo).
