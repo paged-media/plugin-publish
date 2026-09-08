@@ -21,12 +21,12 @@ too_many_arguments = "allow"
 # Pinned to a rev; when core builds the adapter back (Phase 2) a core-side
 # [patch] redirects these to core's local copies so crate identity unifies.
 # Bump the rev as the model evolves (the two-repo rev-pin dance).
-paged-model = { git = "https://github.com/paged-media/core", rev = "e1fc9d872cb42ca005dc2e930ed0ed5814d425d5" }
-paged-scene = { git = "https://github.com/paged-media/core", rev = "e1fc9d872cb42ca005dc2e930ed0ed5814d425d5" }
+paged-model = { git = "https://github.com/paged-media/core", rev = "5505ffb5253c77b9806ab7c8b76a867b4e545b99" }
+paged-scene = { git = "https://github.com/paged-media/core", rev = "5505ffb5253c77b9806ab7c8b76a867b4e545b99" }
 # The native `.paged` model codec (pgm to_bytes/from_bytes) — the PDF import
 # builds a Document and persists it natively (no IDML round-trip), same rev so
 # crate identity unifies with paged-model/paged-scene.
-paged-store = { git = "https://github.com/paged-media/core", rev = "e1fc9d872cb42ca005dc2e930ed0ed5814d425d5" }
+paged-store = { git = "https://github.com/paged-media/core", rev = "5505ffb5253c77b9806ab7c8b76a867b4e545b99" }
 
 thiserror = "2"
 bytes = "1"
