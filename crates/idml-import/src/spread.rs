@@ -1104,31 +1104,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_gap_color: common.stroke_gap_color,
                         stroke_gap_tint: common.stroke_gap_tint,
                         stroke_dash: common.stroke_dash,
-                        drop_shadow: None,
-                        stroke_drop_shadow: None,
                         next_text_frame: attr(&e, b"NextTextFrame"),
-                        vertical_justification: None,
-                        first_baseline_offset: None,
-                        minimum_first_baseline_offset: None,
-                        inset_spacing: None,
-                        auto_sizing: None,
-                        auto_sizing_reference_point: None,
-                        minimum_width_for_auto_sizing: None,
-                        minimum_height_for_auto_sizing: None,
-                        use_minimum_height_for_auto_sizing: None,
-                        column_count: None,
-                        column_gutter: None,
-                        column_balance: None,
                         applied_object_style: common.applied_object_style,
-                        text_wrap: None,
                         item_layer: common.item_layer,
-                        is_anchored: false,
-                        opacity: None,
-                        blend_mode: None,
-                        anchors: Vec::new(),
-                        subpath_starts: Vec::new(),
-                        subpath_open: Vec::new(),
-                        effects: None,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
                         gradient_stroke_angle: common.gradient_stroke_angle,
@@ -1142,6 +1120,11 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corner_radius: corner.corner_radius,
                         corner_option: corner.corner_option,
                         corners: corner.corners,
+                        // Everything the start tag does not say — the
+                        // `<TextFramePreference>`, wrap, transparency and
+                        // path children fill it in as they are read — starts
+                        // at the model's neutral frame.
+                        ..TextFrame::new(String::new(), None, Bounds::ZERO)
                     });
                     let idx = out.text_frames.len() - 1;
                     register_frame(

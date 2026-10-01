@@ -408,58 +408,12 @@ fn blank_rectangle(self_id: String, bounds: Bounds) -> Rectangle {
 /// A neutral text frame linked to `parent_story` — single, unthreaded, no
 /// insets/columns overrides (the composer uses its defaults).
 fn blank_text_frame(self_id: String, parent_story: String, bounds: Bounds) -> TextFrame {
+    // Every other field at the model's own neutral default (no fill or
+    // stroke, no insets, no corner vocabulary — a PDF page has none to
+    // carry over), so a field the model gains needs no edit here.
     TextFrame {
-        self_id: Some(self_id),
-        parent_story: Some(parent_story),
-        bounds,
         item_transform: Some(IDENTITY),
-        fill_color: None,
-        fill_tint: None,
-        stroke_color: None,
-        stroke_weight: None,
-        stroke_type: None,
-        stroke_gap_color: None,
-        stroke_gap_tint: None,
-        stroke_dash: Vec::new(),
-        drop_shadow: None,
-        stroke_drop_shadow: None,
-        next_text_frame: None,
-        vertical_justification: None,
-        first_baseline_offset: None,
-        minimum_first_baseline_offset: None,
-        inset_spacing: None,
-        auto_sizing: None,
-        auto_sizing_reference_point: None,
-        minimum_width_for_auto_sizing: None,
-        minimum_height_for_auto_sizing: None,
-        use_minimum_height_for_auto_sizing: None,
-        column_count: None,
-        column_gutter: None,
-        column_balance: None,
-        applied_object_style: None,
-        text_wrap: None,
-        item_layer: None,
-        is_anchored: false,
-        opacity: None,
-        blend_mode: None,
-        anchors: Vec::new(),
-        subpath_starts: Vec::new(),
-        subpath_open: Vec::new(),
-        effects: None,
-        gradient_fill_angle: None,
-        gradient_fill_length: None,
-        gradient_stroke_angle: None,
-        gradient_stroke_length: None,
-        applied_toc_style: None,
-        overprint_fill: false,
-        overprint_stroke: false,
-        nonprinting: false,
-        visible: true,
-        locked: false,
-        // C-18: a PDF page has no IDML corner vocabulary to carry over.
-        corner_radius: None,
-        corner_option: None,
-        corners: Default::default(),
+        ..TextFrame::new(self_id, Some(parent_story), bounds)
     }
 }
 
