@@ -47,7 +47,7 @@ pub use paged_model::{
     TableColumn, TableLineStrokes, TableRow,
 };
 
-pub use paged_model::{Justification, OtfFeatures, TabStop};
+pub use paged_model::{Justification, OtfFeatures, StartParagraph, TabStop};
 
 pub use paged_model::{AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER};
 
@@ -591,6 +591,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .and_then(|s| s.parse::<bool>().ok()),
                             keep_with_next: attr(&e, b"KeepWithNext")
                                 .and_then(|s| s.parse::<u32>().ok()),
+                            // ADR 028 — the break-before rule.
+                            start_paragraph: attr(&e, b"StartParagraph")
+                                .and_then(|s| paged_model::StartParagraph::from_idml(&s)),
                             // ADR 028 — which lines KeepLinesTogether keeps.
                             keep_all_lines_together: attr(&e, b"KeepAllLinesTogether")
                                 .and_then(|s| s.parse::<bool>().ok()),
@@ -2865,6 +2868,7 @@ mod tests {
               KeepFirstLines="3"
               KeepLastLines="2"
               KeepWithNext="2"
+              StartParagraph="NextFrame"
               NumberingFormat="^#.^t"
               RuleAbove="true"
               RuleAboveLineWeight="1.5"
@@ -2883,6 +2887,10 @@ mod tests {
         assert_eq!(p.keep_first_lines, Some(3));
         assert_eq!(p.keep_last_lines, Some(2));
         assert_eq!(p.keep_with_next, Some(2));
+        assert_eq!(
+            p.start_paragraph,
+            Some(paged_model::StartParagraph::NextFrame)
+        );
         assert_eq!(p.numbering_format.as_deref(), Some("^#.^t"));
         assert_eq!(p.rule_above.on, Some(true));
         assert_eq!(p.rule_above.weight, Some(1.5));

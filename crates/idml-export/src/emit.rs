@@ -693,6 +693,9 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if let Some(n) = p.keep_with_next {
         out.push(("KeepWithNext", n.to_string()));
     }
+    if let Some(s) = p.start_paragraph {
+        out.push(("StartParagraph", s.as_idml().to_string()));
+    }
     if let Some(n) = p.keep_first_lines {
         out.push(("KeepFirstLines", n.to_string()));
     }

@@ -1059,6 +1059,8 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         keep_first_lines: attr(e, b"KeepFirstLines").and_then(|s| s.parse().ok()),
         keep_last_lines: attr(e, b"KeepLastLines").and_then(|s| s.parse().ok()),
         keep_with_next: attr(e, b"KeepWithNext").and_then(|s| s.parse().ok()),
+        start_paragraph: attr(e, b"StartParagraph")
+            .and_then(|s| paged_model::StartParagraph::from_idml(&s)),
         applied_language: attr(e, b"AppliedLanguage"),
         minimum_word_spacing: attr(e, b"MinimumWordSpacing").and_then(|s| s.parse().ok()),
         desired_word_spacing: attr(e, b"DesiredWordSpacing").and_then(|s| s.parse().ok()),
@@ -1185,6 +1187,7 @@ mod tests {
           <RootParagraphStyleGroup>
             <ParagraphStyle Self="ParagraphStyle/Heading"
                             KeepWithNext="2"
+                            StartParagraph="NextOddPage"
                             KeepLinesTogether="true"
                             KeepAllLinesTogether="true"
                             KeepFirstLines="3"
@@ -1197,6 +1200,10 @@ mod tests {
         let s = parse_stylesheet(xml).unwrap();
         let h = s.resolve_paragraph("ParagraphStyle/Heading");
         assert_eq!(h.keep_with_next, Some(2));
+        assert_eq!(
+            h.start_paragraph,
+            Some(paged_model::StartParagraph::NextOddPage)
+        );
         assert_eq!(h.keep_lines_together, Some(true));
         assert_eq!(h.keep_all_lines_together, Some(true));
         assert_eq!(h.keep_first_lines, Some(3));

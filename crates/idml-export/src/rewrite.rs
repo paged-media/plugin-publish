@@ -5616,6 +5616,9 @@ pub(crate) fn paragraph_attr_patch(
         b"HyphenWeight" => Some(opt_u32_patch(raw, p.hyphen_weight)),
         b"KeepLinesTogether" => Some(opt_bool_patch(p.keep_lines_together)),
         b"KeepWithNext" => Some(opt_u32_patch(raw, p.keep_with_next)),
+        b"StartParagraph" => Some(opt_string_patch(
+            &p.start_paragraph.map(|s| s.as_idml().to_string()),
+        )),
         b"KeepAllLinesTogether" => Some(opt_bool_patch(p.keep_all_lines_together)),
         b"KeepFirstLines" => Some(opt_u32_patch(raw, p.keep_first_lines)),
         b"KeepLastLines" => Some(opt_u32_patch(raw, p.keep_last_lines)),
@@ -5862,6 +5865,7 @@ mod tests {
         p.left_indent = Some(18.0);
         p.right_indent = Some(18.0);
         p.keep_with_next = Some(1);
+        p.start_paragraph = Some(idml_import::StartParagraph::NextPage);
         p.keep_lines_together = Some(true);
         p.hyphenation = Some(false);
         p.drop_cap_characters = 1;
@@ -5877,6 +5881,7 @@ mod tests {
             r#"LeftIndent="18""#,
             r#"RightIndent="18""#,
             r#"KeepWithNext="1""#,
+            r#"StartParagraph="NextPage""#,
             r#"KeepLinesTogether="true""#,
             r#"Hyphenation="false""#,
             r#"DropCapCharacters="1""#,
