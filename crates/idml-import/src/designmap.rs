@@ -48,6 +48,10 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // wrapping form parks here so its `<TextVariablePreference>`
     // child can fold in before `</TextVariable>` pushes it).
     let mut current_text_variable: Option<TextVariable> = None;
+    // A custom text variable's `<Contents>` while it is open: its text
+    // arrives in pieces (an entity is its own event) and is verbatim —
+    // leading and trailing spaces are part of the value.
+    let mut custom_contents: Option<String> = None;
     // The `<Section>` / `<Hyperlink>` currently open in ELEMENT form
     // (index into `out.sections` / `out.hyperlinks`), so a typed
     // `<Properties>` child can fold into it: InDesign writes a section's
@@ -78,6 +82,13 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 b"TextVariable" => {
                     if let Some(var) = current_text_variable.take() {
                         out.text_variables.push(var);
+                    }
+                }
+                b"Contents" => {
+                    if let (Some(text), Some(var)) =
+                        (custom_contents.take(), current_text_variable.as_mut())
+                    {
+                        var.contents = Some(text);
                     }
                 }
                 b"Section" => current_section = None,
@@ -188,12 +199,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                             self_id,
                             name: attr(&e, b"Name"),
                             variable_type: attr(&e, b"VariableType"),
-                            contents: None,
-                            date_format: None,
-                            text_before: None,
-                            text_after: None,
-                            running_header_style: None,
-                            running_header_use: None,
+                            ..TextVariable::default()
                         };
                         // A self-closing `<TextVariable/>` carries no
                         // preference child; push it straight away.
@@ -206,29 +212,72 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                         }
                     }
                 }
-                // `<TextVariablePreference>` carries the type-specific
-                // payload of the enclosing `<TextVariable>`. Real
-                // exports vary which attribute they use per type:
-                // CustomText → `Contents`; the date types → `Format`;
-                // both decorated by `TextBefore` / `TextAfter`.
-                if e.name().as_ref() == b"TextVariablePreference" {
-                    if let Some(var) = current_text_variable.as_mut() {
-                        var.contents = attr(&e, b"Contents").or(var.contents.take());
-                        var.date_format = attr(&e, b"Format").or(var.date_format.take());
-                        var.text_before = attr(&e, b"TextBefore").or(var.text_before.take());
-                        var.text_after = attr(&e, b"TextAfter").or(var.text_after.take());
-                        // W1.18c — running-header pickup: the style
-                        // whose nearest on-page occurrence supplies
-                        // the text, plus the First/LastOnPage choice.
-                        // InDesign serialises the style under either
-                        // `AppliedParagraphStyle` or
-                        // `AppliedCharacterStyle` depending on the
-                        // MatchParagraphStyle vs MatchCharacterStyle
-                        // variant; either fills the same slot.
-                        var.running_header_style = attr(&e, b"AppliedParagraphStyle")
-                            .or_else(|| attr(&e, b"AppliedCharacterStyle"))
-                            .or(var.running_header_style.take());
-                        var.running_header_use = attr(&e, b"Use").or(var.running_header_use.take());
+                // The type-specific payload of the enclosing
+                // `<TextVariable>`. InDesign writes a TYPED child per
+                // variable type (measured, InDesign 20.0.1 — thoughts ADR
+                // 033):
+                //
+                //   MatchParagraphStylePreference  AppliedParagraphStyle
+                //   MatchCharacterStylePreference  AppliedCharacterStyle
+                //       + SearchStrategy, ChangeCase, DeleteEndPunctuation
+                //   PageNumberVariablePreference   Format, Scope
+                //   ChapterNumberVariablePreference Format
+                //   FileNameVariablePreference     IncludePath, IncludeExtension
+                //   DateVariablePreference         Format
+                //   CustomTextVariablePreference   <Properties><Contents>
+                //
+                // all with TextBefore / TextAfter. The engine's older
+                // fixtures wrote a generic `<TextVariablePreference>`
+                // (`Contents`, `Format`, `AppliedParagraphStyle`, `Use`),
+                // a spelling InDesign ignores; it stays readable.
+                if let Some(var) = current_text_variable.as_mut() {
+                    match e.name().as_ref() {
+                        b"TextVariablePreference" => {
+                            var.contents = attr(&e, b"Contents").or(var.contents.take());
+                            var.date_format = attr(&e, b"Format").or(var.date_format.take());
+                            var.running_header_style = attr(&e, b"AppliedParagraphStyle")
+                                .or(var.running_header_style.take());
+                            var.running_header_character_style = attr(&e, b"AppliedCharacterStyle")
+                                .or(var.running_header_character_style.take());
+                            var.running_header_use =
+                                attr(&e, b"Use").or(var.running_header_use.take());
+                            read_decoration(var, &e);
+                        }
+                        b"MatchParagraphStylePreference" | b"MatchCharacterStylePreference" => {
+                            if e.name().as_ref() == b"MatchParagraphStylePreference" {
+                                var.running_header_style = attr(&e, b"AppliedParagraphStyle");
+                            } else {
+                                var.running_header_character_style =
+                                    attr(&e, b"AppliedCharacterStyle");
+                            }
+                            var.running_header_use = attr(&e, b"SearchStrategy");
+                            var.change_case = attr(&e, b"ChangeCase");
+                            var.delete_end_punctuation =
+                                attr(&e, b"DeleteEndPunctuation").as_deref() == Some("true");
+                            read_decoration(var, &e);
+                        }
+                        b"PageNumberVariablePreference" => {
+                            var.number_format = attr(&e, b"Format");
+                            var.page_number_scope = attr(&e, b"Scope");
+                            read_decoration(var, &e);
+                        }
+                        b"ChapterNumberVariablePreference" => {
+                            var.number_format = attr(&e, b"Format");
+                            read_decoration(var, &e);
+                        }
+                        b"FileNameVariablePreference" => {
+                            var.include_path = attr(&e, b"IncludePath").as_deref() == Some("true");
+                            var.include_extension =
+                                attr(&e, b"IncludeExtension").as_deref() == Some("true");
+                            read_decoration(var, &e);
+                        }
+                        b"DateVariablePreference" => {
+                            var.date_format = attr(&e, b"Format");
+                            read_decoration(var, &e);
+                        }
+                        b"CustomTextVariablePreference" => read_decoration(var, &e),
+                        b"Contents" if is_start => custom_contents = Some(String::new()),
+                        _ => {}
                     }
                 }
                 // W1.4 — hyperlink destination resources.
@@ -400,6 +449,23 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                     _ => {}
                 }
             }
+            Event::Text(ref t) if custom_contents.is_some() => {
+                if let Some(text) = custom_contents.as_mut() {
+                    text.push_str(
+                        &t.xml_content(quick_xml::XmlVersion::Implicit1_0)
+                            .unwrap_or_default(),
+                    );
+                }
+            }
+            Event::GeneralRef(ref r) if custom_contents.is_some() => {
+                let name = String::from_utf8_lossy(r.as_ref());
+                let resolved = quick_xml::escape::unescape(&format!("&{name};"))
+                    .map(|c| c.into_owned())
+                    .unwrap_or_default();
+                if let Some(text) = custom_contents.as_mut() {
+                    text.push_str(&resolved);
+                }
+            }
             Event::Text(t) => {
                 if let Some(which) = pending.take() {
                     let text = t
@@ -447,6 +513,63 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
         }
     }
     Ok(out)
+}
+
+/// The document's `<ChapterNumberPreference>` from `Resources/Preferences.xml`
+/// — the chapter number `ChapterNumberType` variables print (a document
+/// setting, not a section one; measured, InDesign 20.0.1). InDesign writes
+/// the number as an attribute and the format as a typed Properties child:
+///
+/// ```xml
+/// <ChapterNumberPreference ChapterNumber="1" ChapterNumberSource="…">
+///   <Properties><ChapterNumberFormat type="string">1, 2, 3, 4...</ChapterNumberFormat></Properties>
+/// </ChapterNumberPreference>
+/// ```
+pub fn parse_chapter_number_preference(
+    xml: &[u8],
+) -> Result<Option<paged_model::ChapterNumberPreference>, ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut out: Option<paged_model::ChapterNumberPreference> = None;
+    let mut in_pref = false;
+    let mut in_format = false;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) | Event::Empty(e)
+                if e.name().as_ref() == b"ChapterNumberPreference" =>
+            {
+                out = Some(paged_model::ChapterNumberPreference {
+                    number: attr(&e, b"ChapterNumber").and_then(|n| n.trim().parse().ok()),
+                    format: None,
+                });
+                in_pref = true;
+            }
+            Event::Start(e) if in_pref && e.name().as_ref() == b"ChapterNumberFormat" => {
+                in_format = true;
+            }
+            Event::Text(t) if in_format => {
+                let text = t
+                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                    .unwrap_or_default();
+                if let Some(pref) = out.as_mut() {
+                    pref.format.get_or_insert_with(String::new).push_str(&text);
+                }
+            }
+            Event::End(e) if e.name().as_ref() == b"ChapterNumberFormat" => in_format = false,
+            Event::End(e) if e.name().as_ref() == b"ChapterNumberPreference" => break,
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+/// `TextBefore` / `TextAfter`, which every variable preference carries.
+fn read_decoration(var: &mut TextVariable, e: &quick_xml::events::BytesStart) {
+    var.text_before = attr(e, b"TextBefore").or(var.text_before.take());
+    var.text_after = attr(e, b"TextAfter").or(var.text_after.take());
 }
 
 /// A typed `<Properties>` child of the open `<Section>` / `<Hyperlink>`
@@ -627,6 +750,107 @@ mod tests {
         let pc = &dm.text_variables[1];
         assert_eq!(pc.variable_type.as_deref(), Some("PageCountType"));
         assert_eq!(pc.contents, None);
+    }
+
+    /// The typed preference children exactly as InDesign 20.0.1 exported
+    /// them (DOM-built document, 2026-10-01; thoughts ADR 033).
+    #[test]
+    fn parses_indesigns_typed_variable_preferences() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+	<TextVariable Self="dTextVariablenRH" Name="RH" VariableType="MatchParagraphStyleType">
+		<MatchParagraphStylePreference TextBefore="" TextAfter="" AppliedParagraphStyle="ParagraphStyle/Heading" SearchStrategy="LastOnPage" ChangeCase="Uppercase" DeleteEndPunctuation="true" />
+	</TextVariable>
+	<TextVariable Self="dTextVariablenCH" Name="CH" VariableType="MatchCharacterStyleType">
+		<MatchCharacterStylePreference TextBefore="[" TextAfter="]" AppliedCharacterStyle="CharacterStyle/Keyword" SearchStrategy="FirstOnPage" ChangeCase="Titlecase" DeleteEndPunctuation="false" />
+	</TextVariable>
+	<TextVariable Self="dTextVariablenLP" Name="LP" VariableType="LastPageNumberType">
+		<PageNumberVariablePreference TextBefore="" Format="UpperRoman" TextAfter="" Scope="SectionScope" />
+	</TextVariable>
+	<TextVariable Self="dTextVariablenChap" Name="Chap" VariableType="ChapterNumberType">
+		<ChapterNumberVariablePreference TextBefore="" Format="Current" TextAfter="" />
+	</TextVariable>
+	<TextVariable Self="dTextVariablenFile" Name="File" VariableType="FileNameType">
+		<FileNameVariablePreference TextBefore="" IncludePath="false" IncludeExtension="true" TextAfter="" />
+	</TextVariable>
+	<TextVariable Self="dTextVariablenDate" Name="Date" VariableType="CreationDateType">
+		<DateVariablePreference TextBefore="" Format="yyyy-MM-dd" TextAfter="" />
+	</TextVariable>
+	<TextVariable Self="dTextVariablenCust" Name="Cust" VariableType="CustomTextType">
+		<CustomTextVariablePreference>
+			<Properties>
+				<Contents type="string"> R&amp;D notes </Contents>
+			</Properties>
+		</CustomTextVariablePreference>
+	</TextVariable>
+</Document>"#;
+        let dm = parse_designmap(xml).unwrap();
+        let v = |id: &str| {
+            dm.text_variables
+                .iter()
+                .find(|v| v.self_id == id)
+                .unwrap_or_else(|| panic!("{id}"))
+        };
+        let rh = v("dTextVariablenRH");
+        assert_eq!(
+            rh.running_header_style.as_deref(),
+            Some("ParagraphStyle/Heading")
+        );
+        assert_eq!(rh.running_header_character_style, None);
+        assert_eq!(rh.running_header_use.as_deref(), Some("LastOnPage"));
+        assert_eq!(rh.change_case.as_deref(), Some("Uppercase"));
+        assert!(rh.delete_end_punctuation);
+        let ch = v("dTextVariablenCH");
+        assert_eq!(
+            ch.running_header_style, None,
+            "a character style has its own slot"
+        );
+        assert_eq!(
+            ch.running_header_character_style.as_deref(),
+            Some("CharacterStyle/Keyword")
+        );
+        assert_eq!(ch.running_header_use.as_deref(), Some("FirstOnPage"));
+        assert_eq!(ch.change_case.as_deref(), Some("Titlecase"));
+        assert!(!ch.delete_end_punctuation);
+        assert_eq!(ch.text_before.as_deref(), Some("["));
+        assert_eq!(ch.text_after.as_deref(), Some("]"));
+        let lp = v("dTextVariablenLP");
+        assert_eq!(lp.page_number_scope.as_deref(), Some("SectionScope"));
+        assert_eq!(lp.number_format.as_deref(), Some("UpperRoman"));
+        assert_eq!(
+            v("dTextVariablenChap").number_format.as_deref(),
+            Some("Current")
+        );
+        let file = v("dTextVariablenFile");
+        assert!(file.include_extension && !file.include_path);
+        assert_eq!(
+            v("dTextVariablenDate").date_format.as_deref(),
+            Some("yyyy-MM-dd")
+        );
+        assert_eq!(
+            v("dTextVariablenCust").contents.as_deref(),
+            Some(" R&D notes "),
+            "custom contents are verbatim, entities resolved"
+        );
+    }
+
+    #[test]
+    fn parses_the_documents_chapter_number_preference() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Preferences xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+	<ChapterNumberPreference ChapterNumber="4" ChapterNumberSource="ContinueFromPreviousDocument">
+		<Properties>
+			<ChapterNumberFormat type="string">I, II, III, IV...</ChapterNumberFormat>
+		</Properties>
+	</ChapterNumberPreference>
+</idPkg:Preferences>"#;
+        let pref = parse_chapter_number_preference(xml).unwrap().unwrap();
+        assert_eq!(pref.number, Some(4));
+        assert_eq!(pref.format.as_deref(), Some("I, II, III, IV..."));
+        assert_eq!(
+            parse_chapter_number_preference(b"<idPkg:Preferences/>").unwrap(),
+            None
+        );
     }
 }
 

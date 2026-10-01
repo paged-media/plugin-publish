@@ -60,7 +60,8 @@ pub use story::{
     AnchoredObjectSetting, CellDiagonal, CharacterRun, Justification, OtfFeatures, Paragraph,
     PlaceholderField, RunSlot, SpanColumnType, SpanColumns, SpanSplitColumnCount, StartParagraph,
     Story, StoryProvenance, TabStop, Table, TableBorder, TableCell, TableColumn, TableLineStrokes,
-    TableRow, AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER,
+    TableRow, AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER, PREVIOUS_PAGE_NUMBER_MARKER,
+    SECTION_MARKER,
 };
 pub use styles::{
     parse_conditions, parse_stylesheet, CellStyleDef, CharacterStyleDef, ConditionDef,
@@ -195,6 +196,9 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
     // The structured manifest is parsed here (not in `open_source_archive`) so
     // the raw source archive carries no model data (N7).
     let mut designmap = parse_designmap(&archive.designmap_raw)?;
+    if let Some(raw) = archive.entry("Resources/Preferences.xml") {
+        designmap.chapter_number = designmap::parse_chapter_number_preference(raw)?;
+    }
     let palette = match archive.entry("Resources/Graphic.xml") {
         Some(raw) => parse_graphic(raw)?,
         None => Graphic::default(),

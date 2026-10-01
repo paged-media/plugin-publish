@@ -52,7 +52,9 @@ pub use paged_model::{
     TabStop,
 };
 
-pub use paged_model::{AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER};
+pub use paged_model::{
+    AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER, PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
+};
 
 pub use paged_model::Story;
 
@@ -243,6 +245,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     let mut out = Story::default();
     let mut current_paragraph: Option<Paragraph> = None;
     let mut current_run: Option<CharacterRun> = None;
+    // `PageNumberType` of the open `<CharacterStyleRange>`: InDesign
+    // spells the next / previous page number as an ordinary `<?ACE 18?>`
+    // inside a range carrying `PageNumberType="NextPageNumber"` /
+    // `"PreviousPageNumber"` (measured, InDesign 20.0.1).
+    let mut range_page_number_type: Option<String> = None;
     // `<Br/>` marks seen but not yet known to be interior — see the
     // `b"Br"` arm. A COUNT, not a flag: two marks before the next content
     // are an empty paragraph between them, and a flag folded them into one
@@ -883,6 +890,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         if let Some(c) = psr_ranges.last_mut() {
                             *c += 1;
                         }
+                        range_page_number_type = attr(&e, b"PageNumberType");
                         open_ranges.push(OpenRange {
                             pos: event_pos,
                             first: None,
@@ -1169,6 +1177,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         properties_text.clear();
                     }
                     b"CharacterStyleRange" => {
+                        range_page_number_type = None;
                         let open = open_ranges.pop();
                         let mut pushed_at: Option<usize> = None;
                         // Marks this range ENDS on: only the last can be the
@@ -1508,10 +1517,16 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             }
                             // Emit the variable run (style cloned from the
                             // open run; text = baked ResultText).
+                            // Kept even when `ResultText` is empty (RFI
+                            // C-39): the stored result is only InDesign's
+                            // last composed value, and the renderer
+                            // resolves the variable itself. A fresh
+                            // variable written by a plugin or a fixture has
+                            // no result yet; dropping it lost the variable.
                             let mut var_run = run.clone();
                             var_run.text = result_text;
                             var_run.text_variable = attr(&e, b"AssociatedTextVariable");
-                            if !var_run.text.is_empty() {
+                            if var_run.text_variable.is_some() || !var_run.text.is_empty() {
                                 if let Some(para) = current_paragraph.as_mut() {
                                     para.runs.push(var_run);
                                     let at = para.runs.len() - 1;
@@ -1617,21 +1632,26 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 }
             }
             Event::PI(pi) => {
-                // InDesign serialises auto-page-number markers
-                // inside <Content> as `<?ACE 18?>` processing
-                // instructions. Map them to private-use chars
-                // so the renderer can substitute the actual
-                // page number per emission. ACE 18 is the
-                // current-page-number marker; ACE 19 is the
-                // next-page-number marker.
+                // InDesign serialises page-dependent markers inside
+                // <Content> as `<?ACE n?>` processing instructions. Map
+                // them to private-use chars so the renderer can
+                // substitute them per page. Measured on InDesign 20.0.1:
+                // `ACE 18` is a page number — current, or next / previous
+                // when the range carries `PageNumberType` — and `ACE 19`
+                // is the SECTION MARKER (not, as this parser used to read
+                // it, the next page number).
                 if in_content {
                     if let Some(run) = current_run.as_mut() {
                         let body = pi.as_ref();
-                        let body_str = std::str::from_utf8(body).unwrap_or("");
-                        if body_str.trim_start().starts_with("ACE 18") {
-                            run.text.push(AUTO_PAGE_NUMBER_MARKER);
-                        } else if body_str.trim_start().starts_with("ACE 19") {
-                            run.text.push(NEXT_PAGE_NUMBER_MARKER);
+                        let body_str = std::str::from_utf8(body).unwrap_or("").trim();
+                        if body_str == "ACE 18" {
+                            run.text.push(match range_page_number_type.as_deref() {
+                                Some("NextPageNumber") => NEXT_PAGE_NUMBER_MARKER,
+                                Some("PreviousPageNumber") => PREVIOUS_PAGE_NUMBER_MARKER,
+                                _ => AUTO_PAGE_NUMBER_MARKER,
+                            });
+                        } else if body_str == "ACE 19" {
+                            run.text.push(SECTION_MARKER);
                         }
                     }
                 }
@@ -1870,6 +1890,58 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
 
 #[cfg(test)]
 mod tests {
+    /// InDesign 20.0.1's spelling of the page-dependent markers (its own
+    /// IDML export of a DOM-built master story, 2026-10-01): `ACE 18` is a
+    /// page number whose flavour the RANGE names, `ACE 19` the section
+    /// marker, and a variable instance sits in a `PageNumberType=
+    /// "TextVariable"` range.
+    #[test]
+    fn page_markers_take_their_kind_from_the_range() {
+        let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s">
+            <ParagraphStyleRange>
+              <CharacterStyleRange><Content>pg=[<?ACE 18?>]</Content><Br/><Content>next=[</Content></CharacterStyleRange>
+              <CharacterStyleRange PageNumberType="NextPageNumber"><Content><?ACE 18?></Content></CharacterStyleRange>
+              <CharacterStyleRange><Content>] prev=[</Content></CharacterStyleRange>
+              <CharacterStyleRange PageNumberType="PreviousPageNumber"><Content><?ACE 18?></Content></CharacterStyleRange>
+              <CharacterStyleRange><Content>] sec=[<?ACE 19?>]</Content></CharacterStyleRange>
+            </ParagraphStyleRange>
+          </Story></idPkg:Story>"#;
+        let story = parse_story(xml).unwrap();
+        let text: String = story
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .map(|r| r.text.as_str())
+            .collect();
+        assert_eq!(
+            text,
+            format!(
+                "pg=[{AUTO_PAGE_NUMBER_MARKER}]\nnext=[{NEXT_PAGE_NUMBER_MARKER}] prev=[\
+                 {PREVIOUS_PAGE_NUMBER_MARKER}] sec=[{SECTION_MARKER}]"
+            )
+        );
+    }
+
+    /// RFI C-39: a variable instance whose stored result is empty is a
+    /// variable all the same — the renderer resolves it.
+    #[test]
+    fn a_variable_instance_with_an_empty_result_is_kept() {
+        let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s">
+            <ParagraphStyleRange>
+              <CharacterStyleRange><Content>Edition: </Content></CharacterStyleRange>
+              <CharacterStyleRange PageNumberType="TextVariable"><TextVariableInstance Self="u1" Name="Edition" ResultText="" AssociatedTextVariable="dTextVariablenEdition" /></CharacterStyleRange>
+            </ParagraphStyleRange>
+          </Story></idPkg:Story>"#;
+        let story = parse_story(xml).unwrap();
+        let runs = &story.paragraphs[0].runs;
+        let var = runs
+            .iter()
+            .find(|r| r.text_variable.is_some())
+            .expect("the empty-result instance survives");
+        assert_eq!(var.text_variable.as_deref(), Some("dTextVariablenEdition"));
+        assert_eq!(var.text, "");
+    }
+
     #[test]
     fn span_and_split_columns_parse_from_the_range() {
         // InDesign's own spelling (its export, 2026-10-01): the column
