@@ -707,14 +707,26 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     // ignores both as attributes and reads them only as typed
     // `<Properties>` children (measured 2026-09-06) —
     // [`emit_paragraph_properties`].
-    let string_attrs: [(&'static str, &Option<String>); 2] = [
+    // Nor the marker character styles, which InDesign reads only as
+    // children too (`list-overrides`, 2026-10-01). The four list
+    // attributes below it reads off the range exactly as off a style,
+    // and writes them this way in its own files.
+    let string_attrs: [(&'static str, &Option<String>); 4] = [
         ("BulletsAndNumberingListType", &p.bullets_list_type),
         ("KinsokuSet", &p.kinsoku_set),
+        ("BulletsTextAfter", &p.bullets_text_after),
+        ("NumberingExpression", &p.numbering_expression),
     ];
     for (k, v) in string_attrs {
         if let Some(s) = v {
             out.push((k, s.clone()));
         }
+    }
+    if let Some(n) = p.numbering_start_at {
+        out.push(("NumberingStartAt", n.to_string()));
+    }
+    if let Some(b) = p.numbering_continue {
+        out.push(("NumberingContinue", b.to_string()));
     }
     paragraph_rule_attrs(&mut out, &RULE_ABOVE, &p.rule_above);
     paragraph_rule_attrs(&mut out, &RULE_BELOW, &p.rule_below);
@@ -745,13 +757,15 @@ pub(crate) fn span_column_attrs(
 }
 
 /// Whether a paragraph carries any `<Properties>` child: tab stops, a
-/// bullet character, a numbering format, a numbering list or a span /
-/// split column count.
+/// bullet character, a numbering format, a numbering list, a marker
+/// character style or a span / split column count.
 pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
     !p.tab_list.is_empty()
         || p.bullet_character.is_some()
         || p.numbering_format.is_some()
         || p.applied_numbering_list.is_some()
+        || p.bullets_character_style.is_some()
+        || p.bullets_and_numbering_digits_character_style.is_some()
         || p.span_columns.count.is_some()
 }
 
@@ -778,6 +792,12 @@ pub(crate) fn emit_paragraph_properties(
     }
     if let Some(l) = &p.applied_numbering_list {
         write_applied_numbering_list(writer, l)?;
+    }
+    if let Some(c) = &p.bullets_character_style {
+        write_bullets_character_style(writer, c)?;
+    }
+    if let Some(c) = &p.bullets_and_numbering_digits_character_style {
+        write_numbering_character_style(writer, c)?;
     }
     if let Some(c) = p.span_columns.count {
         write_span_split_column_count(writer, c)?;
@@ -808,6 +828,26 @@ pub(crate) fn write_numbering_format(
     format: &str,
 ) -> Result<(), quick_xml::Error> {
     write_typed_text(writer, "NumberingFormat", "string", format)
+}
+
+/// `<BulletsCharacterStyle type="object">CharacterStyle/X</…>` — the
+/// only spelling InDesign reads (as an attribute it is ignored;
+/// `list-overrides` o14/o15, InDesign 20.0.1).
+pub(crate) fn write_bullets_character_style(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    style: &str,
+) -> Result<(), quick_xml::Error> {
+    write_typed_text(writer, "BulletsCharacterStyle", "object", style)
+}
+
+/// `<NumberingCharacterStyle type="object">CharacterStyle/X</…>` — the
+/// digits' style, InDesign's only spelling (o16/o17; the model calls it
+/// `bullets_and_numbering_digits_character_style`).
+pub(crate) fn write_numbering_character_style(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    style: &str,
+) -> Result<(), quick_xml::Error> {
+    write_typed_text(writer, "NumberingCharacterStyle", "object", style)
 }
 
 /// `<NumberingExpression type="string">^#.^t</NumberingExpression>` —

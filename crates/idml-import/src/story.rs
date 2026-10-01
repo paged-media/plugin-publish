@@ -556,7 +556,21 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             tab_list: Vec::new(),
                             bullets_list_type: attr(&e, b"BulletsAndNumberingListType"),
                             bullet_character: None,
-                            numbering_format: attr(&e, b"NumberingFormat"),
+                            // NOT the `NumberingFormat` attribute: InDesign
+                            // ignores it on a range (`list-overrides` o13,
+                            // 2026-10-01) and reads only the typed child.
+                            numbering_format: None,
+                            // The rest of the list attributes InDesign reads
+                            // off the range itself, exactly as it would from
+                            // the paragraph style (`list-overrides`, InDesign
+                            // 20.0.1). The marker character styles are NOT
+                            // here: as attributes InDesign ignores them.
+                            bullets_text_after: attr(&e, b"BulletsTextAfter"),
+                            numbering_expression: attr(&e, b"NumberingExpression"),
+                            numbering_start_at: attr(&e, b"NumberingStartAt")
+                                .and_then(|s| s.trim().parse().ok()),
+                            numbering_continue: attr(&e, b"NumberingContinue")
+                                .and_then(|s| s.trim().parse().ok()),
                             applied_numbering_list: match attr(&e, b"AppliedNumberingList")
                                 .as_deref()
                             {
@@ -1072,6 +1086,38 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 if let Some(p) = current_paragraph.as_mut() {
                                     if !value.is_empty() {
                                         p.numbering_format = Some(value);
+                                    }
+                                }
+                            }
+                            // InDesign reads these two as typed children
+                            // too (`list-overrides` o07 / o08); its own files
+                            // spell them as attributes. Untrimmed: a space is
+                            // a legitimate value.
+                            (2, b"NumberingExpression") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    p.numbering_expression = Some(properties_text.clone());
+                                }
+                            }
+                            (2, b"BulletsTextAfter") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    p.bullets_text_after = Some(properties_text.clone());
+                                }
+                            }
+                            // The marker character styles exist ONLY as
+                            // typed children (the attributes are ignored;
+                            // `list-overrides` o14-o17).
+                            (2, b"BulletsCharacterStyle") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    if !value.is_empty() {
+                                        p.bullets_character_style = Some(value);
+                                    }
+                                }
+                            }
+                            (2, b"NumberingCharacterStyle") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    if !value.is_empty() {
+                                        p.bullets_and_numbering_digits_character_style =
+                                            Some(value);
                                     }
                                 }
                             }
@@ -2940,11 +2986,39 @@ mod tests {
         assert!(p.mojikumi_set.is_none());
     }
 
+    /// The list attributes as InDesign reads them off a range
+    /// (`list-overrides`, InDesign 20.0.1, 2026-10-01): the four it
+    /// writes as attributes, the same two as typed children, and the
+    /// marker character styles ONLY as children.
+    #[test]
+    fn paragraph_style_range_parses_local_list_overrides() {
+        let xml = br#"<Story Self="u1"><ParagraphStyleRange BulletsAndNumberingListType="NumberedList" BulletsTextAfter=" " NumberingExpression="(^#)^t" NumberingStartAt="5" NumberingContinue="false" BulletsCharacterStyle="CharacterStyle/Ignored" BulletsAndNumberingDigitsCharacterStyle="CharacterStyle/Ignored"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange BulletsAndNumberingListType="BulletList"><Properties><NumberingExpression type="string">^#.</NumberingExpression><BulletsTextAfter type="string"> </BulletsTextAfter><BulletsCharacterStyle type="object">CharacterStyle/Big</BulletsCharacterStyle><NumberingCharacterStyle type="object">CharacterStyle/Digits</NumberingCharacterStyle></Properties><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
+        let s = parse_story(xml).unwrap();
+        let a = &s.paragraphs[0];
+        assert_eq!(a.bullets_text_after.as_deref(), Some(" "));
+        assert_eq!(a.numbering_expression.as_deref(), Some("(^#)^t"));
+        assert_eq!(a.numbering_start_at, Some(5));
+        assert_eq!(a.numbering_continue, Some(false));
+        assert_eq!(a.bullets_character_style, None, "attribute ignored");
+        assert_eq!(a.bullets_and_numbering_digits_character_style, None);
+        let b = &s.paragraphs[1];
+        assert_eq!(b.numbering_expression.as_deref(), Some("^#."));
+        assert_eq!(b.bullets_text_after.as_deref(), Some(" "), "untrimmed");
+        assert_eq!(
+            b.bullets_character_style.as_deref(),
+            Some("CharacterStyle/Big")
+        );
+        assert_eq!(
+            b.bullets_and_numbering_digits_character_style.as_deref(),
+            Some("CharacterStyle/Digits")
+        );
+    }
+
     #[test]
     fn paragraph_style_range_parses_w02_paragraph_attrs() {
         // W0.2 — LeftIndent / RightIndent / Hyphenation /
-        // KeepLinesTogether / KeepWithNext / NumberingFormat and the
-        // RuleAbove* family land on the paragraph instance.
+        // KeepLinesTogether / KeepWithNext and the RuleAbove* family land
+        // on the paragraph instance.
         let xml = br#"<Story Self="u1">
           <ParagraphStyleRange
               LeftIndent="18"
@@ -2978,7 +3052,9 @@ mod tests {
             p.start_paragraph,
             Some(paged_model::StartParagraph::NextFrame)
         );
-        assert_eq!(p.numbering_format.as_deref(), Some("^#.^t"));
+        // The ATTRIBUTE spelling of NumberingFormat is not read: InDesign
+        // ignores it on a range (`list-overrides` o13, 2026-10-01).
+        assert_eq!(p.numbering_format, None);
         assert_eq!(p.rule_above.on, Some(true));
         assert_eq!(p.rule_above.weight, Some(1.5));
         assert_eq!(p.rule_above.color.as_deref(), Some("Color/Black"));

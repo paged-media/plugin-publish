@@ -5645,7 +5645,12 @@ pub(crate) fn paragraph_attr_patch(
         b"KeepFirstLines" => Some(opt_u32_patch(raw, p.keep_first_lines)),
         b"KeepLastLines" => Some(opt_u32_patch(raw, p.keep_last_lines)),
         b"BulletsAndNumberingListType" => Some(opt_string_patch(&p.bullets_list_type)),
-        b"NumberingFormat" => Some(opt_string_patch(&p.numbering_format)),
+        // NOT `NumberingFormat`: InDesign ignores the attribute on a range,
+        // the importer no longer reads it, so it passes through untouched.
+        b"BulletsTextAfter" => Some(opt_string_patch(&p.bullets_text_after)),
+        b"NumberingExpression" => Some(opt_string_patch(&p.numbering_expression)),
+        b"NumberingStartAt" => Some(opt_i32_patch(raw, p.numbering_start_at)),
+        b"NumberingContinue" => Some(opt_bool_patch(p.numbering_continue)),
         b"AppliedNumberingList" => Some(numbering_list_patch(raw, &p.applied_numbering_list)),
         b"KinsokuSet" => Some(opt_string_patch(&p.kinsoku_set)),
         _ => span_column_patch(key, raw, &p.span_columns)
@@ -5746,6 +5751,19 @@ fn character_extras(r: &CharacterRun) -> Vec<(&'static str, String)> {
         out.push(("AppliedCharacterStyle", s.clone()));
     }
     out
+}
+
+pub(crate) fn opt_i32_patch(raw: Option<&str>, v: Option<i32>) -> Patch {
+    match v {
+        Some(n) => {
+            if raw.and_then(|s| s.trim().parse::<i32>().ok()) == Some(n) {
+                Patch::Keep
+            } else {
+                Patch::Set(n.to_string())
+            }
+        }
+        None => Patch::Remove,
+    }
 }
 
 pub(crate) fn opt_bool_patch(v: Option<bool>) -> Patch {
@@ -5899,8 +5917,16 @@ mod tests {
         p.rule_above.on = Some(true);
         p.rule_above.weight = Some(1.5);
         p.rule_above.color = Some("Color/Black".into());
+        p.bullets_text_after = Some("^t".into());
+        p.numbering_expression = Some("(^#)^t".into());
+        p.numbering_start_at = Some(5);
+        p.numbering_continue = Some(false);
         let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
         for needle in [
+            r#"BulletsTextAfter="^t""#,
+            r#"NumberingExpression="(^#)^t""#,
+            r#"NumberingStartAt="5""#,
+            r#"NumberingContinue="false""#,
             r#"Justification="LeftJustified""#,
             r#"SpaceBefore="13""#,
             r#"FirstLineIndent="26""#,

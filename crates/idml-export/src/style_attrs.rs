@@ -14,8 +14,9 @@ use idml_import::styles::{CharacterStyleDef, ParagraphStyleDef};
 
 use crate::emit::{paragraph_rule_attrs, span_column_attrs, RULE_ABOVE, RULE_BELOW};
 use crate::rewrite::{
-    format_f32, numbering_list_patch, opt_bool_patch, opt_string_patch, opt_u32_patch,
-    paragraph_rule_patch, preserving_f32_patch, preserving_tint_patch, span_column_patch, Patch,
+    format_f32, numbering_list_patch, opt_bool_patch, opt_i32_patch, opt_string_patch,
+    opt_u32_patch, paragraph_rule_patch, preserving_f32_patch, preserving_tint_patch,
+    span_column_patch, Patch,
 };
 
 fn push_strs(out: &mut Vec<(&'static str, String)>, attrs: &[(&'static str, &Option<String>)]) {
@@ -93,17 +94,15 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
     );
     // NOT here: `NumberingFormat`, `AppliedNumberingList`,
     // `NumberingExpression` — InDesign reads them only as typed
-    // `<Properties>` children (measured 2026-09-06).
+    // `<Properties>` children (measured 2026-09-06) — nor the marker
+    // character styles, which it ignores as attributes (`list-overrides`,
+    // 2026-10-01; `BulletsAndNumberingDigitsCharacterStyle` was a name of
+    // ours). `paragraph_props` spells all of them as children.
     push_strs(
         &mut out,
         &[
             ("BulletsAndNumberingListType", &s.bullets_list_type),
             ("BulletsTextAfter", &s.bullets_text_after),
-            ("BulletsCharacterStyle", &s.bullets_character_style),
-            (
-                "BulletsAndNumberingDigitsCharacterStyle",
-                &s.bullets_and_numbering_digits_character_style,
-            ),
         ],
     );
     if let Some(n) = s.numbering_start_at {
@@ -218,19 +217,6 @@ fn swatch_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
     }
 }
 
-fn opt_i32_patch(raw: Option<&str>, v: Option<i32>) -> Patch {
-    match v {
-        Some(n) => {
-            if raw.and_then(|s| s.trim().parse::<i32>().ok()) == Some(n) {
-                Patch::Keep
-            } else {
-                Patch::Set(n.to_string())
-            }
-        }
-        None => Patch::Remove,
-    }
-}
-
 /// The `<ParagraphStyle>` attributes the model owns; anything else
 /// (`Self`, the OTF flags, the border and shading families, a `BasedOn`
 /// or `AppliedFont` attribute another pass converts) passes through.
@@ -271,13 +257,13 @@ pub(crate) fn paragraph_style_attr_patch(
         b"OverprintStroke" => Some(opt_bool_patch(s.overprint_stroke)),
         b"BulletsAndNumberingListType" => Some(opt_string_patch(&s.bullets_list_type)),
         b"BulletsTextAfter" => Some(opt_string_patch(&s.bullets_text_after)),
+        // Attribute spellings of what InDesign reads as children: an
+        // older file of ours may carry them; patched in place, never
+        // added (`paragraph_props` spells the children).
         b"BulletsCharacterStyle" => Some(opt_string_patch(&s.bullets_character_style)),
         b"BulletsAndNumberingDigitsCharacterStyle" => Some(opt_string_patch(
             &s.bullets_and_numbering_digits_character_style,
         )),
-        // Attribute spellings of what InDesign reads as children: an
-        // older file of ours may carry them; patched in place, never
-        // added (`paragraph_props` spells the children).
         b"NumberingFormat" => Some(opt_string_patch(&s.numbering_format)),
         b"NumberingExpression" => Some(opt_string_patch(&s.numbering_expression)),
         b"AppliedNumberingList" => Some(numbering_list_patch(raw, &s.applied_numbering_list)),

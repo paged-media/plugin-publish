@@ -43,8 +43,8 @@ use idml_import::{Paragraph, SpanSplitColumnCount, Story, TabStop};
 
 use crate::emit::{
     paragraph_has_properties, write_applied_numbering_list, write_bullet_char,
-    write_numbering_expression, write_numbering_format, write_span_split_column_count,
-    write_tab_list,
+    write_bullets_character_style, write_numbering_character_style, write_numbering_expression,
+    write_numbering_format, write_span_split_column_count, write_tab_list,
 };
 use crate::rewrite::resolve_paragraph;
 
@@ -57,8 +57,14 @@ pub(crate) struct Owner<'a> {
     pub(crate) bullet: Option<u32>,
     pub(crate) format: Option<&'a str>,
     pub(crate) list: Option<&'a str>,
-    /// A style's `NumberingExpression`; a range has none.
+    /// A style's `NumberingExpression`. A range spells its own as an
+    /// attribute (InDesign's spelling), so as an owner it has none here
+    /// and a child spelling of one is dropped in favour of the attribute.
     pub(crate) expression: Option<&'a str>,
+    /// `BulletsCharacterStyle`.
+    pub(crate) bullet_style: Option<&'a str>,
+    /// `NumberingCharacterStyle`.
+    pub(crate) digits_style: Option<&'a str>,
     /// `SpanSplitColumnCount`.
     pub(crate) count: Option<SpanSplitColumnCount>,
 }
@@ -71,6 +77,8 @@ impl<'a> Owner<'a> {
             format: p.numbering_format.as_deref(),
             list: p.applied_numbering_list.as_deref(),
             expression: None,
+            bullet_style: p.bullets_character_style.as_deref(),
+            digits_style: p.bullets_and_numbering_digits_character_style.as_deref(),
             count: p.span_columns.count,
         }
     }
@@ -82,6 +90,8 @@ impl<'a> Owner<'a> {
             format: s.numbering_format.as_deref(),
             list: s.applied_numbering_list.as_deref(),
             expression: s.numbering_expression.as_deref(),
+            bullet_style: s.bullets_character_style.as_deref(),
+            digits_style: s.bullets_and_numbering_digits_character_style.as_deref(),
             count: s.span_columns.count,
         }
     }
@@ -92,6 +102,8 @@ impl<'a> Owner<'a> {
             || self.format.is_some()
             || self.list.is_some()
             || self.expression.is_some()
+            || self.bullet_style.is_some()
+            || self.digits_style.is_some()
             || self.count.is_some()
     }
 
@@ -115,6 +127,12 @@ impl<'a> Owner<'a> {
         if let Some(x) = self.expression {
             write_numbering_expression(writer, x)?;
         }
+        if let Some(c) = self.bullet_style {
+            write_bullets_character_style(writer, c)?;
+        }
+        if let Some(c) = self.digits_style {
+            write_numbering_character_style(writer, c)?;
+        }
         if let Some(c) = self.count {
             write_span_split_column_count(writer, c)?;
         }
@@ -137,6 +155,8 @@ struct Open<'a> {
     format_done: bool,
     list_done: bool,
     expression_done: bool,
+    bullet_style_done: bool,
+    digits_style_done: bool,
     count_done: bool,
 }
 
@@ -152,6 +172,8 @@ impl<'a> Open<'a> {
             format_done: false,
             list_done: false,
             expression_done: false,
+            bullet_style_done: false,
+            digits_style_done: false,
             count_done: false,
         }
     }
@@ -170,6 +192,20 @@ impl<'a> Open<'a> {
     fn owes_expression(&self) -> bool {
         !self.expression_done && self.owner.as_ref().is_some_and(|o| o.expression.is_some())
     }
+    fn owes_bullet_style(&self) -> bool {
+        !self.bullet_style_done
+            && self
+                .owner
+                .as_ref()
+                .is_some_and(|o| o.bullet_style.is_some())
+    }
+    fn owes_digits_style(&self) -> bool {
+        !self.digits_style_done
+            && self
+                .owner
+                .as_ref()
+                .is_some_and(|o| o.digits_style.is_some())
+    }
     fn owes_count(&self) -> bool {
         !self.count_done && self.owner.as_ref().is_some_and(|o| o.count.is_some())
     }
@@ -180,6 +216,8 @@ impl<'a> Open<'a> {
             || self.owes_format()
             || self.owes_list()
             || self.owes_expression()
+            || self.owes_bullet_style()
+            || self.owes_digits_style()
     }
 }
 
@@ -189,6 +227,24 @@ enum TextChild {
     Format,
     List,
     Expression,
+    BulletStyle,
+    DigitsStyle,
+    /// `BulletsTextAfter` as a child: InDesign reads it, but writes (and
+    /// we write) the attribute, so no owner ever keeps it.
+    TextAfter,
+}
+
+impl TextChild {
+    fn of(name: &[u8]) -> Self {
+        match name {
+            b"NumberingFormat" => TextChild::Format,
+            b"NumberingExpression" => TextChild::Expression,
+            b"BulletsCharacterStyle" => TextChild::BulletStyle,
+            b"NumberingCharacterStyle" => TextChild::DigitsStyle,
+            b"BulletsTextAfter" => TextChild::TextAfter,
+            _ => TextChild::List,
+        }
+    }
 }
 
 /// InDesign's several spellings of "no numbering list", which the parser
@@ -221,6 +277,9 @@ fn source_has_any(original: &[u8]) -> bool {
         || contains(original, b"<AppliedNumberingList")
         || contains(original, b"<NumberingExpression")
         || contains(original, b"<SpanSplitColumnCount")
+        || contains(original, b"<BulletsCharacterStyle")
+        || contains(original, b"<NumberingCharacterStyle")
+        || contains(original, b"<BulletsTextAfter")
 }
 
 /// A story's ranges, matched to the model by provenance.
@@ -260,6 +319,18 @@ pub(crate) fn spell_styles(
         if attr_string(e, b"NumberingExpression").as_deref() == owner.expression {
             owner.expression = None;
         }
+        // Likewise an older file of ours that spelled the marker styles
+        // as attributes: the attribute lane keeps them, and a matching
+        // one is not owed again as a child (so an unmutated save keeps
+        // its bytes).
+        if attr_string(e, b"BulletsCharacterStyle").as_deref() == owner.bullet_style {
+            owner.bullet_style = None;
+        }
+        if attr_string(e, b"BulletsAndNumberingDigitsCharacterStyle").as_deref()
+            == owner.digits_style
+        {
+            owner.digits_style = None;
+        }
         Some(owner)
     })
 }
@@ -274,6 +345,9 @@ fn is_owned_child(name: &[u8]) -> bool {
             | b"AppliedNumberingList"
             | b"NumberingExpression"
             | b"SpanSplitColumnCount"
+            | b"BulletsCharacterStyle"
+            | b"NumberingCharacterStyle"
+            | b"BulletsTextAfter"
     )
 }
 
@@ -336,11 +410,7 @@ fn spell_with<'m>(
                             settle_count(&mut writer, o, Some((&start, &inner)), count)?;
                         }
                         other => {
-                            let which = match other {
-                                b"NumberingFormat" => TextChild::Format,
-                                b"NumberingExpression" => TextChild::Expression,
-                                _ => TextChild::List,
-                            };
+                            let which = TextChild::of(other);
                             let text = subtree_text(&inner);
                             settle_text(&mut writer, o, Some((&start, &inner)), &text, which)?;
                         }
@@ -403,11 +473,7 @@ fn spell_with<'m>(
                             settle_count(&mut writer, o, Some((&e.borrow(), &[])), None)?;
                         }
                         other => {
-                            let which = match other {
-                                b"NumberingFormat" => TextChild::Format,
-                                b"NumberingExpression" => TextChild::Expression,
-                                _ => TextChild::List,
-                            };
+                            let which = TextChild::of(other);
                             settle_text(&mut writer, o, Some((&e.borrow(), &[])), "", which)?;
                         }
                     }
@@ -691,6 +757,9 @@ fn settle_text(
         TextChild::Format => o.format_done = true,
         TextChild::List => o.list_done = true,
         TextChild::Expression => o.expression_done = true,
+        TextChild::BulletStyle => o.bullet_style_done = true,
+        TextChild::DigitsStyle => o.digits_style_done = true,
+        TextChild::TextAfter => {}
     }
     let Some(p) = o.owner.as_ref() else {
         if let Some((start, inner)) = source {
@@ -702,6 +771,9 @@ fn settle_text(
         TextChild::Format => p.format,
         TextChild::List => p.list,
         TextChild::Expression => p.expression,
+        TextChild::BulletStyle => p.bullet_style,
+        TextChild::DigitsStyle => p.digits_style,
+        TextChild::TextAfter => None,
     };
     let Some(value) = model else {
         if let (Some((start, inner)), TextChild::List) = (source, which) {
@@ -717,6 +789,9 @@ fn settle_text(
             TextChild::Format => write_numbering_format(writer, value),
             TextChild::List => write_applied_numbering_list(writer, value),
             TextChild::Expression => write_numbering_expression(writer, value),
+            TextChild::BulletStyle => write_bullets_character_style(writer, value),
+            TextChild::DigitsStyle => write_numbering_character_style(writer, value),
+            TextChild::TextAfter => Ok(()),
         },
     }
 }
@@ -740,6 +815,12 @@ fn write_missing_children(
     }
     if o.owes_expression() {
         settle_text(writer, o, None, "", TextChild::Expression)?;
+    }
+    if o.owes_bullet_style() {
+        settle_text(writer, o, None, "", TextChild::BulletStyle)?;
+    }
+    if o.owes_digits_style() {
+        settle_text(writer, o, None, "", TextChild::DigitsStyle)?;
     }
     if o.owes_count() {
         settle_count(writer, o, None, None)?;
@@ -847,6 +928,75 @@ mod tests {
         let out = String::from_utf8(spell(src, &s).unwrap()).unwrap();
         assert!(
             out.contains(r#"<ParagraphStyleRange SpanColumnType="SpanColumns"><Properties><SpanSplitColumnCount type="short">3</SpanSplitColumnCount></Properties><CharacterStyleRange>"#),
+            "{out}"
+        );
+    }
+
+    /// A numbered range as InDesign spells its local list overrides
+    /// (`list-overrides`, 2026-10-01): the expression, text-after, start
+    /// and continue as attributes, the marker styles as typed children.
+    const LOCAL_LIST: &[u8] = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange BulletsAndNumberingListType="NumberedList" NumberingExpression="^#." NumberingStartAt="5" NumberingContinue="false"><Properties><NumberingCharacterStyle type="object">CharacterStyle/Big</NumberingCharacterStyle></Properties><CharacterStyleRange><Content>Step</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+
+    #[test]
+    fn a_marker_character_style_round_trips_as_a_child() {
+        let s = story(LOCAL_LIST);
+        assert_eq!(
+            s.paragraphs[0]
+                .bullets_and_numbering_digits_character_style
+                .as_deref(),
+            Some("CharacterStyle/Big")
+        );
+        assert_eq!(spell(LOCAL_LIST, &s).unwrap(), LOCAL_LIST, "unmutated");
+
+        let mut s = story(LOCAL_LIST);
+        s.paragraphs[0].bullets_and_numbering_digits_character_style =
+            Some("CharacterStyle/Small".into());
+        s.paragraphs[0].bullets_character_style = Some("CharacterStyle/Dot".into());
+        let out = String::from_utf8(spell(LOCAL_LIST, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Properties><NumberingCharacterStyle type="object">CharacterStyle/Small</NumberingCharacterStyle><BulletsCharacterStyle type="object">CharacterStyle/Dot</BulletsCharacterStyle></Properties>"#),
+            "{out}"
+        );
+
+        let mut s = story(LOCAL_LIST);
+        s.paragraphs[0].bullets_and_numbering_digits_character_style = None;
+        let out = String::from_utf8(spell(LOCAL_LIST, &s).unwrap()).unwrap();
+        assert!(!out.contains("NumberingCharacterStyle"), "{out}");
+    }
+
+    /// InDesign also READS the expression and the text-after as typed
+    /// children of a range (o07 / o08); the writer respells them as the
+    /// attribute it writes itself, so the child is not owed again.
+    #[test]
+    fn a_child_spelled_expression_is_not_kept_as_a_child() {
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange BulletsAndNumberingListType="NumberedList"><Properties><NumberingExpression type="string">(^#)</NumberingExpression><BulletsTextAfter type="string">&gt;</BulletsTextAfter></Properties><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let s = story(src);
+        assert_eq!(
+            s.paragraphs[0].numbering_expression.as_deref(),
+            Some("(^#)")
+        );
+        assert_eq!(s.paragraphs[0].bullets_text_after.as_deref(), Some(">"));
+        let out = String::from_utf8(spell(src, &s).unwrap()).unwrap();
+        assert!(!out.contains("<NumberingExpression"), "{out}");
+        assert!(!out.contains("<BulletsTextAfter"), "{out}");
+    }
+
+    /// A style: the marker styles go out as children, never attributes;
+    /// an older file of ours that spelled them as attributes keeps its
+    /// bytes while unchanged.
+    #[test]
+    fn style_marker_character_styles_are_children() {
+        let src = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="g"><ParagraphStyle Self="ParagraphStyle/N" Name="N" BulletsAndNumberingListType="NumberedList"/><ParagraphStyle Self="ParagraphStyle/Old" Name="Old" BulletsCharacterStyle="CharacterStyle/Dot"/></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let mut styles = idml_import::styles::parse_stylesheet(src).unwrap();
+        assert_eq!(spell_styles(src, &styles).unwrap(), src, "unmutated");
+        styles
+            .paragraph_styles
+            .get_mut("ParagraphStyle/N")
+            .unwrap()
+            .bullets_and_numbering_digits_character_style = Some("CharacterStyle/Big".into());
+        let out = String::from_utf8(spell_styles(src, &styles).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyle Self="ParagraphStyle/N" Name="N" BulletsAndNumberingListType="NumberedList"><Properties><NumberingCharacterStyle type="object">CharacterStyle/Big</NumberingCharacterStyle></Properties></ParagraphStyle>"#),
             "{out}"
         );
     }

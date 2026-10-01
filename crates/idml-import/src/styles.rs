@@ -189,6 +189,15 @@ enum CurrentProperty {
     /// `<SpanSplitColumnCount type="short">2</…>` (or `enumeration` All)
     /// — InDesign's only spelling. Paragraph-only.
     SpanSplitColumnCount,
+    /// `<BulletsCharacterStyle type="object">CharacterStyle/X</…>` — the
+    /// only spelling InDesign reads (`list-overrides` o14/o15, 2026-10-01).
+    /// Paragraph-only.
+    BulletsCharacterStyle,
+    /// `<NumberingCharacterStyle type="object">…</…>`, likewise (o16/o17).
+    NumberingCharacterStyle,
+    /// `<BulletsTextAfter type="string">…</…>` — read as well as the
+    /// attribute InDesign itself writes. Paragraph-only.
+    BulletsTextAfter,
 }
 
 pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
@@ -325,6 +334,19 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 {
                     pending_property = Some(CurrentProperty::SpanSplitColumnCount);
                 }
+                b"BulletsCharacterStyle"
+                    if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
+                {
+                    pending_property = Some(CurrentProperty::BulletsCharacterStyle);
+                }
+                b"NumberingCharacterStyle"
+                    if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
+                {
+                    pending_property = Some(CurrentProperty::NumberingCharacterStyle);
+                }
+                b"BulletsTextAfter" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
+                    pending_property = Some(CurrentProperty::BulletsTextAfter);
+                }
                 _ => {}
             },
             Event::Text(t) if pending_property.is_some() => {
@@ -367,6 +389,20 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                             p.span_columns.count =
                                                 paged_model::SpanSplitColumnCount::from_idml(&text);
                                         }
+                                        // The child beats an attribute of
+                                        // ours: InDesign ignores the latter.
+                                        CurrentProperty::BulletsCharacterStyle => {
+                                            p.bullets_character_style = Some(text);
+                                        }
+                                        CurrentProperty::NumberingCharacterStyle => {
+                                            p.bullets_and_numbering_digits_character_style =
+                                                Some(text);
+                                        }
+                                        CurrentProperty::BulletsTextAfter => {
+                                            if p.bullets_text_after.is_none() {
+                                                p.bullets_text_after = Some(text);
+                                            }
+                                        }
                                         CurrentProperty::AppliedNumberingList => {
                                             p.applied_numbering_list = match text.as_str() {
                                                 "n" | "NumberingList/n" | "" => None,
@@ -401,7 +437,10 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         CurrentProperty::NumberingExpression
                                         | CurrentProperty::NumberingFormat
                                         | CurrentProperty::AppliedNumberingList
-                                        | CurrentProperty::SpanSplitColumnCount => {}
+                                        | CurrentProperty::SpanSplitColumnCount
+                                        | CurrentProperty::BulletsCharacterStyle
+                                        | CurrentProperty::NumberingCharacterStyle
+                                        | CurrentProperty::BulletsTextAfter => {}
                                     }
                                 }
                             }
@@ -585,7 +624,13 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"TOCStyle" => {
                     current_toc_style = None;
                 }
-                b"AppliedFont" | b"BasedOn" | b"Leading" | b"NumberingExpression" => {
+                b"AppliedFont"
+                | b"BasedOn"
+                | b"Leading"
+                | b"NumberingExpression"
+                | b"BulletsCharacterStyle"
+                | b"NumberingCharacterStyle"
+                | b"BulletsTextAfter" => {
                     // Pending property is consumed by the next
                     // Text event; clearing here prevents
                     // mismatched-tag leaks if the element was
@@ -1498,6 +1543,26 @@ mod tests {
         assert_eq!(p.bullets_list_type.as_deref(), Some("BulletList"));
         assert_eq!(p.bullet_character, Some(8226)); // U+2022 BULLET
         assert_eq!(p.bullets_text_after.as_deref(), Some(" "));
+    }
+
+    /// InDesign's own spelling of the marker character styles: typed
+    /// `<Properties>` children (267 of 267 corpus packages; the attributes
+    /// are ignored, `list-overrides` o14-o17). A child beats an attribute
+    /// of ours.
+    #[test]
+    fn parses_marker_character_styles_as_indesign_spells_them() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup><ParagraphStyle Self="ParagraphStyle/N" BulletsAndNumberingListType="NumberedList" BulletsCharacterStyle="CharacterStyle/Old"><Properties><BulletChar BulletCharacterType="UnicodeOnly" BulletCharacterValue="8226" /><NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat><BulletsCharacterStyle type="object">CharacterStyle/Dot</BulletsCharacterStyle><NumberingCharacterStyle type="object">CharacterStyle/Digits</NumberingCharacterStyle></Properties></ParagraphStyle></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let p = s.paragraph_styles.get("ParagraphStyle/N").unwrap();
+        assert_eq!(
+            p.bullets_character_style.as_deref(),
+            Some("CharacterStyle/Dot")
+        );
+        assert_eq!(
+            p.bullets_and_numbering_digits_character_style.as_deref(),
+            Some("CharacterStyle/Digits")
+        );
+        assert_eq!(p.numbering_format.as_deref(), Some("1, 2, 3, 4..."));
     }
 
     #[test]
