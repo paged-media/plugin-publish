@@ -283,6 +283,7 @@ name = "pdf-import"
 version = "0.0.0"
 dependencies = [
  "base64",
+ "idml-import",
  "paged-model",
  "paged-scene",
  "paged-store",

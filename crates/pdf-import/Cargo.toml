@@ -21,7 +21,6 @@ paged-model = { workspace = true }
 paged-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-zip = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
 
@@ -32,3 +31,7 @@ wasm-bindgen = "0.2"
 
 [dev-dependencies]
 zip = { workspace = true }
+# The editor's load path (`CanvasModel::load`) opens `.paged` bytes through
+# `idml_import::open_source_archive` and falls back to `import_idml_archive`;
+# the round-trip test drives exactly those calls (paged-canvas is not a dep).
+idml-import = { path = "../idml-import" }

@@ -205,3 +205,51 @@ fn pgm_round_trips_are_stable() {
     assert_eq!(back.stories.len(), doc.stories.len());
     assert_eq!(back.stories[0].story.paragraphs[0].runs[0].text, "Hello ");
 }
+
+/// Open the produced `.paged` the way the editor does (`CanvasModel::load`):
+/// `idml_import::open_source_archive` sniffs the container, the native pgm
+/// part wins when it decodes, and `import_idml_archive` is the fallback when
+/// it does not. Both halves must hold, since the container now comes from
+/// core's shared writer (`paged_store::package::wrap_document`).
+#[test]
+fn produced_paged_opens_through_the_editor_load_path() {
+    // A4 first page so the fallback size is distinguishable from Letter.
+    let json = r#"{
+      "pages": [
+        { "width_pt": 595.0, "height_pt": 842.0,
+          "frames": [
+            { "kind": "text", "x_pt": 72.0, "y_pt": 72.0, "width_pt": 400.0, "height_pt": 100.0,
+              "paragraphs": [ { "runs": [ { "text": "Native", "font_size_pt": 12.0 } ] } ] } ] },
+        { "width_pt": 612.0, "height_pt": 792.0, "frames": [] }
+      ]
+    }"#;
+    let bytes = pdf_ir_to_paged(json).expect("map IR → .paged");
+
+    // The load sniff: mimetype + designmap.xml present.
+    let archive = idml_import::open_source_archive(&bytes).expect("load sniff accepts the package");
+
+    // Primary path: the native part reconstructs the model with no IDML parse.
+    let pgm = archive
+        .entry(paged_store::DOCUMENT_PGM_PATH)
+        .expect("native pgm part present");
+    let doc = paged_store::from_bytes(pgm).expect("pgm decodes on the load path");
+    assert_eq!(doc.spreads.len(), 2);
+    assert_eq!(doc.stories[0].story.paragraphs[0].runs[0].text, "Native");
+
+    // Fallback path (pgm drift): the IDML skeleton parses into one blank page
+    // sized from the FIRST IR page, and keeps the fixed document name.
+    let fallback = idml_import::import_idml_archive(&archive).expect("fallback skeleton parses");
+    assert_eq!(fallback.spreads.len(), 1);
+    let pages = &fallback.spreads[0].spread.pages;
+    assert_eq!(pages.len(), 1);
+    let b = &pages[0].bounds;
+    assert_eq!((b.top, b.left, b.bottom, b.right), (0.0, 0.0, 842.0, 595.0));
+    assert!(
+        fallback.stories.is_empty(),
+        "the skeleton carries no content"
+    );
+    assert_eq!(
+        fallback.designmap.document_name.as_deref(),
+        Some("Imported.pdf")
+    );
+}
