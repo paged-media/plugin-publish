@@ -661,9 +661,10 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if p.drop_cap_detail != 0 {
         out.push(("DropCapDetail", p.drop_cap_detail.to_string()));
     }
-    let bool_attrs: [(&'static str, Option<bool>); 5] = [
+    let bool_attrs: [(&'static str, Option<bool>); 6] = [
         ("Hyphenation", p.hyphenation),
         ("KeepLinesTogether", p.keep_lines_together),
+        ("KeepAllLinesTogether", p.keep_all_lines_together),
         // The paragraph-level half of InDesign's hyphenation panel.
         ("HyphenateCapitalizedWords", p.hyphenate_capitalized_words),
         ("HyphenateLastWord", p.hyphenate_last_word),
@@ -691,6 +692,12 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     }
     if let Some(n) = p.keep_with_next {
         out.push(("KeepWithNext", n.to_string()));
+    }
+    if let Some(n) = p.keep_first_lines {
+        out.push(("KeepFirstLines", n.to_string()));
+    }
+    if let Some(n) = p.keep_last_lines {
+        out.push(("KeepLastLines", n.to_string()));
     }
     // NOT here: `NumberingFormat` and `AppliedNumberingList`. InDesign
     // ignores both as attributes and reads them only as typed

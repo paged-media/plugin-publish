@@ -1052,6 +1052,13 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         hyphenate_across_columns: attr(e, b"HyphenateAcrossColumns").and_then(|s| s.parse().ok()),
         hyphenate_ladder_limit: attr(e, b"HyphenateLadderLimit").and_then(|s| s.parse().ok()),
         hyphen_weight: attr(e, b"HyphenWeight").and_then(|s| s.parse().ok()),
+        // ADR 028 — keep options live on paragraph STYLES in real documents
+        // (a heading style's KeepWithNext), so the style must carry them.
+        keep_lines_together: attr(e, b"KeepLinesTogether").and_then(|s| s.parse().ok()),
+        keep_all_lines_together: attr(e, b"KeepAllLinesTogether").and_then(|s| s.parse().ok()),
+        keep_first_lines: attr(e, b"KeepFirstLines").and_then(|s| s.parse().ok()),
+        keep_last_lines: attr(e, b"KeepLastLines").and_then(|s| s.parse().ok()),
+        keep_with_next: attr(e, b"KeepWithNext").and_then(|s| s.parse().ok()),
         applied_language: attr(e, b"AppliedLanguage"),
         minimum_word_spacing: attr(e, b"MinimumWordSpacing").and_then(|s| s.parse().ok()),
         desired_word_spacing: attr(e, b"DesiredWordSpacing").and_then(|s| s.parse().ok()),
@@ -1167,6 +1174,38 @@ mod tests {
         // BasedOn child with no own zone inherits it.
         let sub = s.resolve_paragraph("ParagraphStyle/Sub");
         assert_eq!(sub.hyphenation_zone, Some(36.0));
+    }
+
+    /// ADR 028 — keep options live on paragraph STYLES in real documents
+    /// (a heading's KeepWithNext); they must parse and cascade.
+    #[test]
+    fn parses_and_cascades_keep_options() {
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/Heading"
+                            KeepWithNext="2"
+                            KeepLinesTogether="true"
+                            KeepAllLinesTogether="true"
+                            KeepFirstLines="3"
+                            KeepLastLines="4"/>
+            <ParagraphStyle Self="ParagraphStyle/Sub"
+                            BasedOn="ParagraphStyle/Heading"
+                            KeepWithNext="1"/>
+          </RootParagraphStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let h = s.resolve_paragraph("ParagraphStyle/Heading");
+        assert_eq!(h.keep_with_next, Some(2));
+        assert_eq!(h.keep_lines_together, Some(true));
+        assert_eq!(h.keep_all_lines_together, Some(true));
+        assert_eq!(h.keep_first_lines, Some(3));
+        assert_eq!(h.keep_last_lines, Some(4));
+        // The child overrides one and inherits the rest.
+        let sub = s.resolve_paragraph("ParagraphStyle/Sub");
+        assert_eq!(sub.keep_with_next, Some(1));
+        assert_eq!(sub.keep_all_lines_together, Some(true));
+        assert_eq!(sub.keep_last_lines, Some(4));
     }
 
     #[test]

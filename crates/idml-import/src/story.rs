@@ -591,6 +591,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .and_then(|s| s.parse::<bool>().ok()),
                             keep_with_next: attr(&e, b"KeepWithNext")
                                 .and_then(|s| s.parse::<u32>().ok()),
+                            // ADR 028 — which lines KeepLinesTogether keeps.
+                            keep_all_lines_together: attr(&e, b"KeepAllLinesTogether")
+                                .and_then(|s| s.parse::<bool>().ok()),
+                            keep_first_lines: attr(&e, b"KeepFirstLines")
+                                .and_then(|s| s.parse::<u32>().ok()),
+                            keep_last_lines: attr(&e, b"KeepLastLines")
+                                .and_then(|s| s.parse::<u32>().ok()),
                             rule_above: crate::styles::parse_paragraph_rule(&e, "RuleAbove"),
                             rule_below: crate::styles::parse_paragraph_rule(&e, "RuleBelow"),
                             kinsoku_set: attr(&e, b"KinsokuSet"),
@@ -2854,6 +2861,9 @@ mod tests {
               RightIndent="9"
               Hyphenation="false"
               KeepLinesTogether="true"
+              KeepAllLinesTogether="false"
+              KeepFirstLines="3"
+              KeepLastLines="2"
               KeepWithNext="2"
               NumberingFormat="^#.^t"
               RuleAbove="true"
@@ -2869,6 +2879,9 @@ mod tests {
         assert_eq!(p.right_indent, Some(9.0));
         assert_eq!(p.hyphenation, Some(false));
         assert_eq!(p.keep_lines_together, Some(true));
+        assert_eq!(p.keep_all_lines_together, Some(false));
+        assert_eq!(p.keep_first_lines, Some(3));
+        assert_eq!(p.keep_last_lines, Some(2));
         assert_eq!(p.keep_with_next, Some(2));
         assert_eq!(p.numbering_format.as_deref(), Some("^#.^t"));
         assert_eq!(p.rule_above.on, Some(true));
