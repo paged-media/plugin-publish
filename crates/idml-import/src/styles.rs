@@ -979,6 +979,9 @@ fn parse_stripe(e: &quick_xml::events::BytesStart) -> Option<StripeDef> {
     Some(StripeDef { left, width })
 }
 
+// `needless_update`: the `..Default::default()` tail is deliberate (see the
+// literal); it is redundant only while every model field is listed.
+#[allow(clippy::needless_update)]
 fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphStyleDef> {
     // `Swatch/None` is IDML's literal for "no stroke" — normalise to
     // None so a `BasedOn` cascade can fall through to a real colour.
@@ -1074,6 +1077,10 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         border: parse_paragraph_border(e),
         // Populated later by the `<NestedStyle>` start-tag handler.
         nested_styles: Vec::new(),
+        // Fields this parser does not read yet fall back to their default;
+        // lets the core model grow (e.g. keep options, ADR 028) without
+        // breaking this crate at a pinned rev.
+        ..Default::default()
     })
 }
 

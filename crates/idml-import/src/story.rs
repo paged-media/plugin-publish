@@ -212,6 +212,9 @@ pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
 
 /// [`parse_story`] plus the source-element → model-item map the
 /// save-back rewrite needs. See [`StoryProvenance`].
+// `needless_update`: the `Paragraph { .., ..Default::default() }` tail is
+// deliberate; it is redundant only while every model field is listed.
+#[allow(clippy::needless_update)]
 pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance), ParseError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -603,6 +606,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .and_then(|s| s.parse::<bool>().ok()),
                             footnotes: Vec::new(),
                             index_markers: Vec::new(),
+                            // Fields not read here default; lets the core model
+                            // grow without breaking this crate at a pinned rev.
+                            ..Default::default()
                         });
                     }
                     b"Table" => {
