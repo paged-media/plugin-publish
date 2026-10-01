@@ -1303,6 +1303,9 @@ fn write_new_text_frame(
         },
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
+    if let Some(a) = &f.stroke_alignment {
+        attrs.push(("StrokeAlignment", a.clone()));
+    }
     emit_start_with_attrs(writer, "TextFrame", &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
     write_item_label(writer, spread, self_id)?;
@@ -3589,9 +3592,31 @@ fn patch_spread_item(
             // byte-preservingly like a rectangle's.
             let corners =
                 corner_attrs_of(frame.corner_radius, &frame.corner_option, &frame.corners);
+            // A text frame's `StrokeAlignment` is model-owned (it places
+            // the stroke and insets the text), so it patches back here;
+            // the vector kinds keep passing theirs through verbatim.
+            let mut extras = frame_attr_extras(
+                tx,
+                Some(&fill),
+                &stroke,
+                stroke_weight,
+                next.as_deref(),
+                nonprinting,
+                None,
+                None,
+                Some(&corners),
+                applied_object_style.as_deref(),
+                frame.item_layer.as_deref(),
+            );
+            if let Some(a) = &frame.stroke_alignment {
+                extras.push(("StrokeAlignment", a.clone()));
+            }
             let start = patch_start(
                 e,
                 |k, raw| {
+                    if k == b"StrokeAlignment" {
+                        return Some(stroke_alignment_patch(raw, &frame.stroke_alignment));
+                    }
                     frame_attr_patch(
                         k,
                         raw,
@@ -3609,19 +3634,7 @@ fn patch_spread_item(
                         &frame.item_layer,
                     )
                 },
-                &frame_attr_extras(
-                    tx,
-                    Some(&fill),
-                    &stroke,
-                    stroke_weight,
-                    next.as_deref(),
-                    nonprinting,
-                    None,
-                    None,
-                    Some(&corners),
-                    applied_object_style.as_deref(),
-                    frame.item_layer.as_deref(),
-                ),
+                &extras,
             )?;
             let start = patch_gradient_geometry(
                 &start,
@@ -4254,6 +4267,16 @@ fn arrow_patch(v: Option<idml_import::ArrowheadType>) -> Option<Patch> {
         None | Some(A::Other) => None,
         Some(A::None) => Some(Patch::Remove),
         Some(t) => Some(Patch::Set(t.as_idml().to_string())),
+    }
+}
+
+/// `StrokeAlignment` on a text frame: the source spelling when the model
+/// still says it (an unmutated save is byte-identical), the model's value
+/// when it changed, and dropped when the model is back at the default.
+fn stroke_alignment_patch(raw: &[u8], model: &Option<String>) -> Patch {
+    match model {
+        Some(s) if s.as_bytes() == raw => Patch::Keep,
+        _ => opt_string_patch(model),
     }
 }
 

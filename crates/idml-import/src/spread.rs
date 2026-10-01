@@ -408,8 +408,9 @@ fn read_common_attrs(e: &quick_xml::events::BytesStart) -> CommonAttrs {
     }
 }
 
-/// Rectangle-only stroke style attributes (`StrokeAlignment`,
-/// `EndCap`, `EndJoin`, `MiterLimit`). `StrokeType` moved to
+/// Rectangle stroke style attributes (`StrokeAlignment`,
+/// `EndCap`, `EndJoin`, `MiterLimit`). `StrokeAlignment` alone is also
+/// read on `<Oval>`, `<Polygon>` and `<TextFrame>`, straight off the tag. `StrokeType` moved to
 /// [`CommonAttrs`] in cycle 4 so non-rectangle shapes can also
 /// honour custom dash patterns.
 struct StrokeStyleAttrs {
@@ -1104,6 +1105,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_gap_color: common.stroke_gap_color,
                         stroke_gap_tint: common.stroke_gap_tint,
                         stroke_dash: common.stroke_dash,
+                        // Read as on a rectangle: it decides where the
+                        // stroke paints AND how far it insets the text.
+                        stroke_alignment: attr(&e, b"StrokeAlignment"),
                         next_text_frame: attr(&e, b"NextTextFrame"),
                         applied_object_style: common.applied_object_style,
                         item_layer: common.item_layer,
