@@ -240,10 +240,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     let mut out = Story::default();
     let mut current_paragraph: Option<Paragraph> = None;
     let mut current_run: Option<CharacterRun> = None;
-    // A `<Br/>` seen but not yet known to be interior — see the `b"Br"`
-    // arm. Flushed by the next content in the same paragraph, dropped by
-    // the paragraph's end.
-    let mut pending_break = false;
+    // `<Br/>` marks seen but not yet known to be interior — see the
+    // `b"Br"` arm. A COUNT, not a flag: two marks before the next content
+    // are an empty paragraph between them, and a flag folded them into one
+    // (see `consecutive_marks_before_content_keep_the_empty_paragraph`).
+    // Flushed by the next content in the same paragraph, dropped by the
+    // paragraph's end.
+    let mut pending_breaks: usize = 0;
     // Phase 5 — table context stack. Each `<Table>` push, each
     // `</Table>` pop. Nested tables (a table inside a `<Cell>`'s
     // `<Paragraph>`) stack their contexts so the inner table's
@@ -629,7 +632,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         // (where it used to land: a DOCX table's first
                         // cell gained a leading newline on every round
                         // trip, measured 2026-09-06).
-                        pending_break = false;
+                        pending_breaks = 0;
                         // Tables nest inside a CharacterStyleRange; the
                         // run that hosts the table is typically
                         // contentless, so we let it pass through as-is.
@@ -1096,6 +1099,20 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     b"CharacterStyleRange" => {
                         let open = open_ranges.pop();
                         let mut pushed_at: Option<usize> = None;
+                        // Marks this range ENDS on: only the last can be the
+                        // paragraph's terminator, so every one before it is
+                        // an empty paragraph inside this range and stays in
+                        // its run. The last stays held — the next content
+                        // takes it, the paragraph's end drops it — which is
+                        // the one mark the writer expects to find there.
+                        if pending_breaks > 1 {
+                            if let Some(run) = current_run.as_mut() {
+                                for _ in 1..pending_breaks {
+                                    run.text.push('\n');
+                                }
+                                pending_breaks = 1;
+                            }
+                        }
                         if let (Some(run), Some(para)) =
                             (current_run.take(), current_paragraph.as_mut())
                         {
@@ -1152,7 +1169,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     b"ParagraphStyleRange" => {
                         // The terminator, discarded: it ended the
                         // paragraph, it is not text inside it.
-                        pending_break = false;
+                        pending_breaks = 0;
                         let open = open_paragraphs.pop();
                         let had_range = psr_ranges.pop().unwrap_or(0) > 0;
                         if let Some(para) = current_paragraph.take() {
@@ -1366,9 +1383,19 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // a still-pending one — that was the terminator. Before
                     // this, every paragraph of every InDesign-authored file
                     // we read carried a trailing newline it never had.
+                    //
+                    // Every held mark is flushed, not just one: a range
+                    // whose `<Br />` comes BEFORE its `<Content>`, after a
+                    // range that already ended on one, is an empty
+                    // paragraph between the two (InDesign writes exactly
+                    // that for a blank line carrying the next range's
+                    // formatting). Folding the pair into one newline lost
+                    // the blank line, and the writer — rightly seeing the
+                    // model text differ — re-serialised the range without
+                    // its leading mark on a save that changed nothing.
                     b"Br" => {
                         if current_run.is_some() {
-                            pending_break = true;
+                            pending_breaks += 1;
                         }
                     }
                     // <TextVariableInstance ResultText="..."
@@ -1478,10 +1505,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         // A mark with content after it was interior after
                         // all: it is a break inside the paragraph, so it
                         // becomes the newline it always was.
-                        if pending_break {
+                        for _ in 0..pending_breaks {
                             run.text.push('\n');
-                            pending_break = false;
                         }
+                        pending_breaks = 0;
                         let raw = t
                             .xml_content(quick_xml::XmlVersion::Implicit1_0)
                             .unwrap_or_default();
