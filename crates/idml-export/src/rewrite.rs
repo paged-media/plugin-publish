@@ -5575,6 +5575,27 @@ pub(crate) fn paragraph_rule_patch(
     }
 }
 
+/// The span / split columns attributes, on a range or a paragraph style
+/// (the key set `emit::span_column_attrs` writes).
+pub(crate) fn span_column_patch(
+    key: &[u8],
+    raw: Option<&str>,
+    sc: &idml_import::SpanColumns,
+) -> Option<Patch> {
+    match key {
+        b"SpanColumnType" => Some(match sc.column_type {
+            Some(t) if raw == Some(t.as_idml()) => Patch::Keep,
+            Some(t) => Patch::Set(t.as_idml().to_string()),
+            None => Patch::Remove,
+        }),
+        b"SpanColumnMinSpaceBefore" => Some(preserving_f32_patch(raw, sc.min_space_before)),
+        b"SpanColumnMinSpaceAfter" => Some(preserving_f32_patch(raw, sc.min_space_after)),
+        b"SplitColumnInsideGutter" => Some(preserving_f32_patch(raw, sc.inside_gutter)),
+        b"SplitColumnOutsideGutter" => Some(preserving_f32_patch(raw, sc.outside_gutter)),
+        _ => None,
+    }
+}
+
 /// The `<ParagraphStyleRange>` attributes the model owns — every
 /// paragraph override InDesign reads from the range (the key set
 /// `emit::paragraph_attrs` writes). A key the model does not own passes
@@ -5627,7 +5648,8 @@ pub(crate) fn paragraph_attr_patch(
         b"NumberingFormat" => Some(opt_string_patch(&p.numbering_format)),
         b"AppliedNumberingList" => Some(numbering_list_patch(raw, &p.applied_numbering_list)),
         b"KinsokuSet" => Some(opt_string_patch(&p.kinsoku_set)),
-        _ => paragraph_rule_patch(key, raw, &crate::emit::RULE_ABOVE, &p.rule_above)
+        _ => span_column_patch(key, raw, &p.span_columns)
+            .or_else(|| paragraph_rule_patch(key, raw, &crate::emit::RULE_ABOVE, &p.rule_above))
             .or_else(|| paragraph_rule_patch(key, raw, &crate::emit::RULE_BELOW, &p.rule_below)),
     }
 }
@@ -5867,6 +5889,9 @@ mod tests {
         p.right_indent = Some(18.0);
         p.keep_with_next = Some(1);
         p.start_paragraph = Some(idml_import::StartParagraph::NextPage);
+        p.span_columns.column_type = Some(idml_import::SpanColumnType::SplitColumns);
+        p.span_columns.min_space_before = Some(6.0);
+        p.span_columns.inside_gutter = Some(20.0);
         p.keep_lines_together = Some(true);
         p.hyphenation = Some(false);
         p.drop_cap_characters = 1;
@@ -5883,6 +5908,9 @@ mod tests {
             r#"RightIndent="18""#,
             r#"KeepWithNext="1""#,
             r#"StartParagraph="NextPage""#,
+            r#"SpanColumnType="SplitColumns""#,
+            r#"SpanColumnMinSpaceBefore="6""#,
+            r#"SplitColumnInsideGutter="20""#,
             r#"KeepLinesTogether="true""#,
             r#"Hyphenation="false""#,
             r#"DropCapCharacters="1""#,

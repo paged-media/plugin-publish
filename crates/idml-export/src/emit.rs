@@ -696,6 +696,7 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if let Some(s) = p.start_paragraph {
         out.push(("StartParagraph", s.as_idml().to_string()));
     }
+    span_column_attrs(&mut out, &p.span_columns);
     if let Some(n) = p.keep_first_lines {
         out.push(("KeepFirstLines", n.to_string()));
     }
@@ -720,13 +721,38 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     out
 }
 
+/// The span / split columns attributes of a range or a paragraph style.
+/// `SpanSplitColumnCount` is not among them: InDesign reads it only as a
+/// typed `<Properties>` child ([`write_span_split_column_count`]).
+pub(crate) fn span_column_attrs(
+    out: &mut Vec<(&'static str, String)>,
+    sc: &idml_import::SpanColumns,
+) {
+    if let Some(t) = sc.column_type {
+        out.push(("SpanColumnType", t.as_idml().to_string()));
+    }
+    let f32_attrs: [(&'static str, Option<f32>); 4] = [
+        ("SpanColumnMinSpaceBefore", sc.min_space_before),
+        ("SpanColumnMinSpaceAfter", sc.min_space_after),
+        ("SplitColumnInsideGutter", sc.inside_gutter),
+        ("SplitColumnOutsideGutter", sc.outside_gutter),
+    ];
+    for (k, v) in f32_attrs {
+        if let Some(v) = v {
+            out.push((k, rewrite::format_f32(v)));
+        }
+    }
+}
+
 /// Whether a paragraph carries any `<Properties>` child: tab stops, a
-/// bullet character, a numbering format or a numbering list.
+/// bullet character, a numbering format, a numbering list or a span /
+/// split column count.
 pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
     !p.tab_list.is_empty()
         || p.bullet_character.is_some()
         || p.numbering_format.is_some()
         || p.applied_numbering_list.is_some()
+        || p.span_columns.count.is_some()
 }
 
 /// The paragraph's `<Properties>` block — its tab stops, bullet
@@ -753,8 +779,25 @@ pub(crate) fn emit_paragraph_properties(
     if let Some(l) = &p.applied_numbering_list {
         write_applied_numbering_list(writer, l)?;
     }
+    if let Some(c) = p.span_columns.count {
+        write_span_split_column_count(writer, c)?;
+    }
     writer.write_event(Event::End(BytesEnd::new("Properties")))?;
     Ok(())
+}
+
+/// `<SpanSplitColumnCount type="short">2</SpanSplitColumnCount>`, or
+/// `type="enumeration"` for `All` — InDesign's own spelling (its export,
+/// 2026-10-01); the attribute is ignored.
+pub(crate) fn write_span_split_column_count(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    count: idml_import::SpanSplitColumnCount,
+) -> Result<(), quick_xml::Error> {
+    let ty = match count {
+        idml_import::SpanSplitColumnCount::All => "enumeration",
+        idml_import::SpanSplitColumnCount::Count(_) => "short",
+    };
+    write_typed_text(writer, "SpanSplitColumnCount", ty, &count.as_idml())
 }
 
 /// `<NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat>` —

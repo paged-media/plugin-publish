@@ -39,11 +39,12 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::styles::{ParagraphStyleDef, StyleSheet};
-use idml_import::{Paragraph, Story, TabStop};
+use idml_import::{Paragraph, SpanSplitColumnCount, Story, TabStop};
 
 use crate::emit::{
     paragraph_has_properties, write_applied_numbering_list, write_bullet_char,
-    write_numbering_expression, write_numbering_format, write_tab_list,
+    write_numbering_expression, write_numbering_format, write_span_split_column_count,
+    write_tab_list,
 };
 use crate::rewrite::resolve_paragraph;
 
@@ -58,6 +59,8 @@ pub(crate) struct Owner<'a> {
     pub(crate) list: Option<&'a str>,
     /// A style's `NumberingExpression`; a range has none.
     pub(crate) expression: Option<&'a str>,
+    /// `SpanSplitColumnCount`.
+    pub(crate) count: Option<SpanSplitColumnCount>,
 }
 
 impl<'a> Owner<'a> {
@@ -68,6 +71,7 @@ impl<'a> Owner<'a> {
             format: p.numbering_format.as_deref(),
             list: p.applied_numbering_list.as_deref(),
             expression: None,
+            count: p.span_columns.count,
         }
     }
 
@@ -78,6 +82,7 @@ impl<'a> Owner<'a> {
             format: s.numbering_format.as_deref(),
             list: s.applied_numbering_list.as_deref(),
             expression: s.numbering_expression.as_deref(),
+            count: s.span_columns.count,
         }
     }
 
@@ -87,6 +92,7 @@ impl<'a> Owner<'a> {
             || self.format.is_some()
             || self.list.is_some()
             || self.expression.is_some()
+            || self.count.is_some()
     }
 
     /// Every child, in InDesign's order, for a freshly written element.
@@ -109,6 +115,9 @@ impl<'a> Owner<'a> {
         if let Some(x) = self.expression {
             write_numbering_expression(writer, x)?;
         }
+        if let Some(c) = self.count {
+            write_span_split_column_count(writer, c)?;
+        }
         Ok(())
     }
 }
@@ -128,6 +137,7 @@ struct Open<'a> {
     format_done: bool,
     list_done: bool,
     expression_done: bool,
+    count_done: bool,
 }
 
 impl<'a> Open<'a> {
@@ -142,6 +152,7 @@ impl<'a> Open<'a> {
             format_done: false,
             list_done: false,
             expression_done: false,
+            count_done: false,
         }
     }
     fn owes_tabs(&self) -> bool {
@@ -159,8 +170,12 @@ impl<'a> Open<'a> {
     fn owes_expression(&self) -> bool {
         !self.expression_done && self.owner.as_ref().is_some_and(|o| o.expression.is_some())
     }
+    fn owes_count(&self) -> bool {
+        !self.count_done && self.owner.as_ref().is_some_and(|o| o.count.is_some())
+    }
     fn owes_any(&self) -> bool {
-        self.owes_tabs()
+        self.owes_count()
+            || self.owes_tabs()
             || self.owes_bullet()
             || self.owes_format()
             || self.owes_list()
@@ -205,6 +220,7 @@ fn source_has_any(original: &[u8]) -> bool {
         || contains(original, b"<NumberingFormat")
         || contains(original, b"<AppliedNumberingList")
         || contains(original, b"<NumberingExpression")
+        || contains(original, b"<SpanSplitColumnCount")
 }
 
 /// A story's ranges, matched to the model by provenance.
@@ -257,6 +273,7 @@ fn is_owned_child(name: &[u8]) -> bool {
             | b"NumberingFormat"
             | b"AppliedNumberingList"
             | b"NumberingExpression"
+            | b"SpanSplitColumnCount"
     )
 }
 
@@ -313,6 +330,10 @@ fn spell_with<'m>(
                         b"BulletChar" => {
                             let cp = attr_u32(&start, b"BulletCharacterValue");
                             settle_bullet(&mut writer, o, Some((&start, &inner)), cp)?;
+                        }
+                        b"SpanSplitColumnCount" => {
+                            let count = SpanSplitColumnCount::from_idml(&subtree_text(&inner));
+                            settle_count(&mut writer, o, Some((&start, &inner)), count)?;
                         }
                         other => {
                             let which = match other {
@@ -377,6 +398,9 @@ fn spell_with<'m>(
                         b"BulletChar" => {
                             let cp = attr_u32(&e, b"BulletCharacterValue");
                             settle_bullet(&mut writer, o, Some((&e.borrow(), &[])), cp)?;
+                        }
+                        b"SpanSplitColumnCount" => {
+                            settle_count(&mut writer, o, Some((&e.borrow(), &[])), None)?;
                         }
                         other => {
                             let which = match other {
@@ -628,6 +652,30 @@ fn settle_bullet(
     }
 }
 
+/// A source `<SpanSplitColumnCount>` (or none) against the model, like
+/// [`settle_bullet`].
+fn settle_count(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    o: &mut Open<'_>,
+    source: Option<(&BytesStart<'_>, &[Event<'static>])>,
+    source_count: Option<SpanSplitColumnCount>,
+) -> Result<(), quick_xml::Error> {
+    o.count_done = true;
+    let Some(p) = o.owner.as_ref() else {
+        if let Some((start, inner)) = source {
+            write_events(writer, start, inner)?;
+        }
+        return Ok(());
+    };
+    let Some(count) = p.count else {
+        return Ok(());
+    };
+    match source {
+        Some((start, inner)) if source_count == Some(count) => write_events(writer, start, inner),
+        _ => write_span_split_column_count(writer, count),
+    }
+}
+
 /// A source `<NumberingFormat>` / `<AppliedNumberingList>` /
 /// `<NumberingExpression>` (or none) against the model, like
 /// [`settle_tabs`]. A "no list" spelling the parser reads as `None`
@@ -693,6 +741,9 @@ fn write_missing_children(
     if o.owes_expression() {
         settle_text(writer, o, None, "", TextChild::Expression)?;
     }
+    if o.owes_count() {
+        settle_count(writer, o, None, None)?;
+    }
     Ok(())
 }
 
@@ -754,6 +805,49 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&out).unwrap(),
             std::str::from_utf8(INDESIGN).unwrap()
+        );
+    }
+
+    /// InDesign's own spelling of a split paragraph (its export,
+    /// 2026-10-01): the count is a typed child, the rest attributes.
+    const SPLIT: &[u8] = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/[No paragraph style]" SpanColumnType="SplitColumns" SplitColumnInsideGutter="20"><Properties><SpanSplitColumnCount type="short">2</SpanSplitColumnCount></Properties><CharacterStyleRange><Content>P02</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+
+    #[test]
+    fn a_span_split_column_count_round_trips() {
+        let s = story(SPLIT);
+        assert_eq!(
+            s.paragraphs[0].span_columns.count,
+            Some(SpanSplitColumnCount::Count(2))
+        );
+        assert_eq!(
+            spell(SPLIT, &s).unwrap(),
+            SPLIT,
+            "unmutated: byte-identical"
+        );
+
+        let mut s = story(SPLIT);
+        s.paragraphs[0].span_columns.count = Some(SpanSplitColumnCount::All);
+        let out = String::from_utf8(spell(SPLIT, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Properties><SpanSplitColumnCount type="enumeration">All</SpanSplitColumnCount></Properties>"#),
+            "{out}"
+        );
+
+        let mut s = story(SPLIT);
+        s.paragraphs[0].span_columns.count = None;
+        let out = String::from_utf8(spell(SPLIT, &s).unwrap()).unwrap();
+        assert!(!out.contains("SpanSplitColumnCount"), "{out}");
+    }
+
+    #[test]
+    fn a_count_gained_by_mutation_opens_a_properties_block() {
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange SpanColumnType="SpanColumns"><CharacterStyleRange><Content>H</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut s = story(src);
+        s.paragraphs[0].span_columns.count = Some(SpanSplitColumnCount::Count(3));
+        let out = String::from_utf8(spell(src, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyleRange SpanColumnType="SpanColumns"><Properties><SpanSplitColumnCount type="short">3</SpanSplitColumnCount></Properties><CharacterStyleRange>"#),
+            "{out}"
         );
     }
 

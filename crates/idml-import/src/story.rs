@@ -47,7 +47,10 @@ pub use paged_model::{
     TableColumn, TableLineStrokes, TableRow,
 };
 
-pub use paged_model::{Justification, OtfFeatures, StartParagraph, TabStop};
+pub use paged_model::{
+    Justification, OtfFeatures, SpanColumnType, SpanColumns, SpanSplitColumnCount, StartParagraph,
+    TabStop,
+};
 
 pub use paged_model::{AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER};
 
@@ -597,6 +600,21 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             // ADR 028 — the break-before rule.
                             start_paragraph: attr(&e, b"StartParagraph")
                                 .and_then(|s| paged_model::StartParagraph::from_idml(&s)),
+                            // Span / split columns. The column count is a
+                            // typed `<Properties>` child (below).
+                            span_columns: paged_model::SpanColumns {
+                                column_type: attr(&e, b"SpanColumnType")
+                                    .and_then(|s| paged_model::SpanColumnType::from_idml(&s)),
+                                count: None,
+                                min_space_before: attr(&e, b"SpanColumnMinSpaceBefore")
+                                    .and_then(|s| s.parse().ok()),
+                                min_space_after: attr(&e, b"SpanColumnMinSpaceAfter")
+                                    .and_then(|s| s.parse().ok()),
+                                inside_gutter: attr(&e, b"SplitColumnInsideGutter")
+                                    .and_then(|s| s.parse().ok()),
+                                outside_gutter: attr(&e, b"SplitColumnOutsideGutter")
+                                    .and_then(|s| s.parse().ok()),
+                            },
                             // ADR 028 — which lines KeepLinesTogether keeps.
                             keep_all_lines_together: attr(&e, b"KeepAllLinesTogether")
                                 .and_then(|s| s.parse::<bool>().ok()),
@@ -1055,6 +1073,14 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                     if !value.is_empty() {
                                         p.numbering_format = Some(value);
                                     }
+                                }
+                            }
+                            // `type="short"` 2 or `type="enumeration"` All;
+                            // InDesign ignores the attribute spelling.
+                            (2, b"SpanSplitColumnCount") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    p.span_columns.count =
+                                        paged_model::SpanSplitColumnCount::from_idml(&value);
                                 }
                             }
                             (2, b"AppliedNumberingList") => {
@@ -1798,6 +1824,44 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn span_and_split_columns_parse_from_the_range() {
+        // InDesign's own spelling (its export, 2026-10-01): the column
+        // count is a typed `<Properties>` child, the rest attributes.
+        let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s">
+            <ParagraphStyleRange SpanColumnType="SpanColumns" SpanColumnMinSpaceBefore="6" SpanColumnMinSpaceAfter="12">
+              <Properties><SpanSplitColumnCount type="enumeration">All</SpanSplitColumnCount></Properties>
+              <CharacterStyleRange><Content>Heading</Content><Br/></CharacterStyleRange>
+            </ParagraphStyleRange>
+            <ParagraphStyleRange SpanColumnType="SplitColumns" SplitColumnInsideGutter="10" SplitColumnOutsideGutter="4">
+              <Properties><SpanSplitColumnCount type="short">3</SpanSplitColumnCount></Properties>
+              <CharacterStyleRange><Content>Split</Content><Br/></CharacterStyleRange>
+            </ParagraphStyleRange>
+            <ParagraphStyleRange><CharacterStyleRange><Content>Plain</Content></CharacterStyleRange></ParagraphStyleRange>
+          </Story></idPkg:Story>"#;
+        let story = parse_story(xml).unwrap();
+        let span = &story.paragraphs[0].span_columns;
+        assert_eq!(
+            span.column_type,
+            Some(paged_model::SpanColumnType::SpanColumns)
+        );
+        assert_eq!(span.count, Some(paged_model::SpanSplitColumnCount::All));
+        assert_eq!(span.min_space_before, Some(6.0));
+        assert_eq!(span.min_space_after, Some(12.0));
+        let split = &story.paragraphs[1].span_columns;
+        assert_eq!(
+            split.column_type,
+            Some(paged_model::SpanColumnType::SplitColumns)
+        );
+        assert_eq!(
+            split.count,
+            Some(paged_model::SpanSplitColumnCount::Count(3))
+        );
+        assert_eq!(split.inside_gutter, Some(10.0));
+        assert_eq!(split.outside_gutter, Some(4.0));
+        assert!(story.paragraphs[2].span_columns.is_unset());
+    }
+
     #[test]
     fn a_break_between_text_and_a_table_is_neither_runs_nor_cells() {
         let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>Lead</Content><Br/></CharacterStyleRange><CharacterStyleRange><Table Self="t" HeaderRowCount="0" FooterRowCount="0" BodyRowCount="1" ColumnCount="1"><Row Self="tRow0" Name="0" SingleRowHeight="20"/><Column Self="tColumn0" Name="0" SingleColumnWidth="100"/><Cell Self="ti0" Name="0:0" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>Cell</Content></CharacterStyleRange></ParagraphStyleRange></Cell></Table></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;

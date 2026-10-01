@@ -186,6 +186,9 @@ enum CurrentProperty {
     /// `<AppliedNumberingList type="object">NumberingList/X</AppliedNumberingList>`,
     /// likewise. Paragraph-only.
     AppliedNumberingList,
+    /// `<SpanSplitColumnCount type="short">2</…>` (or `enumeration` All)
+    /// — InDesign's only spelling. Paragraph-only.
+    SpanSplitColumnCount,
 }
 
 pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
@@ -317,6 +320,11 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 {
                     pending_property = Some(CurrentProperty::AppliedNumberingList);
                 }
+                b"SpanSplitColumnCount"
+                    if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
+                {
+                    pending_property = Some(CurrentProperty::SpanSplitColumnCount);
+                }
                 _ => {}
             },
             Event::Text(t) if pending_property.is_some() => {
@@ -355,6 +363,10 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         CurrentProperty::NumberingFormat => {
                                             p.numbering_format = Some(text);
                                         }
+                                        CurrentProperty::SpanSplitColumnCount => {
+                                            p.span_columns.count =
+                                                paged_model::SpanSplitColumnCount::from_idml(&text);
+                                        }
                                         CurrentProperty::AppliedNumberingList => {
                                             p.applied_numbering_list = match text.as_str() {
                                                 "n" | "NumberingList/n" | "" => None,
@@ -388,7 +400,8 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         // NumberingExpression is paragraph-only.
                                         CurrentProperty::NumberingExpression
                                         | CurrentProperty::NumberingFormat
-                                        | CurrentProperty::AppliedNumberingList => {}
+                                        | CurrentProperty::AppliedNumberingList
+                                        | CurrentProperty::SpanSplitColumnCount => {}
                                     }
                                 }
                             }
@@ -1061,6 +1074,15 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         keep_with_next: attr(e, b"KeepWithNext").and_then(|s| s.parse().ok()),
         start_paragraph: attr(e, b"StartParagraph")
             .and_then(|s| paged_model::StartParagraph::from_idml(&s)),
+        span_columns: paged_model::SpanColumns {
+            column_type: attr(e, b"SpanColumnType")
+                .and_then(|s| paged_model::SpanColumnType::from_idml(&s)),
+            count: None,
+            min_space_before: attr(e, b"SpanColumnMinSpaceBefore").and_then(|s| s.parse().ok()),
+            min_space_after: attr(e, b"SpanColumnMinSpaceAfter").and_then(|s| s.parse().ok()),
+            inside_gutter: attr(e, b"SplitColumnInsideGutter").and_then(|s| s.parse().ok()),
+            outside_gutter: attr(e, b"SplitColumnOutsideGutter").and_then(|s| s.parse().ok()),
+        },
         applied_language: attr(e, b"AppliedLanguage"),
         minimum_word_spacing: attr(e, b"MinimumWordSpacing").and_then(|s| s.parse().ok()),
         desired_word_spacing: attr(e, b"DesiredWordSpacing").and_then(|s| s.parse().ok()),
@@ -1124,6 +1146,32 @@ mod tests {
                     FontStyle="Bold"/>
   </RootParagraphStyleGroup>
 </idPkg:Styles>"#;
+
+    #[test]
+    fn span_and_split_columns_parse_and_cascade_on_styles() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/Head" SpanColumnType="SpanColumns" SpanColumnMinSpaceAfter="9">
+              <Properties><SpanSplitColumnCount type="short">2</SpanSplitColumnCount></Properties>
+            </ParagraphStyle>
+            <ParagraphStyle Self="ParagraphStyle/Sub" SpanColumnMinSpaceBefore="4">
+              <Properties><BasedOn type="object">ParagraphStyle/Head</BasedOn></Properties>
+            </ParagraphStyle>
+          </RootParagraphStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let sub = s.resolve_paragraph("ParagraphStyle/Sub");
+        assert_eq!(
+            sub.span_columns.column_type,
+            Some(paged_model::SpanColumnType::SpanColumns)
+        );
+        assert_eq!(
+            sub.span_columns.count,
+            Some(paged_model::SpanSplitColumnCount::Count(2))
+        );
+        assert_eq!(sub.span_columns.min_space_after, Some(9.0));
+        assert_eq!(sub.span_columns.min_space_before, Some(4.0));
+    }
 
     #[test]
     fn parses_styles_table() {
