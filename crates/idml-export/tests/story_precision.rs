@@ -53,9 +53,9 @@
 //!
 //! 283 entries came back different with **no attribute difference at all**.
 //! Every one of them contained U+2028 (Unicode LINE SEPARATOR — InDesign's
-//! forced line break, Shift+Enter). The parser normalises U+2028 / U+2029
-//! to `\n` when it builds `CharacterRun::text`; the rewriter's
-//! reconstruction of the same string did not. So `run.text != body.text`
+//! forced line break, Shift+Enter). The parser then normalised U+2028 / U+2029
+//! to `\n` when it built `CharacterRun::text` (it keeps U+2028 now); the
+//! rewriter's reconstruction of the same string did not. So `run.text != body.text`
 //! always, the "was this run edited?" test said yes, and the run was
 //! re-serialised from the model — turning a forced LINE break into `<Br/>`,
 //! which in IDML is a PARAGRAPH break. A no-op save was silently changing
@@ -93,9 +93,9 @@ const STORY: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 /// A run whose `<Content>` carries a real U+2028 (`&#x2028;` written as
 /// the literal character, which is how InDesign serialises it) followed
-/// by more text in the SAME `<Content>`. The parser turns that into a
-/// `\n` in `CharacterRun::text`; the writer must not mistake the
-/// normalisation for an edit.
+/// by more text in the SAME `<Content>`. The parser keeps it as U+2028
+/// in `CharacterRun::text`; the writer must compare it under the same
+/// rule and not mistake it for an edit.
 const FORCED_LINE_BREAK: &[u8] = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
 <idPkg:Story xmlns:idPkg=\"http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging\" DOMVersion=\"20.0\">
 <Story Self=\"u2b3\">
@@ -285,12 +285,11 @@ fn a_newly_set_point_size_is_still_appended() {
 #[test]
 fn a_forced_line_break_survives_an_unmutated_save() {
     let story = idml_import::parse_story(FORCED_LINE_BREAK).expect("parse");
-    // Premise: the parser really does normalise it away, so the naive
-    // comparison really would have mismatched.
-    assert!(
-        story.paragraphs[0].runs[0].text.contains('\n')
-            && !story.paragraphs[0].runs[0].text.contains('\u{2028}'),
-        "premise: the parser collapses U+2028 to a newline"
+    // The parser keeps the forced line break as U+2028 (it used to fold
+    // it into `\n`, a paragraph break); the `\n` is the interior `<Br />`.
+    assert_eq!(
+        story.paragraphs[0].runs[0].text,
+        "first line\u{2028}second line\nafter a real paragraph break",
     );
     let out = rewrite_story(FORCED_LINE_BREAK, &story).expect("rewrite");
     let xml = String::from_utf8(out).expect("utf8");

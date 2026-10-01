@@ -1482,28 +1482,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             run.text.push('\n');
                             pending_break = false;
                         }
-                        // Normalise Unicode line/paragraph
-                        // separators (U+2028, U+2029) emitted by
-                        // InDesign for "Forced Line Break"
-                        // (Shift+Enter) into `\n`. The downstream
-                        // composer splits paragraphs on `\n` and
-                        // treats consecutive newlines as empty
-                        // sub-paragraphs that advance y_cursor by
-                        // one line — which is how InDesign visibly
-                        // spaces blocks separated by Shift+Enter.
-                        // Without this normalisation the shaper
-                        // filters `\u{2028}` as a control glyph
-                        // and the visual gap collapses.
                         let raw = t
                             .xml_content(quick_xml::XmlVersion::Implicit1_0)
                             .unwrap_or_default();
-                        for ch in raw.chars() {
-                            if matches!(ch, '\u{2028}' | '\u{2029}') {
-                                run.text.push('\n');
-                            } else {
-                                run.text.push(ch);
-                            }
-                        }
+                        push_content_text(&mut run.text, &raw);
                     }
                 } else if properties_field.is_some() {
                     properties_text.push_str(
@@ -1528,13 +1510,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         .unwrap_or_default();
                     if in_content {
                         if let Some(run) = current_run.as_mut() {
-                            for ch in resolved.chars() {
-                                if matches!(ch, '\u{2028}' | '\u{2029}') {
-                                    run.text.push('\n');
-                                } else {
-                                    run.text.push(ch);
-                                }
-                            }
+                            push_content_text(&mut run.text, &resolved);
                         }
                     } else {
                         properties_text.push_str(&resolved);
@@ -1567,6 +1543,26 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
         buf.clear();
     }
     Ok((out, provenance))
+}
+
+/// Append decoded `<Content>` text to a run.
+///
+/// A forced line break (U+2028, Shift+Enter) is InDesign's own spelling
+/// inside `<Content>` and stays in the run AS U+2028: the engine breaks
+/// the LINE there and keeps one paragraph (no first-line indent, space
+/// before or list marker after it, and the line before it justifies to
+/// full measure). Folding it into `\n`, as this parser used to, made
+/// every forced break a paragraph break. U+2029 (PARAGRAPH SEPARATOR) is
+/// not InDesign's spelling of anything; it still reads as the paragraph
+/// break it names.
+fn push_content_text(out: &mut String, decoded: &str) {
+    for ch in decoded.chars() {
+        if ch == '\u{2029}' {
+            out.push('\n');
+        } else {
+            out.push(ch);
+        }
+    }
 }
 
 /// Parse a "y1 x1 y2 x2" `GeometricBounds` attribute. Local copy

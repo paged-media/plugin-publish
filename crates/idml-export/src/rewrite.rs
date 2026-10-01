@@ -5129,9 +5129,10 @@ struct RunBody {
 /// Append one decoded `<Content>` fragment to a run's reconstructed
 /// text, applying **exactly** the normalisation
 /// `idml_import::parse_story` applies when it builds
-/// `CharacterRun::text`: the Unicode line/paragraph separators
-/// U+2028 / U+2029 (InDesign's "forced line break", Shift+Enter)
-/// collapse to `\n`.
+/// `CharacterRun::text`: U+2029 (PARAGRAPH SEPARATOR) collapses to
+/// `\n`. A forced line break (U+2028, Shift+Enter) is kept verbatim on
+/// both sides — the parser used to fold it into `\n` too, which made it
+/// a paragraph break in the engine.
 ///
 /// This is a comparison contract, not a preference. [`flush_run_body`]
 /// decides whether to REPLACE a run's body by asking whether the model
@@ -5151,7 +5152,7 @@ struct RunBody {
 /// CRLF-serialised story compares equal too.
 fn push_run_text(out: &mut String, decoded: &str) {
     for ch in decoded.chars() {
-        if matches!(ch, '\u{2028}' | '\u{2029}') {
+        if ch == '\u{2029}' {
             out.push('\n');
         } else {
             out.push(ch);
