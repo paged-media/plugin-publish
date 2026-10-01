@@ -923,6 +923,13 @@ pub(crate) fn spread_part(
     if let Some(id) = &spread.self_id {
         attrs.push(("Self", id.clone()));
     }
+    // InDesign's own spreads always carry these. Without them it read a
+    // one-page spread as a facing pair and opened it with an extra EMPTY
+    // page (measured on InDesign 2025, 2026-10-01, opening a page-growth
+    // export: 3 pages written, 4 shown). `BindingLocation` is the spine
+    // index: 0 for a single page, 1 for a facing pair.
+    attrs.push(("PageCount", spread.pages.len().to_string()));
+    attrs.push(("BindingLocation", (spread.pages.len() / 2).to_string()));
     // Always spelled, identity included: InDesign 20.0.1 does not read
     // an absent `ItemTransform` as identity (see
     // `rewrite::TransformPlan::extra`); its own packages carry one on

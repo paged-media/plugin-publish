@@ -181,7 +181,9 @@ fn a_minted_spread_spells_the_transform_on_spread_page_and_items() {
     let out = write_idml(&doc, &src).expect("write");
     let xml = pkg::entry(&out, "Spreads/Spread_s2.xml").expect("minted spread");
     assert!(
-        xml.contains(r#"<Spread Self="s2" ItemTransform="1 0 0 1 0 0""#),
+        xml.contains(
+            r#"<Spread Self="s2" PageCount="1" BindingLocation="0" ItemTransform="1 0 0 1 0 0""#
+        ),
         "{xml}"
     );
     assert!(
