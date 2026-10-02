@@ -305,10 +305,13 @@ fn transform_edits_still_save_for_a_group_member() {
     );
 }
 
-/// A transform CLEARED in the model still drops the attribute — the
-/// `Remove` arm is reachable, not shadowed by the verbatim check.
+/// A transform CLEARED in the model is honoured — the edit is not
+/// shadowed by the verbatim check — and it is written as the IDENTITY,
+/// never dropped: InDesign 20.0.1 does not read an absent `ItemTransform`
+/// as identity (see the test below), so a removed attribute would move
+/// the item one page width on a facing spread.
 #[test]
-fn a_cleared_transform_still_drops_the_attribute() {
+fn a_cleared_transform_is_written_as_the_identity() {
     let mut spread = idml_import::parse_spread(HIGH_PRECISION).expect("parse");
     spread.rectangles[0].item_transform = None;
 
@@ -318,10 +321,11 @@ fn a_cleared_transform_still_drops_the_attribute() {
         !xml.contains("-1021.8897637779996"),
         "the cleared transform must not survive:\n{xml}"
     );
-    assert_eq!(
-        transforms_in(&xml).len(),
-        4,
-        "exactly one attribute was dropped:\n{xml}"
+    let transforms = transforms_in(&xml);
+    assert_eq!(transforms.len(), 5, "no attribute was dropped:\n{xml}");
+    assert!(
+        transforms.iter().any(|t| *t == "1 0 0 1 0 0"),
+        "the cleared item spells the identity:\n{xml}"
     );
 }
 

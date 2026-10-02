@@ -1722,6 +1722,12 @@ fn relative_to_parent(
 /// Compose two optional matrices the same way the parser's
 /// `effective_item_transform` accumulates a group stack: `a ∘ b`, with
 /// `None` standing for identity.
+/// `None` for the identity matrix, so two spellings of "no transform"
+/// compare equal.
+fn identity_as_none(m: Option<[f32; 6]>) -> Option<[f32; 6]> {
+    m.filter(|m| *m != [1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+}
+
 fn compose_opt(a: Option<[f32; 6]>, b: Option<[f32; 6]>) -> Option<[f32; 6]> {
     match (a, b) {
         (None, x) => x,
@@ -3511,7 +3517,11 @@ impl TransformPlan {
                 None => return false,
             },
         };
-        compose_opt(self.accum, on_disk) == self.model
+        // The model holds an identity as `None` or as `Some(identity)`
+        // depending on where it came from (a parsed item vs one minted on
+        // the wire and reloaded from `document.pgm`); both are the same
+        // transform, and a source spelling of the identity derives either.
+        identity_as_none(compose_opt(self.accum, on_disk)) == identity_as_none(self.model)
     }
 
     /// The patch for an `ItemTransform` attribute the source carries.
@@ -3522,10 +3532,12 @@ impl TransformPlan {
         if self.is_source(Some(raw)) {
             return Some(Patch::Keep);
         }
-        Some(match self.on_disk() {
-            Some(m) => Patch::Set(format_matrix(&m)),
-            None => Patch::Remove,
-        })
+        // Never `Remove`: InDesign 20.0.1 does not read an absent
+        // `ItemTransform` as identity (see `extra`), so an identity is
+        // spelled out like any other matrix.
+        Some(Patch::Set(format_matrix(
+            &self.on_disk().unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+        )))
     }
 
     /// The value to APPEND when the source element carried no
@@ -6733,6 +6745,31 @@ mod tests {
             "unmutated corner attributes must reproduce their on-disk bytes \
              on TextFrame / Oval / GraphicLine / Group too"
         );
+    }
+
+    /// An identity `ItemTransform` the source spells survives a model that
+    /// holds the same identity as `None` — the shape a `.paged` reload
+    /// produces for a frame minted on the wire (its model comes from
+    /// `document.pgm`, where the transform was never set). Dropping it made
+    /// the attribute toggle on every save (written, removed, appended, …),
+    /// and InDesign 20.0.1 reads an absent one relative to the spread's
+    /// first page: the annual's rectos landed on their versos.
+    #[test]
+    fn an_identity_transform_survives_a_model_that_holds_it_as_none() {
+        let mut s = c18_parsed();
+        s.text_frames[0].item_transform = None;
+        s.ovals[0].item_transform = None;
+        s.graphic_lines[0].item_transform = None;
+        let out = rewrite_spread(C18_SPREAD, &s).expect("rewrite");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(C18_SPREAD),
+            "an identity transform must be kept, not removed"
+        );
+        // …and it is stable: a second save of the first save's bytes
+        // writes the same bytes.
+        let again = rewrite_spread(&out, &s).expect("rewrite twice");
+        assert_eq!(again, out, "the transform must not toggle between saves");
     }
 
     /// C-18 — and a MUTATED corner patches in place on each kind, with
