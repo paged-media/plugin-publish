@@ -169,12 +169,28 @@ enum CurrentStyle {
 /// Element-form attributes inside `<Properties>` we want to push back
 /// into the current style block. Keys are the element name; the
 /// next text event lands here.
+/// A style's `<Leading>` child: points, or `Auto`.
+///
+/// `Auto` is a VALUE, not "nothing set": a style that says it over a
+/// parent with a fixed leading is auto-leaded in InDesign. The model has
+/// no enum for it; a leading of 0 is auto leading to the engine (every
+/// consumer takes `> 0` as explicit), and the exporter writes 0 back as
+/// `Auto`.
+fn style_leading(text: &str) -> Option<f32> {
+    let text = text.trim();
+    if text == "Auto" {
+        return Some(0.0);
+    }
+    text.parse().ok()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum CurrentProperty {
     AppliedFont,
     BasedOn,
     /// `<Leading type="unit">13</Leading>` — InDesign's spelling of a
-    /// style's leading (an `enumeration` child, `Auto`, sets nothing).
+    /// style's leading; the `enumeration` child `Auto` is auto leading,
+    /// see [`style_leading`].
     Leading,
     /// `<NumberingExpression type="string">^#.^t</NumberingExpression>`
     /// inside a `ParagraphStyle`'s `<Properties>` block. Paragraph-only.
@@ -374,7 +390,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         }
                                         CurrentProperty::Leading => {
                                             if p.leading.is_none() {
-                                                p.leading = text.trim().parse().ok();
+                                                p.leading = style_leading(&text);
                                             }
                                         }
                                         CurrentProperty::NumberingExpression => {
@@ -430,7 +446,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         }
                                         CurrentProperty::Leading => {
                                             if c.leading.is_none() {
-                                                c.leading = text.trim().parse().ok();
+                                                c.leading = style_leading(&text);
                                             }
                                         }
                                         // NumberingExpression is paragraph-only.
@@ -2204,7 +2220,11 @@ mod tests {
                 .as_deref(),
             Some("JetBrains Mono")
         );
-        assert_eq!(sheet.paragraph_styles["ParagraphStyle/Auto"].leading, None);
+        // `Auto` is auto leading, spelled 0: it overrides a parent's.
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/Auto"].leading,
+            Some(0.0)
+        );
         assert_eq!(
             sheet.character_styles["CharacterStyle/Tight"].leading,
             Some(8.5)

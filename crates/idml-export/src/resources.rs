@@ -302,13 +302,19 @@ fn emit_style_element(
     // cascades it like every other (measured 2026-09-05: a style's
     // leading InDesign honoured and the engine did not was 94 of the
     // annual's 134 overset stories).
+    // A leading of 0 (or less) is AUTO leading to the engine; InDesign
+    // spells that `Auto`, and would set 0 pt lines on top of each other.
     if let Some(l) = leading {
+        let auto = l <= 0.0;
         let mut le = BytesStart::new("Leading");
-        le.push_attribute(("type", "unit"));
+        le.push_attribute(("type", if auto { "enumeration" } else { "unit" }));
         writer.write_event(Event::Start(le))?;
-        writer.write_event(Event::Text(quick_xml::events::BytesText::new(&format_f32(
-            l,
-        ))))?;
+        let value = if auto {
+            "Auto".to_string()
+        } else {
+            format_f32(l)
+        };
+        writer.write_event(Event::Text(quick_xml::events::BytesText::new(&value)))?;
         writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Leading")))?;
     }
     if let Some(p) = props {
@@ -917,6 +923,47 @@ pub(crate) fn strip_conditions(original: &[u8]) -> Result<Vec<u8>, quick_xml::Er
 
 #[cfg(test)]
 mod tests {
+
+    /// A leading of 0 is auto leading to the engine (a style that says so
+    /// over a parent with a fixed one: plugin-doc's picture paragraphs).
+    /// InDesign spells it `Auto`; `0` would stack the lines.
+    #[test]
+    fn a_zero_leading_is_written_as_auto() {
+        let style = |leading: f32| {
+            let mut w = Writer::new(Cursor::new(Vec::new()));
+            emit_style_element(
+                &mut w,
+                "ParagraphStyle",
+                &[("Self", "ParagraphStyle/p".to_string())],
+                &None,
+                &None,
+                Some(leading),
+                None,
+            )
+            .expect("emit");
+            String::from_utf8(w.into_inner().into_inner()).expect("utf8")
+        };
+        assert!(
+            style(0.0).contains(r#"<Leading type="enumeration">Auto</Leading>"#),
+            "{}",
+            style(0.0)
+        );
+        assert!(
+            style(13.0).contains(r#"<Leading type="unit">13</Leading>"#),
+            "{}",
+            style(13.0)
+        );
+        // And the reader takes `Auto` back as that 0.
+        let xml = format!(
+            r#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="g">{}</RootParagraphStyleGroup></idPkg:Styles>"#,
+            style(0.0)
+        );
+        let sheet = idml_import::parse_stylesheet(xml.as_bytes()).expect("parse");
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/p"].leading,
+            Some(0.0)
+        );
+    }
 
     /// A `<Tint>` already in the source is not re-injected as a
     /// `<Color>`. The annual's book carried `Color/AnnualVermilion20`
