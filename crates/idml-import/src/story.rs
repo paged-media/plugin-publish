@@ -1559,8 +1559,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         }
                     }
                     // <Row Self="..." Name="..." SingleRowHeight="..."/>
+                    //
+                    // Built over `TableRow::default()` so a field the model
+                    // gains does not break this adapter (core builds it
+                    // against its own model, so a literal naming every
+                    // field broke core's main for the length of the pin
+                    // dance). Today every field is named, hence the allow.
                     b"Row" => {
                         if let Some(ctx) = table_stack.last_mut() {
+                            #[allow(clippy::needless_update)]
                             ctx.table.rows.push(TableRow {
                                 self_id: attr(&e, b"Self"),
                                 name: attr(&e, b"Name"),
@@ -1570,6 +1577,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                     .and_then(|s| s.parse().ok()),
                                 maximum_height: attr(&e, b"MaximumHeight")
                                     .and_then(|s| s.parse().ok()),
+                                ..TableRow::default()
                             });
                         }
                     }
