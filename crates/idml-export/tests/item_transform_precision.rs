@@ -324,7 +324,7 @@ fn a_cleared_transform_is_written_as_the_identity() {
     let transforms = transforms_in(&xml);
     assert_eq!(transforms.len(), 5, "no attribute was dropped:\n{xml}");
     assert!(
-        transforms.iter().any(|t| *t == "1 0 0 1 0 0"),
+        transforms.contains(&"1 0 0 1 0 0"),
         "the cleared item spells the identity:\n{xml}"
     );
 }
