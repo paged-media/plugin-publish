@@ -331,6 +331,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // mutates the top of the stack so attributes always land on
     // the nearest enclosing frame.
     let mut anchored_depth: u32 = 0;
+    // The outermost open anchored frame's character offset in its
+    // paragraph (see `anchor_here`), taken when it opens.
+    let mut anchored_at: u32 = 0;
     let mut anchored_stack: Vec<AnchoredFrame> = Vec::new();
     // Suppressed-subtree depth. IDML uses `<HiddenText>` (authored
     // but not flowed), `<Note>` (sticky-note annotations), and
@@ -394,19 +397,57 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
         }
     }
 
+    // Helper: the character offset, in its paragraph's text, of an
+    // anchored object opening now, in the model's char space (Unicode
+    // scalars over the runs' text, counted contiguously — `Paragraph::
+    // anchored_frame_offsets`): the runs already pushed plus the open
+    // run's text so far.
+    //
+    // An object is content, so a `<Br/>` mark still held before it was
+    // interior after all — the object opens the paragraph after it —
+    // and is flushed into the open run as the newline it is, exactly as
+    // the next `<Content>` would have flushed it. Without that, an object
+    // alone in the last paragraph of a range read as the end of the
+    // paragraph before it.
+    fn anchor_here(
+        current_paragraph: &Option<Paragraph>,
+        current_run: &mut Option<CharacterRun>,
+        pending_breaks: &mut usize,
+    ) -> u32 {
+        if let Some(run) = current_run.as_mut() {
+            for _ in 0..*pending_breaks {
+                run.text.push('\n');
+            }
+            *pending_breaks = 0;
+        }
+        let pushed: usize = current_paragraph
+            .as_ref()
+            .map_or(0, |p| p.runs.iter().map(|r| r.text.chars().count()).sum());
+        let open = current_run.as_ref().map_or(0, |r| r.text.chars().count());
+        (pushed + open) as u32
+    }
+
     // Helper: pop the top anchored frame and attach it to its
-    // parent (the new top of stack) or the host paragraph. Pops
-    // the parallel `bounds_from_path` flag at the same time.
+    // parent (the new top of stack) or the host paragraph at
+    // `anchor` (the offset taken when the outermost frame opened).
+    // Pops the parallel `bounds_from_path` flag at the same time.
     fn finalise_anchored_top(
         anchored_stack: &mut Vec<AnchoredFrame>,
         bounds_from_path: &mut Vec<bool>,
         current_paragraph: &mut Option<Paragraph>,
+        anchor: u32,
     ) {
         bounds_from_path.pop();
         if let Some(frame) = anchored_stack.pop() {
             if let Some(parent) = anchored_stack.last_mut() {
                 parent.children.push(frame);
             } else if let Some(para) = current_paragraph.as_mut() {
+                // Index-aligned with `anchored_frames`; every frame this
+                // reader attaches records its anchor, so the two grow
+                // together.
+                para.anchored_frame_offsets
+                    .resize(para.anchored_frames.len(), 0);
+                para.anchored_frame_offsets.push(anchor);
                 para.anchored_frames.push(frame);
             }
         }
@@ -462,6 +503,8 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         bounds_from_path.push(frame.bounds.is_none());
                         anchored_stack.push(frame);
                         anchored_depth = 1;
+                        anchored_at =
+                            anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
                         buf.clear();
                         continue;
                     }
@@ -1023,6 +1066,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             &mut anchored_stack,
                             &mut bounds_from_path,
                             &mut current_paragraph,
+                            anchored_at,
                         );
                     }
                     buf.clear();
@@ -1364,6 +1408,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             &mut anchored_stack,
                             &mut bounds_from_path,
                             &mut current_paragraph,
+                            anchored_at,
                         );
                     } else if name == b"AnchoredObjectSetting" {
                         if let Some(p) = anchored_stack.last_mut() {
@@ -1412,10 +1457,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         let frame = make_anchored_frame(&e, kind);
                         bounds_from_path.push(frame.bounds.is_none());
                         anchored_stack.push(frame);
+                        let at =
+                            anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
                         finalise_anchored_top(
                             &mut anchored_stack,
                             &mut bounds_from_path,
                             &mut current_paragraph,
+                            at,
                         );
                         buf.clear();
                         continue;

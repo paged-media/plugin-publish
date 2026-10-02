@@ -231,7 +231,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "paged-composition"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=4c7133a08728fb736eccd3a080926835b141b9bb#4c7133a08728fb736eccd3a080926835b141b9bb"
+source = "git+https://github.com/paged-media/core?rev=bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0#bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0"
 dependencies = [
  "paged-flow",
  "serde",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "paged-flow"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=4c7133a08728fb736eccd3a080926835b141b9bb#4c7133a08728fb736eccd3a080926835b141b9bb"
+source = "git+https://github.com/paged-media/core?rev=bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0#bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0"
 dependencies = [
  "serde",
 ]
@@ -248,7 +248,7 @@ dependencies = [
 [[package]]
 name = "paged-model"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=4c7133a08728fb736eccd3a080926835b141b9bb#4c7133a08728fb736eccd3a080926835b141b9bb"
+source = "git+https://github.com/paged-media/core?rev=bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0#bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0"
 dependencies = [
  "serde",
 ]
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "paged-scene"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=4c7133a08728fb736eccd3a080926835b141b9bb#4c7133a08728fb736eccd3a080926835b141b9bb"
+source = "git+https://github.com/paged-media/core?rev=bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0#bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0"
 dependencies = [
  "blake3",
  "paged-composition",
@@ -270,7 +270,7 @@ dependencies = [
 [[package]]
 name = "paged-store"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=4c7133a08728fb736eccd3a080926835b141b9bb#4c7133a08728fb736eccd3a080926835b141b9bb"
+source = "git+https://github.com/paged-media/core?rev=bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0#bd2563aa8a7f7167a0807d9598d5e684a8a0f2e0"
 dependencies = [
  "paged-scene",
  "serde",
