@@ -92,6 +92,7 @@ pub mod preferences;
 mod reorder;
 pub mod resources;
 pub mod rewrite;
+pub mod row_attrs;
 mod style_attrs;
 pub mod table_regions;
 pub mod text_frame_prefs;
@@ -621,6 +622,11 @@ pub(crate) fn write_package(
                         entry: story.src.clone(),
                         source,
                     })?;
+            let new = row_attrs::patch_row_attrs(&new, &row_attrs::row_attrs_of(&story.story))
+                .map_err(|source| WriteError::Rewrite {
+                    entry: story.src.clone(),
+                    source,
+                })?;
             if new != orig.as_slice() {
                 patched.insert(story.src.clone(), new);
             }
@@ -683,6 +689,11 @@ pub(crate) fn write_package(
                     entry: entry_src.clone(),
                     source,
                 })?;
+                let new = row_attrs::patch_row_attrs(&new, &row_attrs::row_attrs_of(&story.story))
+                    .map_err(|source| WriteError::Rewrite {
+                        entry: entry_src.clone(),
+                        source,
+                    })?;
                 if new != orig.as_slice() {
                     patched.insert(entry_src, new);
                 }

@@ -1577,6 +1577,12 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                     .and_then(|s| s.parse().ok()),
                                 maximum_height: attr(&e, b"MaximumHeight")
                                     .and_then(|s| s.parse().ok()),
+                                // A fixed row keeps its height and
+                                // oversets; a kept row moves to the next
+                                // frame with the row after it.
+                                auto_grow: attr(&e, b"AutoGrow").and_then(|s| s.parse().ok()),
+                                keep_with_next_row: attr(&e, b"KeepWithNextRow")
+                                    .and_then(|s| s.parse().ok()),
                                 ..TableRow::default()
                             });
                         }

@@ -417,7 +417,14 @@ pub(crate) fn write_table(
         if let Some(row) = row {
             push_opt_f32(&mut a, "MaximumHeight", row.maximum_height);
         }
-        a.push(("AutoGrow", "true".to_string()));
+        // A fixed row (`AutoGrow="false"`) keeps its `SingleRowHeight`
+        // and oversets what does not fit; absent in the model is
+        // InDesign's default, a row that grows.
+        let auto_grow = row.and_then(|r| r.auto_grow).unwrap_or(true);
+        a.push(("AutoGrow", auto_grow.to_string()));
+        if let Some(keep) = row.and_then(|r| r.keep_with_next_row) {
+            a.push(("KeepWithNextRow", keep.to_string()));
+        }
         rewrite::emit_empty_with_attrs(writer, "Row", &a)?;
     }
     for c in 0..cols {
