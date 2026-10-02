@@ -48,8 +48,8 @@ pub use paged_model::{
 };
 
 pub use paged_model::{
-    Justification, OtfFeatures, SpanColumnType, SpanColumns, SpanSplitColumnCount, StartParagraph,
-    TabStop,
+    Composer, Justification, OtfFeatures, SpanColumnType, SpanColumns, SpanSplitColumnCount,
+    StartParagraph, TabStop,
 };
 
 pub use paged_model::{
@@ -614,6 +614,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .and_then(|s| s.parse::<u32>().ok()),
                             hyphen_weight: attr(&e, b"HyphenWeight")
                                 .and_then(|s| s.parse::<u32>().ok()),
+                            composer: attr(&e, b"Composer").map(|s| Composer::from_idml(&s)),
                             keep_lines_together: attr(&e, b"KeepLinesTogether")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             keep_with_next: attr(&e, b"KeepWithNext")

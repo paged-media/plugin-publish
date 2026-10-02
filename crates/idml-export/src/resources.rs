@@ -1101,6 +1101,31 @@ mod tests {
         );
     }
 
+    /// A paragraph style's `Composer` survives an unedited save byte for
+    /// byte and is rewritten when the model changes it.
+    #[test]
+    fn a_paragraph_styles_composer_round_trips() {
+        const SRC: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+<RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]" Name="$ID/[No paragraph style]" Imported="false"/><ParagraphStyle Self="ParagraphStyle/Word" Name="Word" Composer="HL Single"/></RootParagraphStyleGroup>
+</idPkg:Styles>"#;
+        let mut styles = idml_import::parse_stylesheet(SRC).expect("parse");
+        assert_eq!(
+            String::from_utf8_lossy(&patch_styles(SRC, &styles).expect("patch")),
+            String::from_utf8_lossy(SRC)
+        );
+        styles
+            .paragraph_styles
+            .get_mut("ParagraphStyle/Word")
+            .unwrap()
+            .composer = Some(idml_import::Composer::Paragraph);
+        let out = String::from_utf8(patch_styles(SRC, &styles).expect("patch")).unwrap();
+        assert!(
+            out.contains(r#"Name="Word" Composer="HL Composer""#),
+            "{out}"
+        );
+    }
+
     /// An object style created since load is written into
     /// `<RootObjectStyleGroup>` — the resource part InDesign reads
     /// object styles from. Without this the exported package carries an

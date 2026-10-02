@@ -4280,6 +4280,16 @@ fn stroke_alignment_patch(raw: &[u8], model: &Option<String>) -> Patch {
     }
 }
 
+/// `Composer` on a range or a paragraph style: the source's spelling is
+/// kept when the model still names that composer.
+pub(crate) fn composer_patch(raw: Option<&str>, v: &Option<idml_import::Composer>) -> Patch {
+    match v {
+        Some(c) if raw == Some(c.as_idml()) => Patch::Keep,
+        Some(c) => Patch::Set(c.as_idml().to_string()),
+        None => Patch::Remove,
+    }
+}
+
 pub(crate) fn opt_string_patch(v: &Option<String>) -> Patch {
     match v {
         Some(s) => Patch::Set(s.clone()),
@@ -5659,6 +5669,7 @@ pub(crate) fn paragraph_attr_patch(
         b"HyphenateWordsLongerThan" => Some(opt_u32_patch(raw, p.hyphenate_words_longer_than)),
         b"HyphenateLadderLimit" => Some(opt_u32_patch(raw, p.hyphenate_ladder_limit)),
         b"HyphenWeight" => Some(opt_u32_patch(raw, p.hyphen_weight)),
+        b"Composer" => Some(composer_patch(raw, &p.composer)),
         b"KeepLinesTogether" => Some(opt_bool_patch(p.keep_lines_together)),
         b"KeepWithNext" => Some(opt_u32_patch(raw, p.keep_with_next)),
         b"StartParagraph" => Some(opt_string_patch(
@@ -5974,6 +5985,35 @@ mod tests {
         assert!(
             !out.contains("SpaceAfter"),
             "a cleared override is dropped: {out}"
+        );
+    }
+
+    #[test]
+    fn the_composer_round_trips_on_the_range() {
+        // InDesign 20.0.1 writes these four values; an unedited save keeps
+        // the source's bytes, an edit rewrites or appends the attribute.
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body" Composer="HL Single"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body"><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(
+            story.paragraphs[0].composer,
+            Some(idml_import::Composer::SingleLine)
+        );
+        assert_eq!(story.paragraphs[1].composer, None);
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+        story.paragraphs[0].composer = Some(idml_import::Composer::WorldReadySingleLine);
+        story.paragraphs[1].composer = Some(idml_import::Composer::Paragraph);
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"Composer="HL Single Optyca""#), "{out}");
+        assert!(out.contains(r#"Composer="HL Composer""#), "{out}");
+        story.paragraphs[0].composer = None;
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(
+            !out.contains("HL Single"),
+            "a cleared composer is dropped: {out}"
         );
     }
 

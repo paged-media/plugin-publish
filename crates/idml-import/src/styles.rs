@@ -1110,6 +1110,7 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         hyphenate_across_columns: attr(e, b"HyphenateAcrossColumns").and_then(|s| s.parse().ok()),
         hyphenate_ladder_limit: attr(e, b"HyphenateLadderLimit").and_then(|s| s.parse().ok()),
         hyphen_weight: attr(e, b"HyphenWeight").and_then(|s| s.parse().ok()),
+        composer: attr(e, b"Composer").map(|s| paged_model::Composer::from_idml(&s)),
         // ADR 028 — keep options live on paragraph STYLES in real documents
         // (a heading style's KeepWithNext), so the style must carry them.
         keep_lines_together: attr(e, b"KeepLinesTogether").and_then(|s| s.parse().ok()),
@@ -1248,6 +1249,34 @@ mod tests {
         assert_eq!(r.font.as_deref(), Some("Body Font")); // inherited
         assert_eq!(r.justification, Some(Justification::LeftAlign));
         assert_eq!(r.space_after, Some(6.0));
+    }
+
+    #[test]
+    fn parses_and_cascades_the_composer() {
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/Body" Composer="HL Single"/>
+            <ParagraphStyle Self="ParagraphStyle/Sub" BasedOn="ParagraphStyle/Body"/>
+            <ParagraphStyle Self="ParagraphStyle/Plugin" Composer="Some Plugin Composer"/>
+          </RootParagraphStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        assert_eq!(
+            s.resolve_paragraph("ParagraphStyle/Body").composer,
+            Some(paged_model::Composer::SingleLine)
+        );
+        assert_eq!(
+            s.resolve_paragraph("ParagraphStyle/Sub").composer,
+            Some(paged_model::Composer::SingleLine)
+        );
+        // A composer InDesign did not write is kept verbatim.
+        assert_eq!(
+            s.resolve_paragraph("ParagraphStyle/Plugin")
+                .composer
+                .map(|c| c.as_idml().to_string()),
+            Some("Some Plugin Composer".to_string())
+        );
     }
 
     #[test]

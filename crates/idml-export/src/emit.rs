@@ -690,6 +690,9 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
             out.push((k, n.to_string()));
         }
     }
+    if let Some(c) = &p.composer {
+        out.push(("Composer", c.as_idml().to_string()));
+    }
     if let Some(n) = p.keep_with_next {
         out.push(("KeepWithNext", n.to_string()));
     }

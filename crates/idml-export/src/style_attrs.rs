@@ -14,9 +14,9 @@ use idml_import::styles::{CharacterStyleDef, ParagraphStyleDef};
 
 use crate::emit::{paragraph_rule_attrs, span_column_attrs, RULE_ABOVE, RULE_BELOW};
 use crate::rewrite::{
-    format_f32, numbering_list_patch, opt_bool_patch, opt_i32_patch, opt_string_patch,
-    opt_u32_patch, paragraph_rule_patch, preserving_f32_patch, preserving_tint_patch,
-    span_column_patch, Patch,
+    composer_patch, format_f32, numbering_list_patch, opt_bool_patch, opt_i32_patch,
+    opt_string_patch, opt_u32_patch, paragraph_rule_patch, preserving_f32_patch,
+    preserving_tint_patch, span_column_patch, Patch,
 };
 
 fn push_strs(out: &mut Vec<(&'static str, String)>, attrs: &[(&'static str, &Option<String>)]) {
@@ -112,6 +112,9 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
     push_strs(&mut out, &[("NextStyle", &s.next_style)]);
     push_bools(&mut out, &[("Hyphenation", s.hyphenation)]);
     push_f32s(&mut out, &[("HyphenationZone", s.hyphenation_zone)]);
+    if let Some(c) = &s.composer {
+        out.push(("Composer", c.as_idml().to_string()));
+    }
     push_strs(&mut out, &[("AppliedLanguage", &s.applied_language)]);
     push_f32s(
         &mut out,
@@ -272,6 +275,7 @@ pub(crate) fn paragraph_style_attr_patch(
         b"NextStyle" => Some(opt_string_patch(&s.next_style)),
         b"Hyphenation" => Some(opt_bool_patch(s.hyphenation)),
         b"HyphenationZone" => Some(preserving_f32_patch(raw, s.hyphenation_zone)),
+        b"Composer" => Some(composer_patch(raw, &s.composer)),
         b"AppliedLanguage" => Some(opt_string_patch(&s.applied_language)),
         b"MinimumWordSpacing" => Some(preserving_f32_patch(raw, s.minimum_word_spacing)),
         b"DesiredWordSpacing" => Some(preserving_f32_patch(raw, s.desired_word_spacing)),
