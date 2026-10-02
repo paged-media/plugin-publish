@@ -839,10 +839,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         // `<ParagraphStyleRange>` will start the
                         // footnote body in a fresh `current_paragraph`.
                         // On `</Footnote>` we restore and attach.
+                        // The model is about to give a footnote its
+                        // anchor (core, ADR 034): build with either
+                        // shape of `Footnote`.
+                        #[allow(clippy::needless_update)]
                         footnote_stack.push(FootnoteContext {
                             footnote: Footnote {
                                 self_id: attr(&e, b"Self"),
                                 paragraphs: Vec::new(),
+                                ..Default::default()
                             },
                             outer_paragraph: current_paragraph.take(),
                             outer_run: current_run.take(),
