@@ -18,3 +18,14 @@ git boundary, so the shipped engine carries no IDML of its own.
 > core). `idml-export`'s `paged-gen`/`paged-mutate` integration tests are
 > deferred (re-homed in Phase 2). This repo will also grow the TS publishing
 > bundle that surfaces import/export through the editor's plugin host.
+
+## Documentation
+
+Everything about how these plugins are designed and built is in [`docs/`](./docs/README.md):
+
+- [`docs/concept.md`](./docs/concept.md): what this repository is for and what it will never do.
+- [`docs/architecture.md`](./docs/architecture.md): the two bundles (IDML and PDF), their data paths, and how this repo and the engine depend on each other.
+- [`docs/status.md`](./docs/status.md): what ships today and what does not.
+- [`docs/adr/`](./docs/adr/README.md): the architecture decisions, one per file, including [ADR 022](./docs/adr/022-idml-relocates-to-plugin-publish.md).
+
+`docs/status.md` is the current record of what ships; the overview above is older (it predates the PDF bundle).
