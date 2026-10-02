@@ -1,0 +1,31 @@
+# Documentation
+
+What this folder holds.
+
+- [`concept.md`](concept.md): why the repository exists, what it is for, and what it will
+  never do.
+- [`architecture.md`](architecture.md): how it is built. The three crates and two bundles,
+  the dependency loop with the engine, the paths of an IDML open, an IDML export, a `.paged`
+  save and a PDF open, the host doors used, and how it is built and tested.
+- [`status.md`](status.md): what ships today, the limits of what ships, and what is not built.
+- [`adr/`](adr/README.md): the decision records of this repository, 022 and 650–657.
+
+## Decisions in other repositories that bind this one
+
+These records live in other public paged-media repositories. The code here rests on each of
+them. The last column says what the decision means for this repository.
+
+| ADR | Repository | Decision | What it means here |
+|---|---|---|---|
+| [010](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/010-raw-mutate-gate-capability-enforcement.md) | plugin-sdk | The raw-mutate gate and the capability enforcement line | Both manifests declare `document.openNative`, which `host.nativeDocument.open` requires, and list their importer and exporter ids under `contributes`. IDML export uses `host.editor`, the raw handle that the record names as the limit of the gate. |
+| [017](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/017-importer-exporter-door-shape.md) | plugin-sdk | Importer and exporter door shape | `.idml` and `.pdf` files are routed to this repository's importers by extension or MIME type. Each importer receives the file's bytes and replaces the document (`packages/publish-bundle/src/io/idml.ts`, `packages/pdf-bundle/src/io/pdf.ts`). The IDML exporter returns bytes and a file name; the host owns the download. |
+| [305](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/305-doors-always-present.md) | plugin-sdk | Every door is always present; `supports()` reports a missing backend | The bundles probe `contribute.importer@1`, `contribute.exporter@1` and `document.openNative@1`. Without the first two nothing is registered; without the third the file is not opened. Each case logs a warning. |
+| [306](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/306-canary-releases.md) | plugin-sdk | Releases: a canary on every push, version-gated, published without tokens | `.github/workflows/publish.yml` runs on every push to `main` and publishes `@paged-media/publish` and `@paged-media/pdf` under the dist-tag `canary` when a package's version is not yet on npm, with no token secret. |
+| [307](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/307-contract-as-peer-dependency.md) | plugin-sdk | Bundles take the contract packages as peer dependencies | `@paged-media/plugin-api` and `@paged-media/plugin-sdk` are peer dependencies of both packages (`>=0.2.29-canary.0`), with an exact development pin. |
+| [308](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/308-plugin-wasm.md) | plugin-sdk | Plugin wasm is a declared capability, loaded by the bundle, under one size budget | The PDF manifest declares one module, `bin/pdf_import_bg.wasm`, with a 4 MiB ceiling; `packages/pdf-bundle/src/engine-loader.ts` loads it on the first PDF. The PDFium module is loaded the same way by `packages/pdf-bundle/src/pdfium.ts` but is not declared. The IDML bundle ships no wasm. |
+| [315](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/315-isolation-contract.md) | plugin-sdk | The isolation contract: a plugin depends only on the published contract; a gap becomes a host door | The bundles import the two contract packages and, in the PDF bundle, `jszip`. Both importers use `host.nativeDocument.open`, the door the contract offers for loading a plugin-produced package. Two departures remain: IDML export calls `host.editor`, and the Rust crates take engine crates by git revision ([ADR 650](adr/650-mutual-git-revision-pins.md), [ADR 651](adr/651-idml-compiled-into-engine-wasm.md)). |
+| [007](https://github.com/paged-media/core/blob/main/docs/adr/007-carry-through-rendering-honesty.md) | core | Rendering and save-back honesty: parse-don't-fake, carry-through | `crates/idml-export` is the carry-through writer: it copies untouched entries and patches only what the model owns. See [ADR 652](adr/652-idml-save-back-patches.md). |
+| [021](https://github.com/paged-media/core/blob/main/docs/adr/021-paged-native-document-model-idml-as-format.md) | core | Paged-native document model; IDML becomes an import/export format | The model types live in the engine's `paged-model` crate. `idml-import` fills them and `idml-export` writes from them; `pdf-import` builds the same model with no IDML step. [ADR 022](adr/022-idml-relocates-to-plugin-publish.md) amends this record. |
+| [118](https://github.com/paged-media/core/blob/main/docs/adr/118-paged-file-is-a-valid-idml-package.md) | core | A `.paged` file is a ZIP that stays a valid IDML package | `crates/idml-export/src/paged.rs` writes the container for a document that has an IDML source: `write_paged` keeps the container parts and rewrites `manifest.json`, `write_idml` drops them. The `pdf-import` crate source produces its `.paged` through the engine's `wrap_document`. |
+| [120](https://github.com/paged-media/core/blob/main/docs/adr/120-indesign-is-the-oracle.md) | core | InDesign is the oracle: a generator authors, InDesign answers, a diff gates | The exporter's spellings are recorded in the code as measurements against InDesign 20.0.1, and one test fixture is InDesign's own export. The InDesign tooling is in the engine repository (`core: tools/indesign-export/`); nothing here runs InDesign. See [ADR 653](adr/653-indesign-is-the-oracle.md). |
+| [201](https://github.com/paged-media/editor/blob/main/docs/adr/201-plugins-as-pinned-packages.md) | editor | First-party plugins are compiled in as pinned published packages | The editor imports `publishBundle` and `pdfBundle` from the npm packages at exact versions and loads them as two plugins. It keeps `@paged-media/pdf` out of its bundler's dependency pre-bundling, which the `?url` wasm imports of the PDF bundle need. A change here reaches the editor when a new version is published and the editor's pin moves. |
