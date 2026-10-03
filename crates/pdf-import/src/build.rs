@@ -31,9 +31,8 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use paged_model::{
-    Bounds, CharacterRun, ColorEntry, ColorModel, ColorSpace, CornerSpec, DesignMap, FrameRef,
-    Graphic, Page, Paragraph, PathAnchor, Polygon, Rectangle, Spread, SpreadRef, Story, StoryRef,
-    TextFrame,
+    Bounds, CharacterRun, ColorEntry, ColorModel, ColorSpace, DesignMap, FrameRef, Graphic, Page,
+    Paragraph, PathAnchor, Polygon, Rectangle, Spread, SpreadRef, Story, StoryRef, TextFrame,
 };
 use paged_scene::{Document, ParsedSpread, ParsedStory};
 
@@ -353,55 +352,11 @@ fn font_style(bold: bool, italic: bool) -> Option<String> {
 /// A neutral rectangle — every field at its no-op value. Callers override the
 /// few they need (e.g. `image_bytes` + `has_image_element` for an image).
 fn blank_rectangle(self_id: String, bounds: Bounds) -> Rectangle {
+    // Every other field at the model's own neutral default, so a field the
+    // model gains needs no edit here (see `blank_text_frame`).
     Rectangle {
-        self_id: Some(self_id),
-        bounds,
         item_transform: Some(IDENTITY),
-        fill_color: None,
-        fill_tint: None,
-        stroke_color: None,
-        stroke_weight: None,
-        drop_shadow: None,
-        stroke_drop_shadow: None,
-        image_link: None,
-        has_image_element: false,
-        has_inline_pdf: false,
-        has_inline_eps: false,
-        image_item_transform: None,
-        image_bytes: None,
-        image_clip: None,
-        applied_object_style: None,
-        text_wrap: None,
-        frame_fitting: None,
-        stroke_type: None,
-        stroke_alignment: None,
-        end_cap: None,
-        end_join: None,
-        miter_limit: None,
-        stroke_gap_color: None,
-        stroke_gap_tint: None,
-        stroke_dash: Vec::new(),
-        item_layer: None,
-        corner_radius: None,
-        corner_option: None,
-        corners: [CornerSpec::default(); 4],
-        is_anchored: false,
-        opacity: None,
-        blend_mode: None,
-        effects: None,
-        gradient_fill_angle: None,
-        gradient_fill_length: None,
-        gradient_stroke_angle: None,
-        gradient_stroke_length: None,
-        text_paths: Vec::new(),
-        overprint_fill: false,
-        overprint_stroke: false,
-        nonprinting: false,
-        visible: true,
-        locked: false,
-        anchors: Vec::new(),
-        subpath_starts: Vec::new(),
-        subpath_open: Vec::new(),
+        ..Rectangle::new(self_id, bounds)
     }
 }
 
@@ -429,51 +384,17 @@ fn blank_polygon(
     stroke_color: Option<String>,
     stroke_weight: Option<f32>,
 ) -> Polygon {
+    // Every other field at the model's own neutral default — no corner
+    // effect among them: PDF paths carry their corner geometry in the
+    // path data itself, there is no parametric effect to lift.
     Polygon {
-        self_id: Some(self_id),
-        bounds,
         item_transform: Some(IDENTITY),
         fill_color,
-        fill_tint: None,
         stroke_color,
         stroke_weight,
-        stroke_type: None,
-        stroke_alignment: None,
-        end_join: None,
-        miter_limit: None,
-        stroke_gap_color: None,
-        stroke_gap_tint: None,
-        stroke_dash: Vec::new(),
-        applied_object_style: None,
         anchors,
         subpath_starts,
         subpath_open,
-        text_wrap: None,
-        item_layer: None,
-        effects: None,
-        gradient_fill_angle: None,
-        gradient_fill_length: None,
-        gradient_stroke_angle: None,
-        gradient_stroke_length: None,
-        opacity: None,
-        blend_mode: None,
-        text_paths: Vec::new(),
-        image_link: None,
-        has_image_element: false,
-        has_inline_pdf: false,
-        has_inline_eps: false,
-        image_item_transform: None,
-        image_bytes: None,
-        image_clip: None,
-        overprint_fill: false,
-        overprint_stroke: false,
-        nonprinting: false,
-        visible: true,
-        locked: false,
-        // PDF paths carry their corner geometry in the path data
-        // itself — there is no parametric corner effect to lift.
-        corner_radius: None,
-        corner_option: None,
-        corners: Default::default(),
+        ..Polygon::new(self_id, bounds)
     }
 }

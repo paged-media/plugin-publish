@@ -1199,18 +1199,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         fill_tint: common.fill_tint,
                         stroke_color: common.stroke_color,
                         stroke_weight: common.stroke_weight,
-                        drop_shadow: None,
-                        stroke_drop_shadow: None,
-                        image_link: None,
-                        image_bytes: None,
-                        image_clip: None,
-                        has_image_element: false,
-                        has_inline_pdf: false,
-                        has_inline_eps: false,
-                        image_item_transform: None,
                         applied_object_style: common.applied_object_style,
-                        text_wrap: None,
-                        frame_fitting: None,
                         stroke_type: common.stroke_type,
                         stroke_alignment: stroke.stroke_alignment,
                         end_cap: stroke.end_cap,
@@ -1223,23 +1212,21 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corner_radius: corner.corner_radius,
                         corner_option: corner.corner_option,
                         corners: corner.corners,
-                        is_anchored: false,
-                        opacity: None,
-                        blend_mode: None,
-                        effects: None,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
-                        text_paths: Vec::new(),
                         overprint_fill: common.overprint_fill,
                         overprint_stroke: common.overprint_stroke,
                         nonprinting: common.nonprinting,
                         visible: common.visible,
                         locked: common.locked,
-                        anchors: Vec::new(),
-                        subpath_starts: Vec::new(),
-                        subpath_open: Vec::new(),
+                        // Everything the start tag does not say — image,
+                        // wrap, transparency, effects and path children
+                        // fill it in as they are read — starts at the
+                        // model's neutral rectangle, so a field the model
+                        // gains needs no edit here.
+                        ..Rectangle::new(String::new(), Bounds::ZERO)
                     });
                     let idx = out.rectangles.len() - 1;
                     register_frame(
@@ -1319,25 +1306,12 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_gap_color: common.stroke_gap_color,
                         stroke_gap_tint: common.stroke_gap_tint,
                         stroke_dash: common.stroke_dash,
-                        drop_shadow: None,
-                        stroke_drop_shadow: None,
                         applied_object_style: common.applied_object_style,
-                        text_wrap: None,
                         item_layer: common.item_layer,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
-                        opacity: None,
-                        blend_mode: None,
-                        image_link: None,
-                        image_bytes: None,
-                        image_clip: None,
-                        has_image_element: false,
-                        has_inline_pdf: false,
-                        has_inline_eps: false,
-                        image_item_transform: None,
-                        effects: None,
                         overprint_fill: common.overprint_fill,
                         overprint_stroke: common.overprint_stroke,
                         nonprinting: common.nonprinting,
@@ -1346,6 +1320,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corner_radius: corner.corner_radius,
                         corner_option: corner.corner_option,
                         corners: corner.corners,
+                        // The rest — image, wrap, transparency, effects —
+                        // is filled by the children; see `Rectangle` above.
+                        ..Oval::new(String::new(), Bounds::ZERO)
                     });
                     let idx = out.ovals.len() - 1;
                     register_frame(
@@ -2348,13 +2325,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_gap_tint: common.stroke_gap_tint,
                         stroke_dash: common.stroke_dash,
                         applied_object_style: common.applied_object_style,
-                        text_wrap: None,
                         item_layer: common.item_layer,
-                        anchors: Vec::new(),
-                        subpath_starts: Vec::new(),
-                        subpath_open: Vec::new(),
-                        text_paths: Vec::new(),
-                        effects: None,
                         overprint_stroke: common.overprint_stroke,
                         nonprinting: common.nonprinting,
                         visible: common.visible,
@@ -2374,6 +2345,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corner_radius: corner.corner_radius,
                         corner_option: corner.corner_option,
                         corners: corner.corners,
+                        // The rest — wrap, effects, path and text-path
+                        // children — is filled as they are read; see
+                        // `Rectangle` above.
+                        ..GraphicLine::new(String::new(), Bounds::ZERO)
                     });
                     let idx = out.graphic_lines.len() - 1;
                     register_frame(
@@ -2449,26 +2424,11 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_gap_tint: common.stroke_gap_tint,
                         stroke_dash: common.stroke_dash,
                         applied_object_style: common.applied_object_style,
-                        text_wrap: None,
-                        anchors: Vec::new(),
-                        subpath_starts: Vec::new(),
-                        subpath_open: Vec::new(),
                         item_layer: common.item_layer,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
-                        opacity: None,
-                        blend_mode: None,
-                        text_paths: Vec::new(),
-                        image_link: None,
-                        image_bytes: None,
-                        image_clip: None,
-                        has_image_element: false,
-                        has_inline_pdf: false,
-                        has_inline_eps: false,
-                        image_item_transform: None,
-                        effects: None,
                         overprint_fill: common.overprint_fill,
                         overprint_stroke: common.overprint_stroke,
                         nonprinting: common.nonprinting,
@@ -2477,6 +2437,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corner_radius: corner.corner_radius,
                         corner_option: corner.corner_option,
                         corners: corner.corners,
+                        // The rest — path, image, wrap, transparency,
+                        // effects and text-path children — is filled as
+                        // they are read; see `Rectangle` above.
+                        ..Polygon::new(String::new(), Bounds::ZERO)
                     });
                     let idx = out.polygons.len() - 1;
                     register_frame(
@@ -2527,6 +2491,11 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                 b"Group" if !group_transforms.is_empty() => {
                     group_transforms.pop();
                     if let Some(builder) = group_builders.pop() {
+                        // Every field is named today; the update is there
+                        // for the one the model gains next, which then
+                        // lands at its default instead of breaking this
+                        // build from core's side.
+                        #[allow(clippy::needless_update)]
                         let group = Group {
                             self_id: builder.self_id,
                             item_transform: builder.item_transform,
@@ -2535,6 +2504,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                             corner_radius: builder.corner.corner_radius,
                             corner_option: builder.corner.corner_option,
                             corners: builder.corner.corners,
+                            ..Group::default()
                         };
                         let group_idx = out.groups.len();
                         out.groups.push(group);
