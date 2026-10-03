@@ -429,6 +429,33 @@ fn read_stroke_style_attrs(e: &quick_xml::events::BytesStart) -> StrokeStyleAttr
     }
 }
 
+/// `LeftLineEnd` / `RightLineEnd` and their `*ArrowHeadScale` — the
+/// line-end vocabulary IDML writes on every page item. Read for
+/// `<GraphicLine>` (v43) and, since C-62, `<Polygon>`: a pen or pencil
+/// path is a polygon whose contour is open, and InDesign draws line ends
+/// on it. Absent ⇒ no line end at 100 %.
+struct LineEndAttrs {
+    start_arrow: ArrowheadType,
+    end_arrow: ArrowheadType,
+    start_arrow_scale: f32,
+    end_arrow_scale: f32,
+}
+
+fn read_line_end_attrs(e: &quick_xml::events::BytesStart) -> LineEndAttrs {
+    let end = |k: &[u8]| {
+        attr(e, k)
+            .map(|s| ArrowheadType::from_idml(&s))
+            .unwrap_or(ArrowheadType::None)
+    };
+    let scale = |k: &[u8]| attr(e, k).and_then(|s| s.parse().ok()).unwrap_or(100.0);
+    LineEndAttrs {
+        start_arrow: end(b"LeftLineEnd"),
+        end_arrow: end(b"RightLineEnd"),
+        start_arrow_scale: scale(b"LeftArrowHeadScale"),
+        end_arrow_scale: scale(b"RightArrowHeadScale"),
+    }
+}
+
 /// Corner attributes (`CornerRadius`, `CornerOption`, plus the four
 /// per-corner overrides Q-16 added). The per-corner values default to
 /// `None`; the renderer falls back to the legacy global pair when a
@@ -1303,6 +1330,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_weight: common.stroke_weight,
                         stroke_type: common.stroke_type,
                         stroke_alignment: attr(&e, b"StrokeAlignment"),
+                        // C-62: a closed outline shows it on dash ends.
+                        end_cap: attr(&e, b"EndCap"),
                         stroke_gap_color: common.stroke_gap_color,
                         stroke_gap_tint: common.stroke_gap_tint,
                         stroke_dash: common.stroke_dash,
@@ -2309,6 +2338,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // stroke-only contour has no corner to cut. See
                     // `paged_model::GraphicLine::corner_radius`.
                     let corner = read_corner_attrs(&e);
+                    let line_ends = read_line_end_attrs(&e);
                     let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
@@ -2319,6 +2349,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_color: common.stroke_color,
                         stroke_weight: common.stroke_weight,
                         stroke_type: common.stroke_type,
+                        // C-62: 128 corpus lines spell `RoundEndCap`;
+                        // it was read on `<Rectangle>` only.
+                        end_cap: attr(&e, b"EndCap"),
                         end_join: attr(&e, b"EndJoin"),
                         miter_limit: attr(&e, b"MiterLimit").and_then(|s| s.parse().ok()),
                         stroke_gap_color: common.stroke_gap_color,
@@ -2330,18 +2363,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         nonprinting: common.nonprinting,
                         visible: common.visible,
                         locked: common.locked,
-                        start_arrow: attr(&e, b"LeftLineEnd")
-                            .map(|s| ArrowheadType::from_idml(&s))
-                            .unwrap_or(ArrowheadType::None),
-                        end_arrow: attr(&e, b"RightLineEnd")
-                            .map(|s| ArrowheadType::from_idml(&s))
-                            .unwrap_or(ArrowheadType::None),
-                        start_arrow_scale: attr(&e, b"LeftArrowHeadScale")
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(100.0),
-                        end_arrow_scale: attr(&e, b"RightArrowHeadScale")
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(100.0),
+                        start_arrow: line_ends.start_arrow,
+                        end_arrow: line_ends.end_arrow,
+                        start_arrow_scale: line_ends.start_arrow_scale,
+                        end_arrow_scale: line_ends.end_arrow_scale,
                         corner_radius: corner.corner_radius,
                         corner_option: corner.corner_option,
                         corners: corner.corners,
@@ -2405,6 +2430,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     let bounds_attr = attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s));
                     let common = read_common_attrs(&e);
                     let corner = read_corner_attrs(&e);
+                    let line_ends = read_line_end_attrs(&e);
                     let cf_self_id = common.self_id.clone();
                     let item_transform =
                         effective_item_transform(&group_transforms, common.item_transform);
@@ -2418,6 +2444,13 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         stroke_weight: common.stroke_weight,
                         stroke_type: common.stroke_type,
                         stroke_alignment: attr(&e, b"StrokeAlignment"),
+                        // C-62 — a pen or pencil path is a polygon with
+                        // an open contour: its cap and line ends.
+                        end_cap: attr(&e, b"EndCap"),
+                        start_arrow: line_ends.start_arrow,
+                        end_arrow: line_ends.end_arrow,
+                        start_arrow_scale: line_ends.start_arrow_scale,
+                        end_arrow_scale: line_ends.end_arrow_scale,
                         end_join: attr(&e, b"EndJoin"),
                         miter_limit: attr(&e, b"MiterLimit").and_then(|s| s.parse().ok()),
                         stroke_gap_color: common.stroke_gap_color,

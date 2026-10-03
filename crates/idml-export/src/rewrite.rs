@@ -64,6 +64,13 @@
 //!     points) and `format_f32` would re-derive it as `0.7087`. Unlike
 //!     `ItemTransform` there is nothing to de-compose — see
 //!     [`preserving_f32_patch`].
+//!   - `EndCap`            (FrameStrokeEndCap; Rectangle / Oval / Polygon /
+//!     GraphicLine — C-62. A text frame models no cap; its source
+//!     attribute passes through.) An untouched cap keeps its bytes.
+//!   - `LeftLineEnd` / `RightLineEnd` (FrameStroke{Start,End}Arrowhead;
+//!     GraphicLine, and Polygon since C-62 — a pen path). A source that
+//!     spells `None` keeps it; the scales are not model-writable and pass
+//!     through. See [`arrow_patch`].
 //!   - `NextTextFrame`     (LinkFrames / UnlinkFrames; TextFrame only)
 //!   - `Nonprinting`       (FrameNonprinting) — absence is the implicit
 //!     `false`, so turning it off drops the attribute; a source that
@@ -1066,6 +1073,10 @@ struct NewItemPaint<'a> {
     effects: Option<&'a idml_import::FrameEffects>,
     /// `GradientFill*` / `GradientStroke*` — see [`GradientGeom`].
     gradient: GradientGeom,
+    /// C-62 — `EndCap`, when the item carries a cap override (Rectangle,
+    /// Oval, Polygon, GraphicLine; a text frame models none). Absent is
+    /// InDesign's default butt cap.
+    end_cap: Option<&'a str>,
 }
 
 /// `Option<String>` has no `const` default that can be borrowed inline,
@@ -1093,6 +1104,7 @@ impl Default for NewItemPaint<'_> {
             drop_shadow: None,
             effects: None,
             gradient: GradientGeom::default(),
+            end_cap: None,
         }
     }
 }
@@ -1145,6 +1157,9 @@ fn push_common_item_attrs(
         "StrokeWeight",
         format_f32(paint.stroke_weight.unwrap_or(0.0)),
     ));
+    if let Some(c) = paint.end_cap {
+        attrs.push(("EndCap", c.to_string()));
+    }
     if paint.nonprinting {
         attrs.push(("Nonprinting", "true".to_string()));
     }
@@ -1301,6 +1316,7 @@ fn write_new_text_frame(
             stroke_angle: f.gradient_stroke_angle,
             stroke_length: f.gradient_stroke_length,
         },
+        end_cap: None,
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     if let Some(a) = &f.stroke_alignment {
@@ -1643,6 +1659,34 @@ fn write_new_path_item(
     Ok(())
 }
 
+/// `LeftLineEnd` / `RightLineEnd` (+ scales) for an item the source XML
+/// never carried — a `<GraphicLine>`, or (C-62) a pen path's `<Polygon>`.
+/// Only drawable, representable ends are written (`None` is IDML's
+/// implicit default, `Other` has no token to write), and a scale only
+/// beside its end and only when it is not InDesign's default 100 % — the
+/// model kept the scales from the source, but no writer ever spelled them,
+/// so a duplicated or re-parented line lost them.
+fn line_end_extras(
+    start: idml_import::ArrowheadType,
+    end: idml_import::ArrowheadType,
+    start_scale: f32,
+    end_scale: f32,
+) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    for (key, scale_key, t, scale) in [
+        ("LeftLineEnd", "LeftArrowHeadScale", start, start_scale),
+        ("RightLineEnd", "RightArrowHeadScale", end, end_scale),
+    ] {
+        if t.draws() && !t.as_idml().is_empty() {
+            out.push((key, t.as_idml().to_string()));
+            if scale != 100.0 {
+                out.push((scale_key, format_f32(scale)));
+            }
+        }
+    }
+    out
+}
+
 /// B-18: resolve a `FrameRef` (a `nested_children` entry) to its `Self`
 /// id against the spread's backing vecs.
 pub(crate) fn nested_ref_self_id(spread: &Spread, r: idml_import::FrameRef) -> Option<&str> {
@@ -1789,6 +1833,7 @@ fn write_new_item(
                             stroke_angle: rect.gradient_stroke_angle,
                             stroke_length: rect.gradient_stroke_length,
                         },
+                        end_cap: rect.end_cap.as_deref(),
                     },
                     rect.bounds,
                     spread,
@@ -1819,6 +1864,7 @@ fn write_new_item(
                             fill_length: o.gradient_fill_length,
                             ..GradientGeom::default()
                         },
+                        end_cap: o.end_cap.as_deref(),
                     },
                     o.bounds,
                     spread,
@@ -1849,12 +1895,19 @@ fn write_new_item(
                             fill_length: p.gradient_fill_length,
                             ..GradientGeom::default()
                         },
+                        end_cap: p.end_cap.as_deref(),
                     },
                     p.bounds,
                     &p.anchors,
                     &p.subpath_starts,
                     &p.subpath_open,
-                    &[],
+                    // C-62 — a pen path's line ends (and their scales).
+                    &line_end_extras(
+                        p.start_arrow,
+                        p.end_arrow,
+                        p.start_arrow_scale,
+                        p.end_arrow_scale,
+                    ),
                     spread,
                 )?;
             }
@@ -1864,15 +1917,12 @@ fn write_new_item(
                 // v43 — an inserted line that was given arrowheads
                 // before save keeps them (the patch lane only covers
                 // items that exist in the source XML).
-                let mut extra: Vec<(&'static str, String)> = Vec::new();
-                for (k, t) in [
-                    ("LeftLineEnd", l.start_arrow),
-                    ("RightLineEnd", l.end_arrow),
-                ] {
-                    if t.draws() && !t.as_idml().is_empty() {
-                        extra.push((k, t.as_idml().to_string()));
-                    }
-                }
+                let extra = line_end_extras(
+                    l.start_arrow,
+                    l.end_arrow,
+                    l.start_arrow_scale,
+                    l.end_arrow_scale,
+                );
                 write_new_path_item(
                     writer,
                     "GraphicLine",
@@ -1891,6 +1941,7 @@ fn write_new_item(
                         item_layer: l.item_layer.as_deref(),
                         drop_shadow: None,
                         effects: l.effects.as_ref(),
+                        end_cap: l.end_cap.as_deref(),
                         ..Default::default()
                     },
                     l.bounds,
@@ -3616,6 +3667,7 @@ fn patch_spread_item(
                 nonprinting,
                 None,
                 None,
+                None,
                 Some(&corners),
                 applied_object_style.as_deref(),
                 frame.item_layer.as_deref(),
@@ -3627,7 +3679,7 @@ fn patch_spread_item(
                 e,
                 |k, raw| {
                     if k == b"StrokeAlignment" {
-                        return Some(stroke_alignment_patch(raw, &frame.stroke_alignment));
+                        return Some(preserving_string_patch(raw, &frame.stroke_alignment));
                     }
                     frame_attr_patch(
                         k,
@@ -3640,6 +3692,9 @@ fn patch_spread_item(
                         nonprinting,
                         bounds,
                         None,
+                        None,
+                        // A text frame models no cap; its source
+                        // `EndCap` passes through.
                         None,
                         Some(&corners),
                         &applied_object_style,
@@ -3686,6 +3741,7 @@ fn patch_spread_item(
                     },
                     start_arrow: None,
                     end_arrow: None,
+                    end_cap: r.end_cap.clone(),
                     corners: Some(corner_attrs_of(
                         r.corner_radius,
                         &r.corner_option,
@@ -3720,6 +3776,7 @@ fn patch_spread_item(
                     },
                     start_arrow: None,
                     end_arrow: None,
+                    end_cap: r.end_cap.clone(),
                     // C-18: the B-23 residual is closed — `Oval` now
                     // carries the corner fields, so they patch back
                     // byte-preservingly like a rectangle's. (The values
@@ -3757,8 +3814,10 @@ fn patch_spread_item(
                         fill_length: r.gradient_fill_length,
                         ..GradientGeom::default()
                     },
-                    start_arrow: None,
-                    end_arrow: None,
+                    // C-62 — a pen path's line ends and cap.
+                    start_arrow: Some(r.start_arrow),
+                    end_arrow: Some(r.end_arrow),
+                    end_cap: r.end_cap.clone(),
                     corners: Some(corner_attrs_of(
                         r.corner_radius,
                         &r.corner_option,
@@ -3788,6 +3847,7 @@ fn patch_spread_item(
                     gradient: GradientGeom::default(),
                     start_arrow: Some(r.start_arrow),
                     end_arrow: Some(r.end_arrow),
+                    end_cap: r.end_cap.clone(),
                     // C-18: the B-23 residual is closed — `GraphicLine`
                     // now carries the corner fields (the corpus's 21
                     // lines all have real radii), so they patch back
@@ -3861,10 +3921,15 @@ struct VectorItem {
     /// Gradient geometry — see [`GradientGeom`].
     gradient: GradientGeom,
     /// v43 — `LeftLineEnd` / `RightLineEnd`. `None` for the kinds that
-    /// don't carry the fields (Rectangle / Oval / Polygon), so their
-    /// source attributes pass through verbatim.
+    /// don't carry the fields (Rectangle / Oval), so their source
+    /// attributes pass through verbatim; GraphicLine and (C-62) Polygon
+    /// carry them.
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
+    /// C-62 — `EndCap`. Every vector kind models it (Rectangle from the
+    /// start, Oval / Polygon / GraphicLine since C-62), so it patches
+    /// back; `None` inside is "no cap override".
+    end_cap: Option<String>,
     /// B-23 — `CornerOption` / `CornerRadius` + the four per-corner
     /// pairs. `Some` for the kinds whose model parses them (Rectangle,
     /// Polygon); `None` for Oval / GraphicLine / TextFrame, whose
@@ -4089,6 +4154,7 @@ fn patch_vector_item(
                 item.bounds,
                 item.start_arrow,
                 item.end_arrow,
+                Some(&item.end_cap),
                 item.corners.as_ref(),
                 &item.applied_object_style,
                 &item.item_layer,
@@ -4103,6 +4169,7 @@ fn patch_vector_item(
             item.nonprinting,
             item.start_arrow,
             item.end_arrow,
+            item.end_cap.as_deref(),
             item.corners.as_ref(),
             item.applied_object_style.as_deref(),
             item.item_layer.as_deref(),
@@ -4132,6 +4199,7 @@ fn frame_attr_patch(
     bounds: idml_import::Bounds,
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
+    end_cap: Option<&Option<String>>,
     corners: Option<&CornerAttrs>,
     applied_object_style: &Option<String>,
     item_layer: &Option<String>,
@@ -4176,8 +4244,11 @@ fn frame_attr_patch(
             false,
         )),
         b"NextTextFrame" => next.map(opt_string_patch),
-        b"LeftLineEnd" => arrow_patch(start_arrow),
-        b"RightLineEnd" => arrow_patch(end_arrow),
+        b"LeftLineEnd" => arrow_patch(raw, start_arrow),
+        b"RightLineEnd" => arrow_patch(raw, end_arrow),
+        // `end_cap: None` ⇒ this KIND models no cap (a text frame); its
+        // source attribute passes through, as `next` does.
+        b"EndCap" => end_cap.map(|c| preserving_string_patch(raw, c)),
         b"GeometricBounds" => Some(Patch::Set(format!(
             "{} {} {} {}",
             format_f32(bounds.top),
@@ -4206,6 +4277,7 @@ fn frame_attr_extras(
     nonprinting: bool,
     start_arrow: Option<idml_import::ArrowheadType>,
     end_arrow: Option<idml_import::ArrowheadType>,
+    end_cap: Option<&str>,
     corners: Option<&CornerAttrs>,
     applied_object_style: Option<&str>,
     item_layer: Option<&str>,
@@ -4262,6 +4334,11 @@ fn frame_attr_extras(
             }
         }
     }
+    // C-62 — a cap set on an item whose source element never spelled
+    // one (every minted pen path, and any item the cap was added to).
+    if let Some(c) = end_cap {
+        out.push(("EndCap", c.to_string()));
+    }
     if let Some(c) = corners {
         out.extend(corner_attr_extras(c));
     }
@@ -4273,19 +4350,29 @@ fn frame_attr_extras(
 /// attribute survives verbatim. So does `Other` (an out-of-vocabulary
 /// source token the parse layer couldn't keep): patching it would
 /// clobber a spelling we can't reproduce.
-fn arrow_patch(v: Option<idml_import::ArrowheadType>) -> Option<Patch> {
+///
+/// A source that already spells the model's value in InDesign's token
+/// keeps its bytes — including an explicit `"None"`, which InDesign
+/// writes on 78 corpus polygons and 4 ovals and which this used to
+/// DELETE on a save that changed nothing (harmless while only lines
+/// carried the field; corpus lines never spell it). A legacy alias
+/// (`TriangleHead`) is still rewritten to the canonical token.
+fn arrow_patch(raw: &[u8], v: Option<idml_import::ArrowheadType>) -> Option<Patch> {
     use idml_import::ArrowheadType as A;
     match v {
         None | Some(A::Other) => None,
+        Some(t) if raw == t.as_idml().as_bytes() => Some(Patch::Keep),
         Some(A::None) => Some(Patch::Remove),
         Some(t) => Some(Patch::Set(t.as_idml().to_string())),
     }
 }
 
-/// `StrokeAlignment` on a text frame: the source spelling when the model
-/// still says it (an unmutated save is byte-identical), the model's value
-/// when it changed, and dropped when the model is back at the default.
-fn stroke_alignment_patch(raw: &[u8], model: &Option<String>) -> Patch {
+/// An optional enum-string attribute the model owns — `StrokeAlignment`
+/// on a text frame, `EndCap` on the vector kinds: the source spelling
+/// when the model still says it (an unmutated save is byte-identical),
+/// the model's value when it changed, and dropped when the model is back
+/// at the default.
+fn preserving_string_patch(raw: &[u8], model: &Option<String>) -> Patch {
     match model {
         Some(s) if s.as_bytes() == raw => Patch::Keep,
         _ => opt_string_patch(model),
