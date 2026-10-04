@@ -836,7 +836,16 @@ pub(crate) fn write_package(
     // an unmutated round-trip leaves these entries byte-identical (and the
     // entry takes the verbatim copy path below).
     if let Some(orig) = entry_bytes(&mut src, GRAPHIC_SRC)? {
-        let new = resources::patch_graphic(&orig, &doc.palette).map_err(|source| {
+        // C-82 — built-ins the WRITTEN spreads reference (only rewritten
+        // spreads can reference something new; a verbatim spread already
+        // agrees with the source's Graphic.xml).
+        let needs = patched
+            .iter()
+            .filter(|(k, _)| k.starts_with("Spreads/") || k.starts_with("MasterSpreads/"))
+            .fold(resources::GraphicNeeds::default(), |acc, (_, v)| {
+                acc.or(resources::GraphicNeeds::scan(v))
+            });
+        let new = resources::patch_graphic_with(&orig, &doc.palette, needs).map_err(|source| {
             WriteError::Rewrite {
                 entry: GRAPHIC_SRC.to_string(),
                 source,

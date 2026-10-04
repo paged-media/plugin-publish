@@ -154,6 +154,48 @@ fn write_gradient(
 /// lacks are appended just before `</idPkg:Graphic>`. Byte-identical to
 /// `original` when nothing new.
 pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quick_xml::Error> {
+    patch_graphic_with(original, palette, GraphicNeeds::default())
+}
+
+/// C-82 — built-in resources an exported spread REFERENCES that the
+/// source's `Graphic.xml` may not declare. InDesign resolves neither by
+/// name: a `Color/Paper` fill with no `<Color Self="Color/Paper">` reads
+/// as no fill (an appearance bake's white layer vanished), and a dash on
+/// `StrokeStyle/$ID/Dashed` with no `<StrokeStyle>` declaration draws
+/// solid. Each is appended only when used and absent, so an unmutated
+/// round trip stays byte-identical.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GraphicNeeds {
+    pub paper: bool,
+    pub dashed_stroke_style: bool,
+}
+
+impl GraphicNeeds {
+    /// What the given spread XML references.
+    pub fn scan(spread_xml: &[u8]) -> Self {
+        let has = |needle: &[u8]| spread_xml.windows(needle.len()).any(|w| w == needle);
+        GraphicNeeds {
+            paper: has(b"\"Color/Paper\""),
+            dashed_stroke_style: has(b"\"StrokeStyle/$ID/Dashed\""),
+        }
+    }
+
+    pub fn or(self, other: Self) -> Self {
+        GraphicNeeds {
+            paper: self.paper || other.paper,
+            dashed_stroke_style: self.dashed_stroke_style || other.dashed_stroke_style,
+        }
+    }
+}
+
+/// [`patch_graphic`], also declaring the built-ins `needs` names.
+pub fn patch_graphic_with(
+    original: &[u8],
+    palette: &Graphic,
+    needs: GraphicNeeds,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let mut seen_paper = false;
+    let mut seen_dashed = false;
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
     config.expand_empty_elements = false;
@@ -182,8 +224,13 @@ pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quic
                     // which of the two Adobe honours is not ours to say.
                     b"Color" | b"Tint" => {
                         if let Some(id) = attr_value(e, b"Self") {
+                            seen_paper |= id == "Color/Paper";
                             seen_colors.insert(id);
                         }
+                    }
+                    b"StrokeStyle" => {
+                        seen_dashed |=
+                            attr_value(e, b"Self").as_deref() == Some("StrokeStyle/$ID/Dashed");
                     }
                     b"Gradient" => {
                         if let Some(id) = attr_value(e, b"Self") {
@@ -206,6 +253,37 @@ pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quic
                     if !seen_gradients.contains(&g.self_id) {
                         write_gradient(&mut writer, g)?;
                     }
+                }
+                if needs.paper && !seen_paper && !palette.colors.contains_key("Color/Paper") {
+                    // InDesign's own declaration of the built-in paper swatch.
+                    emit_empty(
+                        &mut writer,
+                        "Color",
+                        &[
+                            ("Self", "Color/Paper".to_string()),
+                            ("Model", "Process".to_string()),
+                            ("Space", "CMYK".to_string()),
+                            ("ColorValue", "0 0 0 0".to_string()),
+                            ("ColorOverride", "Specialpaper".to_string()),
+                            ("AlternateSpace", "NoAlternateColor".to_string()),
+                            ("AlternateColorValue", String::new()),
+                            ("Name", "Paper".to_string()),
+                            ("ColorEditable", "true".to_string()),
+                            ("ColorRemovable", "false".to_string()),
+                            ("Visible", "true".to_string()),
+                            ("SwatchCreatorID", "7937".to_string()),
+                        ],
+                    )?;
+                }
+                if needs.dashed_stroke_style && !seen_dashed {
+                    emit_empty(
+                        &mut writer,
+                        "StrokeStyle",
+                        &[
+                            ("Self", "StrokeStyle/$ID/Dashed".to_string()),
+                            ("Name", "$ID/Dashed".to_string()),
+                        ],
+                    )?;
                 }
                 writer.write_event(ev.borrow())?;
             }

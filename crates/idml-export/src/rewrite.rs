@@ -1077,7 +1077,37 @@ struct NewItemPaint<'a> {
     /// Oval, Polygon, GraphicLine; a text frame models none). Absent is
     /// InDesign's default butt cap.
     end_cap: Option<&'a str>,
+    /// C-82 — the rest of the stroke model and the corners, for an item
+    /// the source XML never carried. The patch lane already preserves
+    /// these on parsed items; a MINTED item (every path paged.draw
+    /// draws) used to lose them all on export: InDesign read a draw
+    /// path's round join, its dash and its rounded corners as miter,
+    /// solid and square.
+    style: NewItemStyle<'a>,
 }
+
+/// C-82 — stroke style and corner attributes of an inserted item. All
+/// optional: an unset field writes nothing, so InDesign's (and the
+/// object style's) default applies, exactly as for a parsed item.
+#[derive(Default, Clone, Copy)]
+struct NewItemStyle<'a> {
+    stroke_type: Option<&'a str>,
+    stroke_alignment: Option<&'a str>,
+    end_join: Option<&'a str>,
+    miter_limit: Option<f32>,
+    stroke_dash: &'a [f32],
+    #[allow(clippy::type_complexity)]
+    corners: Option<(
+        &'a Option<f32>,
+        &'a Option<String>,
+        &'a [idml_import::CornerSpec; 4],
+    )>,
+}
+
+/// IDML's built-in dashed stroke style. A custom dash is written as this
+/// style plus `StrokeDashAndGap`; InDesign draws it only when
+/// `Graphic.xml` declares the style, which `resources` ensures.
+pub(crate) const DASHED_STROKE_STYLE: &str = "StrokeStyle/$ID/Dashed";
 
 /// `Option<String>` has no `const` default that can be borrowed inline,
 /// so the "this kind carries no fill" case points at one shared `None`.
@@ -1105,6 +1135,7 @@ impl Default for NewItemPaint<'_> {
             effects: None,
             gradient: GradientGeom::default(),
             end_cap: None,
+            style: NewItemStyle::default(),
         }
     }
 }
@@ -1159,6 +1190,39 @@ fn push_common_item_attrs(
     ));
     if let Some(c) = paint.end_cap {
         attrs.push(("EndCap", c.to_string()));
+    }
+    let st = &paint.style;
+    if let Some(j) = st.end_join {
+        attrs.push(("EndJoin", j.to_string()));
+    }
+    if let Some(m) = st.miter_limit {
+        attrs.push(("MiterLimit", format_f32(m)));
+    }
+    if let Some(a) = st.stroke_alignment {
+        attrs.push(("StrokeAlignment", a.to_string()));
+    }
+    if !st.stroke_dash.is_empty() {
+        // A dash with no stroke style of its own rides IDML's built-in
+        // Dashed style — InDesign's own spelling of a custom dash.
+        attrs.push((
+            "StrokeType",
+            st.stroke_type.unwrap_or(DASHED_STROKE_STYLE).to_string(),
+        ));
+        attrs.push((
+            "StrokeDashAndGap",
+            st.stroke_dash
+                .iter()
+                .map(|v| format_f32(*v))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ));
+    } else if let Some(t) = st.stroke_type {
+        attrs.push(("StrokeType", t.to_string()));
+    }
+    if let Some((radius, option, corners)) = st.corners {
+        attrs.extend(corner_attr_extras(&corner_attrs_of(
+            *radius, option, corners,
+        )));
     }
     if paint.nonprinting {
         attrs.push(("Nonprinting", "true".to_string()));
@@ -1317,6 +1381,7 @@ fn write_new_text_frame(
             stroke_length: f.gradient_stroke_length,
         },
         end_cap: None,
+        style: NewItemStyle::default(),
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     if let Some(a) = &f.stroke_alignment {
@@ -1598,6 +1663,7 @@ fn write_new_box_item(
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     write_transparency_setting(writer, paint)?;
+    write_text_paths(writer, model_text_paths_of(spread, self_id), None)?;
     if let Some(children) = spread.nested_children.get(self_id) {
         write_nested_children(
             writer,
@@ -1644,6 +1710,7 @@ fn write_new_path_item(
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     write_transparency_setting(writer, paint)?;
+    write_text_paths(writer, model_text_paths_of(spread, self_id), None)?;
     // B-18: a Polygon container's nested children recurse inside the
     // element (GraphicLine ids never key `nested_children`).
     if let Some(children) = spread.nested_children.get(self_id) {
@@ -1713,6 +1780,66 @@ fn group_item_layer<'a>(spread: &'a Spread, group: &idml_import::Group) -> Optio
         FrameRef::Polygon(i) => spread.polygons.get(i)?.item_layer.as_deref(),
         FrameRef::Group(i) => group_item_layer(spread, spread.groups.get(i)?),
     })
+}
+
+/// C-82 — the text paths the model attaches to a host, by `Self` id
+/// (IDML hosts a `<TextPath>` on a Rectangle, Polygon or GraphicLine).
+fn model_text_paths_of<'a>(spread: &'a Spread, id: &str) -> &'a [idml_import::TextPath] {
+    let is = |s: &Option<String>| s.as_deref() == Some(id);
+    if let Some(r) = spread.rectangles.iter().find(|r| is(&r.self_id)) {
+        return &r.text_paths;
+    }
+    if let Some(p) = spread.polygons.iter().find(|p| is(&p.self_id)) {
+        return &p.text_paths;
+    }
+    if let Some(l) = spread.graphic_lines.iter().find(|l| is(&l.self_id)) {
+        return &l.text_paths;
+    }
+    &[]
+}
+
+/// C-82 — serialise `<TextPath>` children (type on a path). A text path
+/// attached since load was dropped on export: InDesign read the path
+/// with no text and the story with no frame, so it discarded the story
+/// too, and nothing said so. `skip` names the ones the source element
+/// already carries (the patch lane passes those through verbatim).
+fn write_text_paths(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    paths: &[idml_import::TextPath],
+    skip: Option<&std::collections::HashSet<String>>,
+) -> Result<(), quick_xml::Error> {
+    for (i, tp) in paths.iter().enumerate() {
+        if let (Some(id), Some(skip)) = (&tp.self_id, skip) {
+            if skip.contains(id) {
+                continue;
+            }
+        }
+        let mut attrs: Vec<(&str, String)> = vec![(
+            "Self",
+            tp.self_id
+                .clone()
+                .unwrap_or_else(|| format!("{}tp{i}", crate::emit::sanitize_id(&tp.parent_story))),
+        )];
+        attrs.push(("ParentStory", crate::emit::sanitize_id(&tp.parent_story)));
+        for (k, v) in [
+            ("PathAlignment", &tp.path_alignment),
+            ("PathTypeAlignment", &tp.path_type_alignment),
+            ("PathEffect", &tp.path_effect),
+            ("FlipPathEffect", &tp.flip_path_effect),
+        ] {
+            if let Some(v) = v {
+                attrs.push((k, v.clone()));
+            }
+        }
+        if let Some(b) = tp.start_bracket {
+            attrs.push(("StartBracket", format_f32(b)));
+        }
+        if let Some(b) = tp.end_bracket {
+            attrs.push(("EndBracket", format_f32(b)));
+        }
+        emit_empty_with_attrs(writer, "TextPath", &attrs)?;
+    }
+    Ok(())
 }
 
 /// B-18: a container's composed (spread-space) model transform, looked
@@ -1834,6 +1961,18 @@ fn write_new_item(
                             stroke_length: rect.gradient_stroke_length,
                         },
                         end_cap: rect.end_cap.as_deref(),
+                        style: NewItemStyle {
+                            stroke_type: rect.stroke_type.as_deref(),
+                            stroke_dash: &rect.stroke_dash,
+                            corners: Some((
+                                &rect.corner_radius,
+                                &rect.corner_option,
+                                &rect.corners,
+                            )),
+                            stroke_alignment: rect.stroke_alignment.as_deref(),
+                            end_join: rect.end_join.as_deref(),
+                            miter_limit: rect.miter_limit,
+                        },
                     },
                     rect.bounds,
                     spread,
@@ -1865,6 +2004,13 @@ fn write_new_item(
                             ..GradientGeom::default()
                         },
                         end_cap: o.end_cap.as_deref(),
+                        style: NewItemStyle {
+                            stroke_type: o.stroke_type.as_deref(),
+                            stroke_dash: &o.stroke_dash,
+                            corners: Some((&o.corner_radius, &o.corner_option, &o.corners)),
+                            stroke_alignment: o.stroke_alignment.as_deref(),
+                            ..NewItemStyle::default()
+                        },
                     },
                     o.bounds,
                     spread,
@@ -1896,6 +2042,14 @@ fn write_new_item(
                             ..GradientGeom::default()
                         },
                         end_cap: p.end_cap.as_deref(),
+                        style: NewItemStyle {
+                            stroke_type: p.stroke_type.as_deref(),
+                            stroke_dash: &p.stroke_dash,
+                            corners: Some((&p.corner_radius, &p.corner_option, &p.corners)),
+                            stroke_alignment: p.stroke_alignment.as_deref(),
+                            end_join: p.end_join.as_deref(),
+                            miter_limit: p.miter_limit,
+                        },
                     },
                     p.bounds,
                     &p.anchors,
@@ -1942,6 +2096,14 @@ fn write_new_item(
                         drop_shadow: None,
                         effects: l.effects.as_ref(),
                         end_cap: l.end_cap.as_deref(),
+                        style: NewItemStyle {
+                            stroke_type: l.stroke_type.as_deref(),
+                            stroke_dash: &l.stroke_dash,
+                            corners: Some((&l.corner_radius, &l.corner_option, &l.corners)),
+                            end_join: l.end_join.as_deref(),
+                            miter_limit: l.miter_limit,
+                            ..NewItemStyle::default()
+                        },
                         ..Default::default()
                     },
                     l.bounds,
@@ -2634,6 +2796,10 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     // place, so the container-close flush emits only the missing ones.
     let mut present_in: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
+    // C-82 — per host: the `<TextPath>` ids the source element carries,
+    // so the close flush adds only the ones attached since load.
+    let mut text_paths_in: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
 
     // ---- C-19 group-membership state ----
     // Model-side group index: member `Self` id → owning group's `Self`
@@ -3072,6 +3238,14 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     buf.clear();
                     continue;
                 }
+                if e.name().as_ref() == b"TextPath" {
+                    if let (Some(host), Some(id)) = (
+                        open_items.last().and_then(|it| it.self_id.clone()),
+                        attr_value(&e, b"Self"),
+                    ) {
+                        text_paths_in.entry(host).or_default().insert(id);
+                    }
+                }
                 // C-22: a self-closing page item anchors inserts exactly
                 // like an open one does.
                 {
@@ -3383,6 +3557,11 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 {
                     let item = open_items.pop().expect("guarded by is_some_and");
                     if let Some(host_id) = item.self_id.as_deref() {
+                        write_text_paths(
+                            &mut writer,
+                            model_text_paths_of(spread, host_id),
+                            Some(&text_paths_in.remove(host_id).unwrap_or_default()),
+                        )?;
                         if let Some(children) = spread.nested_children.get(host_id) {
                             write_nested_children(
                                 &mut writer,
