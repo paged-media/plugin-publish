@@ -10,6 +10,13 @@ description = "Import parser (ZIP + XML source packages). Produces a typed AST o
 [lints]
 workspace = true
 
+[features]
+# Fill the model's `Spread::item_names` (page-item `Name`, ADR 131). The
+# field lands in core's paged-model with the address grammar (core branch
+# om/address); turn this on — or drop the gate — in the same commit that
+# moves the core pin to a rev that has it.
+item-names = []
+
 [dependencies]
 paged-scene = { workspace = true }
 # N5 — the Paged model types live here (parser depends on the model, imports

@@ -41,6 +41,87 @@ pub(crate) fn attr_unescaped(e: &quick_xml::events::BytesStart, key: &[u8]) -> O
         })
 }
 
+/// Decode InDesign's `<?AID xxxx?>` spelling of characters inside a
+/// label value. InDesign 2025 writes every character outside the Basic
+/// Multilingual Plane as one `<?AID xxxx?>` per UTF-16 code unit — an emoji
+/// becomes `<?AID d83d?><?AID de00?>` (escaped `&lt;?AID d83d?&gt;` in the
+/// attribute) — and decodes that form itself when it reads the label back
+/// (the InDesign round-trip survey, 2026-10-06). A run of consecutive
+/// escapes is decoded as UTF-16; a run that is not valid UTF-16 (a lone
+/// surrogate) is kept verbatim rather than lost.
+pub fn decode_aid_escapes(value: &str) -> std::borrow::Cow<'_, str> {
+    const OPEN: &str = "<?AID ";
+    if !value.contains(OPEN) {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    /// One `<?AID xxxx?>` at the start of `s`: (code unit, length).
+    fn unit(s: &str) -> Option<(u16, usize)> {
+        let rest = s.strip_prefix(OPEN)?;
+        let end = rest.find("?>")?;
+        let hex = &rest[..end];
+        if hex.is_empty() || hex.len() > 4 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        Some((u16::from_str_radix(hex, 16).ok()?, OPEN.len() + end + 2))
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find(OPEN) {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let mut units = Vec::new();
+        let mut used = 0;
+        while let Some((u, n)) = unit(&rest[used..]) {
+            units.push(u);
+            used += n;
+        }
+        if units.is_empty() {
+            // `<?AID ` not followed by a code unit: literal text.
+            out.push_str(OPEN);
+            rest = &rest[OPEN.len()..];
+            continue;
+        }
+        match String::from_utf16(&units) {
+            Ok(text) => out.push_str(&text),
+            Err(_) => out.push_str(&rest[..used]),
+        }
+        rest = &rest[used..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
+/// A label `KeyValuePair`'s `Value`: XML-unescaped, then InDesign's
+/// `<?AID xxxx?>` escapes decoded ([`decode_aid_escapes`]). Every label
+/// reader (page items, pages, the designmap) goes through this one door.
+pub(crate) fn label_value(e: &quick_xml::events::BytesStart) -> Option<String> {
+    attr_unescaped(e, b"Value").map(|v| decode_aid_escapes(&v).into_owned())
+}
+
+/// The page-item kinds whose IDML `Name` is recorded (ADR 131: the six
+/// `ElementId` page-item kinds, groups included).
+pub(crate) const NAMED_ITEM_KINDS: [&[u8]; 6] =
+    [b"TextFrame", b"Rectangle", b"Oval", b"Polygon", b"GraphicLine", b"Group"];
+
+/// Record `e`'s IDML `Name` under its `Self` when `e` is a named page
+/// item. InDesign writes `Name="$ID/"` for an item nobody named; that, and
+/// an empty name, record nothing.
+pub(crate) fn record_item_name(
+    e: &quick_xml::events::BytesStart,
+    names: &mut std::collections::HashMap<String, String>,
+) {
+    if !NAMED_ITEM_KINDS.contains(&e.name().as_ref()) {
+        return;
+    }
+    let (Some(self_id), Some(name)) = (attr(e, b"Self"), attr_unescaped(e, b"Name")) else {
+        return;
+    };
+    if name.is_empty() || name == "$ID/" {
+        return;
+    }
+    names.insert(self_id, name);
+}
+
 /// Parse an `f32` attribute by key. Returns `None` when the
 /// attribute is absent, malformed, or non-finite. Convenience
 /// wrapper used by the IDML effect parsers (XOffset, Size, Opacity,

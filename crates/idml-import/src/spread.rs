@@ -583,6 +583,9 @@ fn bounds_from_anchors(anchors: &[PathAnchor]) -> Bounds {
 #[derive(Debug, Default, Clone)]
 pub struct SpreadProvenance {
     unmodelled: std::collections::HashSet<String>,
+    /// The IDML `Name` of every named page item (six kinds, groups
+    /// included), by `Self` — see [`SpreadProvenance::item_names`].
+    item_names: std::collections::HashMap<String, String>,
 }
 
 impl SpreadProvenance {
@@ -592,6 +595,15 @@ impl SpreadProvenance {
     /// it; it passes through verbatim.
     pub fn is_unmodelled(&self, self_id: &str) -> bool {
         self.unmodelled.contains(self_id)
+    }
+
+    /// The IDML `Name` of each named page item, by `Self` (ADR 131).
+    /// InDesign's unnamed spelling `$ID/` is not a name. With the
+    /// `item-names` feature the same map is also the model's
+    /// `Spread::item_names`; this accessor serves it against a core rev
+    /// whose model does not carry that field yet.
+    pub fn item_names(&self) -> &std::collections::HashMap<String, String> {
+        &self.item_names
     }
 }
 
@@ -607,6 +619,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
 
     let mut provenance = SpreadProvenance::default();
     let mut out = Spread::default();
+    // Page-item `Name`s by `Self` (ADR 131). Lands in the model's
+    // `Spread::item_names` with the `item-names` feature — the field exists
+    // from the core rev that carries the address grammar on.
+    let mut item_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     // Stack of <Group> ItemTransforms encountered, outermost
     // first. When a frame appears inside one or more groups, its
     // effective spread-space transform is the composition of
@@ -999,6 +1015,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
         // `in_image_depth` against the matching `</Image>` End — a
         // self-closed image has no End, so it must not increment.
         let event_is_start = matches!(raw_event, Event::Start(_));
+        if let Event::Start(ref e) | Event::Empty(ref e) = raw_event {
+            crate::util::record_item_name(e, &mut item_names);
+        }
         match raw_event {
             Event::Start(e) | Event::Empty(e) => match e.name().as_ref() {
                 b"Spread" | b"MasterSpread" => {
@@ -1870,7 +1889,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         if let (Some(page), Some(key), Some(value)) = (
                             open_page.clone(),
                             crate::util::attr_unescaped(&e, b"Key"),
-                            crate::util::attr_unescaped(&e, b"Value"),
+                            crate::util::label_value(&e),
                         ) {
                             let entries = out.labels.entry(page).or_default();
                             match entries.iter_mut().find(|(k, _)| *k == key) {
@@ -1881,7 +1900,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     }
                     if let Some(cf) = current_frame.as_ref() {
                         let key = crate::util::attr_unescaped(&e, b"Key");
-                        let value = crate::util::attr_unescaped(&e, b"Value");
+                        let value = crate::util::label_value(&e);
                         if let (Some(key), Some(value)) = (key, value) {
                             let self_id = match cf.kind {
                                 CurrentFrameKind::Text(i) => {
@@ -2726,6 +2745,11 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
         }
         buf.clear();
     }
+    #[cfg(feature = "item-names")]
+    {
+        out.item_names = item_names.clone();
+    }
+    provenance.item_names = item_names;
     Ok((out, provenance))
 }
 

@@ -1359,6 +1359,45 @@ pub(crate) fn write_item_label(
     Ok(())
 }
 
+/// ADR 131 — a new item's IDML `Name`, from the model's
+/// `Spread::item_names` (written right after `Self`, where InDesign puts it).
+#[cfg(feature = "item-names")]
+fn push_item_name(attrs: &mut Vec<(&str, String)>, spread: &Spread, self_id: &str) {
+    if let Some(name) = spread.item_names.get(self_id) {
+        attrs.push(("Name", name.clone()));
+    }
+}
+#[cfg(not(feature = "item-names"))]
+fn push_item_name(_attrs: &mut Vec<(&str, String)>, _spread: &Spread, _self_id: &str) {}
+
+/// ADR 131 — a source item the model RENAMED gets its new `Name`; one
+/// whose name is unchanged keeps its source bytes. Only a name the model
+/// carries is written: the model cannot spell "cleared" (an absent entry
+/// is also what a document saved before names were modelled reads back
+/// as), so a source name with no model entry passes through.
+#[cfg(feature = "item-names")]
+fn patch_item_name(start: BytesStart<'static>, spread: &Spread) -> Result<BytesStart<'static>, quick_xml::Error> {
+    let Some(self_id) = attr_value(&start, b"Self") else {
+        return Ok(start);
+    };
+    let Some(model) = spread.item_names.get(&self_id) else {
+        return Ok(start);
+    };
+    if attr_value(&start, b"Name").as_deref() == Some(model.as_str()) {
+        return Ok(start);
+    }
+    let name = model.clone();
+    patch_start(
+        &start,
+        |k, _| (k == b"Name").then(|| Patch::Set(name.clone())),
+        &[("Name", model.clone())],
+    )
+}
+#[cfg(not(feature = "item-names"))]
+fn patch_item_name(start: BytesStart<'static>, _spread: &Spread) -> Result<BytesStart<'static>, quick_xml::Error> {
+    Ok(start)
+}
+
 /// Serialise an inserted `<TextFrame>`. The model classification is
 /// authoritative — the element is always emitted as `<TextFrame>` so the
 /// re-parse files it back under `Spread::text_frames` (the parser keys
@@ -1374,6 +1413,7 @@ fn write_new_text_frame(
         return Ok(());
     };
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
+    push_item_name(&mut attrs, spread, self_id);
     // A wire-minted story id (`Story/u<n>`) is written SANITIZED (`/` →
     // `_`) so the reference matches the id `derive_story_id` re-derives
     // from the emitted `Stories/Story_<sanitized>.xml` entry on reopen
@@ -1682,6 +1722,7 @@ fn write_new_box_item(
     spread: &Spread,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
+    push_item_name(&mut attrs, spread, self_id);
     push_common_item_attrs(&mut attrs, item_transform, paint);
     emit_start_with_attrs(writer, kind, &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
@@ -1726,6 +1767,7 @@ fn write_new_path_item(
     spread: &Spread,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
+    push_item_name(&mut attrs, spread, self_id);
     push_common_item_attrs(&mut attrs, item_transform, paint);
     for (k, v) in extra_attrs {
         attrs.push((k, v.clone()));
@@ -2199,6 +2241,7 @@ fn write_new_group(
             ),
         ),
     ];
+    push_item_name(&mut attrs, spread, self_id);
     // InDesign keeps a group's members on the GROUP's layer: a `<Group>`
     // without `ItemLayer` lands on the first layer of the document and
     // takes its members with it, whatever their own `ItemLayer` says
@@ -3829,6 +3872,37 @@ impl TransformPlan {
 /// accumulated group transform for a member (see [`resolve_item_transform`]).
 #[allow(clippy::too_many_arguments)]
 fn patch_spread_item(
+    e: &BytesStart,
+    spread: &Spread,
+    frames: &std::collections::HashMap<&str, &TextFrame>,
+    rectangles: &[idml_import::Rectangle],
+    ovals: &[idml_import::Oval],
+    polygons: &[idml_import::Polygon],
+    graphic_lines: &[idml_import::GraphicLine],
+    groups: &[idml_import::Group],
+    group_accum: Option<Option<[f32; 6]>>,
+) -> Result<Option<BytesStart<'static>>, quick_xml::Error> {
+    let patched = patch_spread_item_attrs(
+        e,
+        spread,
+        frames,
+        rectangles,
+        ovals,
+        polygons,
+        graphic_lines,
+        groups,
+        group_accum,
+    )?;
+    match patched {
+        Some(start) => patch_item_name(start, spread).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// The model-owned attributes of a page-item start tag (everything but
+/// its `Name`, which [`patch_item_name`] adds on top).
+#[allow(clippy::too_many_arguments)]
+fn patch_spread_item_attrs(
     e: &BytesStart,
     spread: &Spread,
     frames: &std::collections::HashMap<&str, &TextFrame>,
@@ -6142,7 +6216,12 @@ pub(crate) fn key_value_pair(e: &BytesStart) -> Option<(String, String)> {
                     .map(|v| v.into_owned())
             })
     }
-    Some((normalized(e, b"Key")?, normalized(e, b"Value")?))
+    // The Value decoded as the parser decodes it — InDesign's
+    // `<?AID xxxx?>` spelling of non-BMP characters included — so an
+    // InDesign-saved label the model did not change compares equal and
+    // keeps its source bytes.
+    let value = normalized(e, b"Value")?;
+    Some((normalized(e, b"Key")?, idml_import::decode_aid_escapes(&value).into_owned()))
 }
 
 /// Read an attribute's decoded value off a start tag.
@@ -7410,5 +7489,57 @@ mod tests {
             .find(|p| p.self_id.as_deref() == Some("unew"))
             .expect("survives");
         assert_eq!(back.applied_object_style.as_deref(), Some("ObjectStyle/u0"));
+    }
+
+    /// InDesign 2025 re-spells a label's non-BMP characters as
+    /// `<?AID xxxx?>` (escaped in the attribute). The reader decodes them;
+    /// the writer compares source labels decoded the same way, so a label
+    /// nobody changed keeps InDesign's bytes instead of being rebuilt.
+    #[test]
+    fn an_unchanged_indesign_aid_label_keeps_its_source_bytes() {
+        const XML: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><Rectangle Self="r1" ItemTransform="1 0 0 1 10 10" GeometricBounds="0 0 50 50" FillColor="Color/Black"><Properties><Label><KeyValuePair Key="x-paged:aid" Value="{&quot;t&quot;:&quot;&lt;?AID d83d?&gt;&lt;?AID de00?&gt;&quot;}"/></Label></Properties></Rectangle></Spread>
+</idPkg:Spread>"#;
+        let spread = idml_import::parse_spread(XML).expect("parse");
+        assert_eq!(
+            spread.labels.get("r1"),
+            Some(&vec![("x-paged:aid".to_string(), "{\"t\":\"\u{1F600}\"}".to_string())])
+        );
+        let out = String::from_utf8(rewrite_spread(XML, &spread).expect("rewrite")).unwrap();
+        assert!(
+            out.contains(r#"Value="{&quot;t&quot;:&quot;&lt;?AID d83d?&gt;&lt;?AID de00?&gt;&quot;}""#),
+            "{out}"
+        );
+    }
+
+    /// ADR 131 — a renamed SOURCE item gets its new `Name`; an inserted
+    /// item gets its `Name`; an unchanged one keeps its bytes.
+    #[cfg(feature = "item-names")]
+    #[test]
+    fn item_names_are_written_for_renamed_and_new_items() {
+        const XML: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s"><Rectangle Self="r1" Name="photo" ItemTransform="1 0 0 1 10 10" GeometricBounds="0 0 50 50" FillColor="Color/Black"/><Polygon Self="p1" Name="star" ItemTransform="1 0 0 1 20 20" GeometricBounds="0 0 30 30" FillColor="Color/Paper"/><Group Self="g1" ItemTransform="1 0 0 1 100 0"><Rectangle Self="r2" Name="$ID/" ItemTransform="1 0 0 1 5 5" GeometricBounds="0 0 20 20" FillColor="Color/Paper"/></Group></Spread>
+</idPkg:Spread>"#;
+        let mut spread = idml_import::parse_spread(XML).expect("parse");
+        assert_eq!(spread.item_names.get("r1").map(String::as_str), Some("photo"));
+        assert!(!spread.item_names.contains_key("r2"), "$ID/ is unnamed");
+        spread.item_names.insert("r1".into(), "hero & photo".into());
+        spread.item_names.insert("g1".into(), "card".into());
+        let mut p = inserted_polygon(&spread, "unew", None);
+        p.fill_color = Some("Color/Black".into());
+        spread.polygons.push(p);
+        spread.frames_in_order.push(idml_import::FrameRef::Polygon(1));
+        spread.item_names.insert("unew".into(), "fresh".into());
+
+        let out = rewrite_spread(XML, &spread).expect("rewrite");
+        let s = String::from_utf8(out.clone()).unwrap();
+        assert!(s.contains(r#"<Polygon Self="p1" Name="star" "#), "unchanged keeps its bytes: {s}");
+        assert!(s.contains(r#"Name="hero &amp; photo""#), "{s}");
+        let back = idml_import::parse_spread(&out).expect("re-parse");
+        for (id, name) in [("r1", "hero & photo"), ("p1", "star"), ("g1", "card"), ("unew", "fresh")] {
+            assert_eq!(back.item_names.get(id).map(String::as_str), Some(name), "{id}: {s}");
+        }
     }
 }

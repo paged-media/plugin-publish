@@ -92,7 +92,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                     && open_path[2] == b"Label" =>
             {
                 let key = crate::util::attr_unescaped(e, b"Key");
-                let value = crate::util::attr_unescaped(e, b"Value");
+                let value = crate::util::label_value(e);
                 if let (Some(key), Some(value)) = (key, value) {
                     // One entry per key, last write wins — the
                     // page-item label rule.
