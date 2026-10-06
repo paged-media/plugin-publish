@@ -23,11 +23,12 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createHeadlessHost, validateValue, type HeadlessHost } from "@paged-media/plugin-sdk";
+import { applyDefaults, createHeadlessHost, validateValue, type HeadlessHost } from "@paged-media/plugin-sdk";
 
 import { pdfBundle } from "../src/activate";
 import { IMPORT_PDF_ARGS_TYPE, IMPORT_PDF_COMMAND, IMPORT_PDF_RESULT_TYPE } from "../src/commands";
 import { _resetPdfMapperCache } from "../src/engine-loader";
+import { PDF_IMPORT_DEFAULTS } from "../src/io/pdf";
 
 const IDML = new URL("../../../crates/idml-export/tests/fixtures/indesign-20.0.1-navigation.idml", import.meta.url);
 
@@ -58,7 +59,7 @@ beforeEach(async () => {
 
 afterEach(() => h.dispose());
 
-const args = (over: Record<string, unknown> = {}) => ({ bytes: pdf, name: "navigation.pdf", mode: "auto", maxPages: 0, dpi: 150, ...over });
+const args = (over: Record<string, unknown> = {}) => ({ bytes: pdf, name: "navigation.pdf", mode: "auto", dpi: 150, ...over });
 
 describe("[plugin-pdf.typed-commands] importPdf as a typed command", () => {
   it("is listed with the schema files' args and result", async () => {
@@ -88,7 +89,8 @@ describe("[plugin-pdf.typed-commands] importPdf as a typed command", () => {
     await expect(h.objects.invoke(IMPORT_PDF_COMMAND, args({ mode: "vector" }))).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(IMPORT_PDF_COMMAND, args({ dpi: 10 }))).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(IMPORT_PDF_COMMAND, args({ maxPages: -1 }))).rejects.toThrow(/invalidValue/);
-    await expect(h.objects.invoke(IMPORT_PDF_COMMAND, { bytes: pdf, name: "x" })).rejects.toThrow(/invalidValue/);
+    await expect(h.objects.invoke(IMPORT_PDF_COMMAND, args({ maxPages: 0 }))).rejects.toThrow(/invalidValue/);
+    await expect(h.objects.invoke(IMPORT_PDF_COMMAND, { name: "x" })).rejects.toThrow(/invalidValue/);
     expect(await h.objects.query("page")).toEqual(before);
   });
 
@@ -96,5 +98,25 @@ describe("[plugin-pdf.typed-commands] importPdf as a typed command", () => {
     const before = await h.objects.query("page");
     await expect(h.objects.invoke(IMPORT_PDF_COMMAND, args({ mode: "image" }))).rejects.toThrow();
     expect(await h.objects.query("page")).toEqual(before);
+  }, 60_000);
+});
+
+describe("[plugin-pdf.typed-commands] partial args: struct defaults and optional fields (SDK 0.2.43)", () => {
+  it("PDF_IMPORT_DEFAULTS is the schema's defaults; maxPages is optional", () => {
+    const filled = applyDefaults(IMPORT_PDF_ARGS_TYPE, { bytes: new Uint8Array(1) }) as Record<string, unknown>;
+    const { bytes: _b, name, ...opts } = filled;
+    expect(opts).toEqual(PDF_IMPORT_DEFAULTS);
+    expect(name).toBe("document.pdf");
+    expect("maxPages" in filled).toBe(false);
+  });
+
+  it("opens a PDF from { bytes } alone — every page, mode auto", async () => {
+    const out = await h.objects.invoke(IMPORT_PDF_COMMAND, { bytes: pdf });
+    expect(out).toEqual({ mode: "editable", pageCount: sourcePages });
+  }, 60_000);
+
+  it("opens a PDF from { bytes, maxPages }", async () => {
+    const out = (await h.objects.invoke(IMPORT_PDF_COMMAND, { bytes: pdf, maxPages: 1 })) as { pageCount: number };
+    expect(out.pageCount).toBe(1);
   }, 60_000);
 });

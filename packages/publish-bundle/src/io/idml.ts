@@ -86,7 +86,7 @@ async function exportIdml(host: BundleHost): Promise<ExportResult | null> {
   try {
     // The typed command's path: the engine's losses become diagnostics there
     // and the file is named after the document.
-    const r = await exportIdmlResult(host, "");
+    const r = await exportIdmlResult(host);
     for (const d of r.diagnostics) host.log.warn(`${IDML_EXPORTER_ID}: ${d.message}`);
     return { bytes: r.bytes, fileName: r.fileName };
   } catch (err) {

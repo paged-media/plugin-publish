@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createHeadlessHost, validateValue, type HeadlessHost } from "@paged-media/plugin-sdk";
+import { applyDefaults, createHeadlessHost, validateValue, type HeadlessHost } from "@paged-media/plugin-sdk";
 import type { ValueType } from "@paged-media/plugin-api";
 
 import { publishBundle } from "../src/activate";
@@ -37,8 +37,13 @@ import {
   type ExportResult,
   parsePageRange,
   pdfExportArgs,
+  pdfWireOptions,
+  type PdfExportArgs,
 } from "../src/commands";
 import importResult from "../schema/import-result.json";
+import exportPdfArgsFile from "../schema/export-pdf.args.json";
+import exportIdmlArgsFile from "../schema/export-idml.args.json";
+import importIdmlArgsFile from "../schema/import-idml.args.json";
 
 const IDML = new URL("../../../crates/idml-export/tests/fixtures/indesign-20.0.1-navigation.idml", import.meta.url);
 
@@ -96,16 +101,18 @@ describe("[plugin-publish.typed-commands] import and export as typed commands", 
   }, 60_000);
 
   it("refuses args outside the schema, or a range the schema cannot carry — never coerced", async () => {
-    await expect(h.objects.invoke(EXPORT_PDF_COMMAND, {})).rejects.toThrow(/invalidValue/);
+    await expect(h.objects.invoke(EXPORT_PDF_COMMAND, { pages: 3 })).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(EXPORT_PDF_COMMAND, pdfExportArgs({ standard: "pdf20" as never }))).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(EXPORT_PDF_COMMAND, { ...pdfExportArgs(), cropMarks: "yes" })).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(EXPORT_PDF_COMMAND, pdfExportArgs({ pages: "3-1" }))).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(EXPORT_PDF_COMMAND, pdfExportArgs({ bleed: [9, 9] }))).rejects.toThrow(/invalidValue/);
+    await expect(h.objects.invoke(EXPORT_PDF_COMMAND, { downsamplePpi: 0 })).rejects.toThrow(/invalidValue/);
+    await expect(h.objects.invoke(IMPORT_IDML_COMMAND, {})).rejects.toThrow(/invalidValue/);
     await expect(h.objects.invoke(IMPORT_IDML_COMMAND, { bytes: "x", name: "x" })).rejects.toThrow(/invalidValue/);
   });
 
   it("exportIdml and exportPaged answer the same shape; the .paged reopens", async () => {
-    const idml = (await h.objects.invoke(EXPORT_IDML_COMMAND, { linkBase: "" })) as ExportResult;
+    const idml = (await h.objects.invoke(EXPORT_IDML_COMMAND, {})) as ExportResult;
     expect(validateValue(EXPORT_RESULT_TYPE, idml)).toBeNull();
     expect(head(idml.bytes, 2)).toBe("PK");
     expect(idml.fileName).toMatch(/\.idml$/);
@@ -133,4 +140,59 @@ describe("[plugin-publish.typed-commands] page ranges", () => {
     expect(() => parsePageRange("0")).toThrow(/invalidValue/);
     expect(() => parsePageRange("a-b")).toThrow(/invalidValue/);
   });
+});
+
+describe("[plugin-publish.typed-commands] partial args: struct defaults and optional fields (SDK 0.2.43)", () => {
+  type Fields = Record<string, { default?: unknown; optional?: true }>;
+  const pdfFields = (exportPdfArgsFile as { fields: Fields }).fields;
+
+  it("PDF_EXPORT_DEFAULTS is exactly the schema file's defaults; every other field is optional", () => {
+    const defaults = Object.fromEntries(
+      Object.entries(pdfFields).filter(([, f]) => "default" in f).map(([k, f]) => [k, f.default]),
+    );
+    expect(PDF_EXPORT_DEFAULTS).toEqual(defaults);
+    for (const [k, f] of Object.entries(pdfFields)) expect("default" in f || f.optional === true, k).toBe(true);
+    expect(applyDefaults(EXPORT_PDF_ARGS_TYPE, {})).toEqual(PDF_EXPORT_DEFAULTS);
+    expect(validateValue(EXPORT_PDF_ARGS_TYPE, {})).toBeNull();
+    // The other commands: linkBase optional, import's bytes required, name defaulted.
+    expect((exportIdmlArgsFile as { fields: Fields }).fields.linkBase!.optional).toBe(true);
+    const imp = (importIdmlArgsFile as { fields: Fields }).fields;
+    expect("default" in imp.bytes! || imp.bytes!.optional).toBeFalsy();
+    expect(imp.name!.default).toBe("document.idml");
+  });
+
+  it("an absent optional field is 'not set' on the wire, never a stand-in value", () => {
+    const wire = pdfWireOptions(applyDefaults(EXPORT_PDF_ARGS_TYPE, {}) as PdfExportArgs);
+    expect(wire).toMatchObject({
+      standard: "pdf17",
+      outputIntentProfile: null,
+      outputCondition: null,
+      pageFrom: null,
+      pageTo: null,
+      marksOffsetPt: null,
+      bleedOverridePt: null,
+      downsamplePpi: null,
+      effectDpi: 150,
+      title: null,
+    });
+    // A present marksOffset of 0 is a real offset, not "the engine's default".
+    expect(pdfWireOptions({ ...PDF_EXPORT_DEFAULTS, marksOffset: 0 }).marksOffsetPt).toBe(0);
+  });
+
+  it("exportPdf with {} — the defaults fill in — writes every page", async () => {
+    const out = (await h.objects.invoke(EXPORT_PDF_COMMAND, {})) as ExportResult;
+    expect(head(out.bytes, 5)).toBe("%PDF-");
+    expect(out.pageCount).toBe(pageCount);
+  }, 60_000);
+
+  it("exportPdf with only { pages, title }", async () => {
+    const out = (await h.objects.invoke(EXPORT_PDF_COMMAND, { pages: "1", title: "Partial" })) as ExportResult;
+    expect(out.pageCount).toBe(1);
+    expect(new TextDecoder("latin1").decode(out.bytes)).toContain("Partial");
+  }, 60_000);
+
+  it("importIdml with only the bytes (name defaults)", async () => {
+    const out = (await h.objects.invoke(IMPORT_IDML_COMMAND, { bytes: new Uint8Array(readFileSync(IDML)) })) as { pages: string[] };
+    expect(out.pages).toHaveLength(pageCount);
+  }, 60_000);
 });

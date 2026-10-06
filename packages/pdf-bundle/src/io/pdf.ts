@@ -43,6 +43,8 @@ import { buildIdmlFromRasters } from "../idml-fallback";
 import { extractPdf, rasterizePdf } from "../pdfium";
 import { loadPdfMapper } from "../engine-loader";
 
+import importPdfArgs from "../../schema/import-pdf.args.json";
+
 export const PDF_IMPORTER_ID = "media.paged.pdf.importer.pdf";
 export const PDF_MIME = "application/pdf";
 
@@ -81,13 +83,19 @@ async function importPdf(host: BundleHost, file: ImportRequest): Promise<void> {
 export interface PdfImportOptions {
   /** `auto`: editable when the mapper loads, else page images. */
   mode: "auto" | "editable" | "image";
-  /** Page cap; 0 = the path's default (12 editable, 20 image). */
-  maxPages: number;
+  /** Page cap, 1–2000; absent = the path's default (12 editable, 20 image). */
+  maxPages?: number;
   /** Raster resolution of the image path, ppi. */
   dpi: number;
 }
 
-export const PDF_IMPORT_DEFAULTS: Readonly<PdfImportOptions> = Object.freeze({ mode: "auto", maxPages: 0, dpi: 150 });
+/** The schema's struct-field DEFAULTS (`schema/import-pdf.args.json`, the
+ *  one source): what `host.objects.invoke` fills in for an absent field,
+ *  and what File ▸ Open uses. `maxPages` is optional, so it is absent. */
+export const PDF_IMPORT_DEFAULTS: Readonly<PdfImportOptions> = Object.freeze({
+  mode: importPdfArgs.fields.mode.default as PdfImportOptions["mode"],
+  dpi: importPdfArgs.fields.dpi.default,
+});
 
 /** Read `bytes` per `options` and hand the document to `open`. Throws
  *  `invalidValue: …` on out-of-range options and `failed: …` when the
@@ -98,11 +106,11 @@ export async function openPdf(
   options: PdfImportOptions,
   open: (bytes: Uint8Array) => Promise<void>,
 ): Promise<{ mode: "editable" | "image"; pageCount: number }> {
-  if (!Number.isInteger(options.maxPages) || options.maxPages < 0 || options.maxPages > 2000) {
-    throw new Error("invalidValue: maxPages is 0 (default) to 2000");
+  if (options.maxPages !== undefined && (!Number.isInteger(options.maxPages) || options.maxPages < 1 || options.maxPages > 2000)) {
+    throw new Error("invalidValue: maxPages is 1–2000 (absent = the path's default)");
   }
   if (options.dpi < 36 || options.dpi > 600) throw new Error("invalidValue: dpi is 36–600");
-  const maxPages = options.maxPages === 0 ? undefined : options.maxPages;
+  const maxPages = options.maxPages;
   if (options.mode !== "image") {
     // Phase 1 — the editable reconstruction (wasm mapper present).
     const editable = await tryEditableImport(host, bytes, maxPages);

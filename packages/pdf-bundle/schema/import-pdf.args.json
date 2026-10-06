@@ -2,9 +2,9 @@
   "kind": "struct",
   "fields": {
     "bytes": { "kind": "bytes", "mime": ["application/pdf"] },
-    "name": { "kind": "text" },
-    "mode": { "kind": "enum", "members": ["auto", "editable", "image"] },
-    "maxPages": { "kind": "number", "integer": true },
-    "dpi": { "kind": "number", "unit": "ppi" }
+    "name": { "kind": "text", "default": "document.pdf" },
+    "mode": { "kind": "enum", "members": ["auto", "editable", "image"], "default": "auto" },
+    "maxPages": { "kind": "number", "integer": true, "optional": true },
+    "dpi": { "kind": "number", "unit": "ppi", "default": 150 }
   }
 }

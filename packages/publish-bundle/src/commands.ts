@@ -19,18 +19,20 @@
 // against the schema before the handler runs, and never coerces.
 //
 //   media.paged.publish.exportPdf    PDF options          → ExportResult
-//   media.paged.publish.exportIdml   { linkBase }         → ExportResult
+//   media.paged.publish.exportIdml   { linkBase? }        → ExportResult
 //   media.paged.publish.exportPaged  {}                   → ExportResult
-//   media.paged.publish.importIdml   { bytes, name }      → { pages }
+//   media.paged.publish.importIdml   { bytes, name? }     → { pages }
 //
 // Every exporter answers ONE result shape (`schema/export-result.json`), so
 // a caller writes `bytes` to `fileName` and reports `diagnostics` without
 // knowing the format. The plugin has no editable state of its own, so it
 // contributes no object kinds.
 //
-// A struct's fields are all required (ADR 132 has no optional field), so
-// the args carry explicit "use the default" values ("" text, empty list, 0)
-// and `PDF_EXPORT_DEFAULTS` is the full record a caller starts from.
+// Struct fields are `optional` or carry a `default` (SDK 0.2.43,
+// `StructField`): `host.objects.invoke` fills the defaults before the
+// handler runs, so a caller passes only what it means (`{}` exports every
+// page with the defaults); an absent optional field means "not set", never a
+// stand-in value. `PDF_EXPORT_DEFAULTS` is read from the schema file.
 
 import type {
   BundleHost,
@@ -92,55 +94,58 @@ export interface ExportResult {
   diagnostics: ExportDiagnostic[];
 }
 
-/** `media.paged.publish.exportPdf`'s args (`schema/export-pdf.args.json`). */
+/** `media.paged.publish.exportPdf`'s args (`schema/export-pdf.args.json`)
+ *  as the handler sees them: `host.objects.invoke` has filled every
+ *  defaulted field; an OPTIONAL field is absent when not given, which means
+ *  "not set" (the engine's or the document's own value) — never a stand-in. */
 export interface PdfExportArgs {
   /** `pdf17` (PDF 1.7) or `pdfx4` (PDF/X-4; needs `outputIntentProfile`). */
   standard: "pdf17" | "pdfx4";
-  /** 1-based page range: `""` or `"all"`, `"3"`, `"2-5"`. */
-  pages: string;
-  /** Output-intent profile name; `""` = the working CMYK space. */
-  outputIntentProfile: string;
-  /** Output condition text for the OutputIntent; `""` = none. */
-  outputCondition: string;
+  /** 1-based page range: `"all"`, `"3"`, `"2-5"`; absent = every page. */
+  pages?: string;
+  /** Output-intent profile name; absent = the working CMYK space. */
+  outputIntentProfile?: string;
+  /** Output condition text for the OutputIntent; absent = none. */
+  outputCondition?: string;
   colorPolicy: "preserveNumbers" | "convertToDestination";
   cropMarks: boolean;
   registrationMarks: boolean;
   colorBars: boolean;
   pageInfo: boolean;
-  /** Printer's-marks offset from the trim, pt; 0 = the engine's default. */
-  marksOffset: number;
-  /** [top, inside, bottom, outside] pt; `[]` = the document's bleed. */
-  bleed: number[];
-  /** Resample images above this effective ppi; 0 = never. */
-  downsamplePpi: number;
+  /** Printer's-marks offset from the trim, pt (0–72); absent = the engine's default. */
+  marksOffset?: number;
+  /** [top, inside, bottom, outside] pt; absent = the document's bleed. */
+  bleed?: number[];
+  /** Resample images above this effective ppi (1–2400); absent = never. */
+  downsamplePpi?: number;
   /** Raster resolution of effect soft masks, ppi. */
   effectDpi: number;
   restrictedFontPolicy: "outline" | "fail";
-  /** Document title (Info / XMP); `""` = none. */
-  title: string;
+  /** Document title (Info / XMP); absent = none. */
+  title?: string;
 }
 
-export const PDF_EXPORT_DEFAULTS: Readonly<PdfExportArgs> = Object.freeze({
-  standard: "pdf17",
-  pages: "",
-  outputIntentProfile: "",
-  outputCondition: "",
-  colorPolicy: "preserveNumbers",
-  cropMarks: false,
-  registrationMarks: false,
-  colorBars: false,
-  pageInfo: false,
-  marksOffset: 0,
-  bleed: [],
-  downsamplePpi: 0,
-  effectDpi: 150,
-  restrictedFontPolicy: "outline",
-  title: "",
-});
+/** The fields the schema DEFAULTS (every other field is optional). */
+export type PdfExportDefaults = Pick<
+  PdfExportArgs,
+  "standard" | "colorPolicy" | "cropMarks" | "registrationMarks" | "colorBars" | "pageInfo" | "effectDpi" | "restrictedFontPolicy"
+>;
 
-/** The defaults with `overrides` applied: a complete, valid args record. */
+/** The schema's struct-field defaults, read from `schema/export-pdf.args.json`
+ *  (the ONE source the manifest, the CLI's options form and
+ *  `host.objects.invoke` all see). */
+export const PDF_EXPORT_DEFAULTS: Readonly<PdfExportDefaults> = Object.freeze(
+  Object.fromEntries(
+    Object.entries((exportPdfArgs as { fields: Record<string, { default?: unknown }> }).fields)
+      .filter(([, f]) => "default" in f)
+      .map(([k, f]) => [k, f.default]),
+  ) as unknown as PdfExportDefaults,
+);
+
+/** The defaults with `overrides` applied: a complete, valid args record
+ *  (what `invoke` hands the handler for the same partial args). */
 export function pdfExportArgs(overrides: Partial<PdfExportArgs> = {}): PdfExportArgs {
-  return { ...PDF_EXPORT_DEFAULTS, ...overrides, bleed: [...(overrides.bleed ?? PDF_EXPORT_DEFAULTS.bleed)] };
+  return { ...PDF_EXPORT_DEFAULTS, ...overrides, ...(overrides.bleed ? { bleed: [...overrides.bleed] } : {}) };
 }
 
 /** A refusal the registry reports as `invalidValue: …` (the code prefix
@@ -164,28 +169,32 @@ export function parsePageRange(pages: string): { pageFrom: number | null; pageTo
 /** The checked args as the engine's wire options. Ranges a struct field
  *  cannot carry (ADR 132 puts `range` on rows) are checked here. */
 export function pdfWireOptions(args: PdfExportArgs): PdfWireOptions {
-  if (args.bleed.length !== 0 && args.bleed.length !== 4) throw invalid("bleed is [] or [top, inside, bottom, outside]");
-  if (args.bleed.some((b) => b < 0 || b > 432)) throw invalid("bleed values are 0–432 pt");
-  if (args.marksOffset < 0 || args.marksOffset > 72) throw invalid("marksOffset is 0–72 pt");
-  if (args.downsamplePpi < 0 || args.downsamplePpi > 2400) throw invalid("downsamplePpi is 0 (never) or up to 2400");
+  const { bleed, marksOffset, downsamplePpi } = args;
+  if (bleed !== undefined && bleed.length !== 4) throw invalid("bleed is [top, inside, bottom, outside]");
+  if (bleed?.some((b) => b < 0 || b > 432)) throw invalid("bleed values are 0–432 pt");
+  if (marksOffset !== undefined && (marksOffset < 0 || marksOffset > 72)) throw invalid("marksOffset is 0–72 pt");
+  if (downsamplePpi !== undefined && (downsamplePpi < 1 || downsamplePpi > 2400)) {
+    throw invalid("downsamplePpi is 1–2400 (absent = never resample)");
+  }
   if (args.effectDpi < 36 || args.effectDpi > 1200) throw invalid("effectDpi is 36–1200");
-  if (args.standard === "pdfx4" && args.outputIntentProfile === "") {
+  const text = (s: string | undefined): string | null => (s === undefined || s === "" ? null : s);
+  const outputIntentProfile = text(args.outputIntentProfile);
+  if (args.standard === "pdfx4" && outputIntentProfile === null) {
     throw invalid("pdfx4 needs an outputIntentProfile (a registered profile name)");
   }
-  const text = (s: string): string | null => (s === "" ? null : s);
   return {
     standard: args.standard,
-    outputIntentProfile: text(args.outputIntentProfile),
+    outputIntentProfile,
     outputCondition: text(args.outputCondition),
     colorPolicy: args.colorPolicy,
-    ...parsePageRange(args.pages),
+    ...parsePageRange(args.pages ?? ""),
     cropMarks: args.cropMarks,
     registrationMarks: args.registrationMarks,
     colorBars: args.colorBars,
     pageInfo: args.pageInfo,
-    marksOffsetPt: args.marksOffset === 0 ? null : args.marksOffset,
-    bleedOverridePt: args.bleed.length === 4 ? (args.bleed as [number, number, number, number]) : null,
-    downsamplePpi: args.downsamplePpi === 0 ? null : args.downsamplePpi,
+    marksOffsetPt: marksOffset ?? null,
+    bleedOverridePt: bleed ? (bleed as [number, number, number, number]) : null,
+    downsamplePpi: downsamplePpi ?? null,
     effectDpi: args.effectDpi,
     restrictedFontPolicy: args.restrictedFontPolicy,
     title: text(args.title),
@@ -253,10 +262,10 @@ export async function exportPdf(host: BundleHost, args: PdfExportArgs): Promise<
 /** Export the active document to IDML through the engine's writer. Every
  *  loss the engine reports becomes a warning (the exporter used to drop
  *  them). */
-export async function exportIdmlResult(host: BundleHost, linkBase: string): Promise<ExportResult> {
+export async function exportIdmlResult(host: BundleHost, linkBase?: string): Promise<ExportResult> {
   const reply = await host.editor.client.send({
     kind: "exportIdml",
-    payload: { linkBase: linkBase === "" ? null : linkBase },
+    payload: { linkBase: linkBase === undefined || linkBase === "" ? null : linkBase },
   });
   if (reply.kind === "exportIdmlFailed") throw new Error(`failed: ${reply.payload.error}`);
   if (reply.kind !== "idmlExported") throw new Error(`failed: unexpected reply ${reply.kind}`);
@@ -314,7 +323,7 @@ export function contributePublishCommands(host: BundleHost): ObjectModelHandle |
       title: "Export IDML",
       args: exportIdmlArgs as ValueType,
       result: EXPORT_RESULT_TYPE,
-      handler: (_ctx, args) => exportIdmlResult(host, (args as { linkBase: string }).linkBase),
+      handler: (_ctx, args) => exportIdmlResult(host, (args as { linkBase?: string }).linkBase),
     },
     {
       id: EXPORT_PAGED_COMMAND,

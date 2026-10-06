@@ -15,7 +15,9 @@
 // paged.pdf TYPED COMMAND (plugin-sdk ADR 323): `media.paged.pdf.importPdf`
 // opens a PDF with validated options, so the Node CLI and scripts choose the
 // editable or the image path, the page cap and the raster resolution — the
-// importer (File ▸ Open) runs the same code with `PDF_IMPORT_DEFAULTS`.
+// importer (File ▸ Open) runs the same code with `PDF_IMPORT_DEFAULTS` —
+// the schema's own struct-field defaults, which `host.objects.invoke` fills
+// in, so a caller passes `{ bytes }` alone (SDK 0.2.43 StructField).
 // A PDF has no editable model of its own once opened (it becomes a native
 // document), so the plugin contributes no object kinds.
 
@@ -30,6 +32,8 @@ export const IMPORT_PDF_COMMAND = "media.paged.pdf.importPdf";
 export const IMPORT_PDF_ARGS_TYPE = importPdfArgs as ValueType;
 export const IMPORT_PDF_RESULT_TYPE = importPdfResult as ValueType;
 
+/** The args after `host.objects.invoke` filled the schema's defaults:
+ *  `name`, `mode` and `dpi` are always there, `maxPages` only when given. */
 export interface PdfImportArgs extends PdfImportOptions {
   bytes: Uint8Array;
   name: string;
@@ -58,7 +62,9 @@ export function contributePdfCommands(host: BundleHost): ObjectModelHandle | nul
     async handler(_ctx, args) {
       const open = openDoor(host, args.name);
       if (!open) throw new Error("failed: this host cannot open a document");
-      return openPdf(host, args.bytes, { mode: args.mode, maxPages: args.maxPages, dpi: args.dpi }, open);
+      const options: PdfImportOptions = { mode: args.mode, dpi: args.dpi };
+      if (args.maxPages !== undefined) options.maxPages = args.maxPages;
+      return openPdf(host, args.bytes, options, open);
     },
   };
   return host.contribute.objectModel({ kinds: [], commands: [importPdf as TypedCommandContribution] });
