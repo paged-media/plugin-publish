@@ -1758,7 +1758,7 @@ fn write_new_box_item(
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     write_transparency_setting(writer, paint)?;
-    write_text_paths(writer, model_text_paths_of(spread, self_id), None)?;
+    write_text_paths(writer, spread, self_id, None)?;
     if let Some(children) = spread.nested_children.get(self_id) {
         write_nested_children(
             writer,
@@ -1806,7 +1806,7 @@ fn write_new_path_item(
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     write_transparency_setting(writer, paint)?;
-    write_text_paths(writer, model_text_paths_of(spread, self_id), None)?;
+    write_text_paths(writer, spread, self_id, None)?;
     // B-18: a Polygon container's nested children recurse inside the
     // element (GraphicLine ids never key `nested_children`).
     if let Some(children) = spread.nested_children.get(self_id) {
@@ -1899,11 +1899,26 @@ fn model_text_paths_of<'a>(spread: &'a Spread, id: &str) -> &'a [idml_import::Te
 /// with no text and the story with no frame, so it discarded the story
 /// too, and nothing said so. `skip` names the ones the source element
 /// already carries (the patch lane passes those through verbatim).
+///
+/// An unset end bracket is written as the host path's length. The model
+/// reads `end_bracket: None` as "to the end of the path" (the renderer
+/// clamps to the path), but InDesign reads an ABSENT `EndBracket` as 0:
+/// the window is empty, the path shows no text and the story is overset
+/// (plugin-draw's InDesign round-trip, 2026-10-06). InDesign itself
+/// always writes it, as the arc length in points along the path's own
+/// geometry (measured, InDesign 20.0.1: a 200 pt line 200, a cubic
+/// 221.00078291246408, a 100 x 150 rectangle 500).
 fn write_text_paths(
     writer: &mut Writer<Cursor<Vec<u8>>>,
-    paths: &[idml_import::TextPath],
+    spread: &Spread,
+    host_id: &str,
     skip: Option<&std::collections::HashSet<String>>,
 ) -> Result<(), quick_xml::Error> {
+    let paths = model_text_paths_of(spread, host_id);
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let host_len = host_path_length(spread, host_id);
     for (i, tp) in paths.iter().enumerate() {
         if let (Some(id), Some(skip)) = (&tp.self_id, skip) {
             if skip.contains(id) {
@@ -1930,12 +1945,84 @@ fn write_text_paths(
         if let Some(b) = tp.start_bracket {
             attrs.push(("StartBracket", format_f32(b)));
         }
-        if let Some(b) = tp.end_bracket {
+        if let Some(b) = tp.end_bracket.or(host_len) {
             attrs.push(("EndBracket", format_f32(b)));
         }
         emit_empty_with_attrs(writer, "TextPath", &attrs)?;
     }
     Ok(())
+}
+
+/// The arc length, in points along its own (untransformed) geometry, of
+/// the first contour of the page item `id` — the path a `<TextPath>` on
+/// it follows. A rectangle with no anchors is its bounds box.
+fn host_path_length(spread: &Spread, id: &str) -> Option<f32> {
+    let is = |s: &Option<String>| s.as_deref() == Some(id);
+    let (anchors, starts, open, bounds, open_default) =
+        if let Some(r) = spread.rectangles.iter().find(|r| is(&r.self_id)) {
+            (&r.anchors, &r.subpath_starts, &r.subpath_open, r.bounds, false)
+        } else if let Some(p) = spread.polygons.iter().find(|p| is(&p.self_id)) {
+            (&p.anchors, &p.subpath_starts, &p.subpath_open, p.bounds, false)
+        } else if let Some(l) = spread.graphic_lines.iter().find(|l| is(&l.self_id)) {
+            (&l.anchors, &l.subpath_starts, &l.subpath_open, l.bounds, true)
+        } else {
+            return None;
+        };
+    if anchors.is_empty() {
+        let w = (bounds.right - bounds.left).abs() as f64;
+        let h = (bounds.bottom - bounds.top).abs() as f64;
+        let len = if open_default { w.hypot(h) } else { 2.0 * (w + h) };
+        return (len > 0.0).then_some(len as f32);
+    }
+    let end = starts.get(1).copied().unwrap_or(anchors.len()).min(anchors.len());
+    let contour = &anchors[..end];
+    let closed = !open.first().copied().unwrap_or(open_default);
+    let len = contour_length(contour, closed);
+    (len > 0.0).then_some(len as f32)
+}
+
+/// Arc length of a contour of cubic segments (`right` handle of one
+/// anchor to the `left` handle of the next), closed back to the first
+/// anchor when `closed`.
+fn contour_length(anchors: &[PathAnchor], closed: bool) -> f64 {
+    let n = anchors.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let segs = if closed { n } else { n - 1 };
+    (0..segs)
+        .map(|i| {
+            let a = &anchors[i];
+            let b = &anchors[(i + 1) % n];
+            cubic_length(a.anchor, a.right, b.left, b.anchor)
+        })
+        .sum()
+}
+
+/// Arc length of one cubic Bézier, by recursive subdivision until the
+/// control polygon and the chord agree.
+fn cubic_length(p0: (f32, f32), p1: (f32, f32), p2: (f32, f32), p3: (f32, f32)) -> f64 {
+    type P = (f64, f64);
+    fn d(a: P, b: P) -> f64 {
+        (b.0 - a.0).hypot(b.1 - a.1)
+    }
+    fn mid(a: P, b: P) -> P {
+        ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0)
+    }
+    fn go(p0: P, p1: P, p2: P, p3: P, depth: u32) -> f64 {
+        let chord = d(p0, p3);
+        let poly = d(p0, p1) + d(p1, p2) + d(p2, p3);
+        if depth >= 12 || poly - chord <= 1e-7 * poly.max(1.0) {
+            return (2.0 * chord + poly) / 3.0;
+        }
+        // de Casteljau at t = 0.5.
+        let (a, b, c) = (mid(p0, p1), mid(p1, p2), mid(p2, p3));
+        let (e, f) = (mid(a, b), mid(b, c));
+        let m = mid(e, f);
+        go(p0, a, e, m, depth + 1) + go(m, f, c, p3, depth + 1)
+    }
+    let f = |p: (f32, f32)| (p.0 as f64, p.1 as f64);
+    go(f(p0), f(p1), f(p2), f(p3), 0)
 }
 
 /// B-18: a container's composed (spread-space) model transform, looked
@@ -3667,7 +3754,8 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     if let Some(host_id) = item.self_id.as_deref() {
                         write_text_paths(
                             &mut writer,
-                            model_text_paths_of(spread, host_id),
+                            spread,
+                            host_id,
                             Some(&text_paths_in.remove(host_id).unwrap_or_default()),
                         )?;
                         if let Some(children) = spread.nested_children.get(host_id) {
