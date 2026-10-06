@@ -40,11 +40,20 @@ fn recorded_spread() -> String {
 
 #[test]
 fn the_recorded_indesign_label_decodes_to_the_value_we_wrote() {
-    assert!(KVP.contains("&lt;?AID d83d?&gt;&lt;?AID de00?&gt;"), "the recording carries the AID spelling");
+    assert!(
+        KVP.contains("&lt;?AID d83d?&gt;&lt;?AID de00?&gt;"),
+        "the recording carries the AID spelling"
+    );
     let (spread, _) = parse_spread_with_provenance(recorded_spread().as_bytes()).expect("parse");
     let labels = spread.labels.get("u100").expect("u100 labelled");
-    let (_, value) = labels.iter().find(|(k, _)| k == "x-paged:aid").expect("x-paged:aid");
-    assert!(!value.contains("<?AID"), "no AID escape survives the reader");
+    let (_, value) = labels
+        .iter()
+        .find(|(k, _)| k == "x-paged:aid")
+        .expect("x-paged:aid");
+    assert!(
+        !value.contains("<?AID"),
+        "no AID escape survives the reader"
+    );
     assert_eq!(value.as_str(), INJECTED.trim_end_matches('\n'));
     assert!(value.contains("Grüße – 日本語 😀"));
 }
@@ -52,7 +61,10 @@ fn the_recorded_indesign_label_decodes_to_the_value_we_wrote() {
 #[test]
 fn the_recorded_frame_name_is_read() {
     let (_, prov) = parse_spread_with_provenance(recorded_spread().as_bytes()).expect("parse");
-    assert_eq!(prov.item_names().get("u100").map(String::as_str), Some("card-text"));
+    assert_eq!(
+        prov.item_names().get("u100").map(String::as_str),
+        Some("card-text")
+    );
 }
 
 #[test]
@@ -74,7 +86,11 @@ fn names_on_all_six_kinds_groups_included_and_unnamed_items_skipped() {
   </Spread>
 </idPkg:Spread>"#;
     let (_, prov) = parse_spread_with_provenance(xml.as_bytes()).expect("parse");
-    let mut names: Vec<_> = prov.item_names().iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut names: Vec<_> = prov
+        .item_names()
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     names.sort();
     assert_eq!(
         names,
@@ -89,7 +105,6 @@ fn names_on_all_six_kinds_groups_included_and_unnamed_items_skipped() {
     );
 }
 
-#[cfg(feature = "item-names")]
 #[test]
 fn the_model_carries_the_names() {
     let (spread, prov) = parse_spread_with_provenance(recorded_spread().as_bytes()).expect("parse");
@@ -101,7 +116,10 @@ fn aid_decoding_edges() {
     assert_eq!(decode_aid_escapes("plain"), "plain");
     assert_eq!(decode_aid_escapes("a <?AID d83d?><?AID de00?> b"), "a 😀 b");
     // Two characters back to back, and a BMP code unit.
-    assert_eq!(decode_aid_escapes("<?AID d83d?><?AID de00?><?AID d83c?><?AID df89?><?AID 00e9?>"), "😀🎉é");
+    assert_eq!(
+        decode_aid_escapes("<?AID d83d?><?AID de00?><?AID d83c?><?AID df89?><?AID 00e9?>"),
+        "😀🎉é"
+    );
     // A lone surrogate is kept verbatim rather than lost.
     assert_eq!(decode_aid_escapes("x<?AID d83d?>y"), "x<?AID d83d?>y");
     // Not an escape: left alone.

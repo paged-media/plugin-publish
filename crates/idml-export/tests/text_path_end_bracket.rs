@@ -108,16 +108,27 @@ fn an_unset_end_bracket_is_the_path_length() {
     let mut doc = pkg::open(&src);
     {
         let s = &mut doc.spreads[0].spread;
-        let line = s.graphic_lines.iter_mut().find(|l| l.self_id.as_deref() == Some("line")).unwrap();
+        let line = s
+            .graphic_lines
+            .iter_mut()
+            .find(|l| l.self_id.as_deref() == Some("line"))
+            .unwrap();
         line.text_paths = vec![text_path("tpline", Some(10.0), None)];
-        let curve = s.graphic_lines.iter_mut().find(|l| l.self_id.as_deref() == Some("curve")).unwrap();
+        let curve = s
+            .graphic_lines
+            .iter_mut()
+            .find(|l| l.self_id.as_deref() == Some("curve"))
+            .unwrap();
         curve.text_paths = vec![text_path("tpcurve", None, None)];
         s.rectangles[0].text_paths = vec![text_path("tprect", None, None)];
     }
     let out = write_idml(&doc, &src).expect("write");
     let xml = pkg::entry(&out, "Spreads/Spread_s1.xml").expect("spread");
     let line = text_path_tag(&xml, "tpline");
-    assert!(line.contains(r#"StartBracket="10" EndBracket="200""#), "{line}");
+    assert!(
+        line.contains(r#"StartBracket="10" EndBracket="200""#),
+        "{line}"
+    );
     let curve = text_path_tag(&xml, "tpcurve");
     // The exact arc length is 221.0026; InDesign's own estimate is
     // 0.0018 pt shorter. Within a hundredth of a point either way.

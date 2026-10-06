@@ -92,7 +92,18 @@ fn ir_maps_to_paged_ocf_with_editable_text_and_images() {
 
     // --- the native model part is what the load path actually uses ---
     let pgm = zip_entry(&ocf, paged_store::DOCUMENT_PGM_PATH).expect("pgm part present");
-    let doc = paged_store::from_bytes(&pgm)
+    // Images ride as blob parts beside the model part (pgm v4), so the
+    // model is read back with the container's blobs.
+    let blobs: std::collections::HashMap<String, Vec<u8>> = {
+        let zip = zip::ZipArchive::new(std::io::Cursor::new(&ocf)).unwrap();
+        zip.file_names()
+            .filter_map(|n| {
+                let name = paged_store::blob_name_of(n)?.to_string();
+                Some((name, zip_entry(&ocf, n)?))
+            })
+            .collect()
+    };
+    let doc = paged_store::from_parts(&pgm, blobs)
         .expect("pgm decodes — if this is None the pinned core rev drifted");
 
     // Two pages → two spreads, each one page.

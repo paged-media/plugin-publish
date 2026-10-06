@@ -80,7 +80,6 @@ pub mod based_on;
 pub mod cell_insets;
 pub mod dangling;
 mod document_labels;
-mod text_variables;
 mod effects;
 mod emit;
 pub mod face;
@@ -100,6 +99,7 @@ pub mod row_attrs;
 mod style_attrs;
 pub mod table_regions;
 pub mod text_frame_prefs;
+mod text_variables;
 pub mod text_wrap;
 pub mod transparency;
 

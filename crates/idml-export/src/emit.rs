@@ -134,7 +134,10 @@ pub(crate) fn story_part(
     write_paragraphs(&mut writer, &story.paragraphs, anchors, host_width)?;
     writer.write_event(Event::End(BytesEnd::new("Story")))?;
     writer.write_event(Event::End(BytesEnd::new("idPkg:Story")))?;
-    Ok(assign_instance_ids(writer.into_inner().into_inner(), self_id))
+    Ok(assign_instance_ids(
+        writer.into_inner().into_inner(),
+        self_id,
+    ))
 }
 
 pub(crate) const NO_CHARACTER_STYLE: &str = "CharacterStyle/$ID/[No character style]";

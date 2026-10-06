@@ -598,10 +598,8 @@ impl SpreadProvenance {
     }
 
     /// The IDML `Name` of each named page item, by `Self` (ADR 131).
-    /// InDesign's unnamed spelling `$ID/` is not a name. With the
-    /// `item-names` feature the same map is also the model's
-    /// `Spread::item_names`; this accessor serves it against a core rev
-    /// whose model does not carry that field yet.
+    /// InDesign's unnamed spelling `$ID/` is not a name. The same map is
+    /// the model's `Spread::item_names`.
     pub fn item_names(&self) -> &std::collections::HashMap<String, String> {
         &self.item_names
     }
@@ -619,10 +617,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
 
     let mut provenance = SpreadProvenance::default();
     let mut out = Spread::default();
-    // Page-item `Name`s by `Self` (ADR 131). Lands in the model's
-    // `Spread::item_names` with the `item-names` feature — the field exists
-    // from the core rev that carries the address grammar on.
-    let mut item_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Page-item `Name`s by `Self` (ADR 131), the model's
+    // `Spread::item_names` (core protocol 71 on).
+    let mut item_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     // Stack of <Group> ItemTransforms encountered, outermost
     // first. When a frame appears inside one or more groups, its
     // effective spread-space transform is the composition of
@@ -2745,10 +2743,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
         }
         buf.clear();
     }
-    #[cfg(feature = "item-names")]
-    {
-        out.item_names = item_names.clone();
-    }
+    out.item_names = item_names.clone();
     provenance.item_names = item_names;
     Ok((out, provenance))
 }

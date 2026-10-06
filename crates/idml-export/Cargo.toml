@@ -10,11 +10,6 @@ description = "Export re-serialization (save-back). Carry-through writer: copies
 [lints]
 workspace = true
 
-[features]
-# Write page-item `Name` for new and renamed items from the model's
-# `Spread::item_names` (see idml-import's `item-names`).
-item-names = ["idml-import/item-names"]
-
 [dependencies]
 base64 = { workspace = true }
 idml-import = { path = "../idml-import" }

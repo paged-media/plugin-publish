@@ -90,7 +90,10 @@ fn check(at: usize) {
         "the definition, in InDesign's spelling:\n{dm}"
     );
     // InDesign's order: definitions before the layers and spreads.
-    assert!(pkg::pos(&dm, "<TextVariable ") < pkg::pos(&dm, "<Layer "), "{dm}");
+    assert!(
+        pkg::pos(&dm, "<TextVariable ") < pkg::pos(&dm, "<Layer "),
+        "{dm}"
+    );
 
     let story = pkg::entry(&out, "Stories/Story_st1.xml").expect("story");
     assert!(

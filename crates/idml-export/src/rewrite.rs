@@ -1377,21 +1377,17 @@ pub(crate) fn write_item_label(
 
 /// ADR 131 — a new item's IDML `Name`, from the model's
 /// `Spread::item_names` (written right after `Self`, where InDesign puts it).
-#[cfg(feature = "item-names")]
 fn push_item_name(attrs: &mut Vec<(&str, String)>, spread: &Spread, self_id: &str) {
     if let Some(name) = spread.item_names.get(self_id) {
         attrs.push(("Name", name.clone()));
     }
 }
-#[cfg(not(feature = "item-names"))]
-fn push_item_name(_attrs: &mut Vec<(&str, String)>, _spread: &Spread, _self_id: &str) {}
 
 /// ADR 131 — a source item the model RENAMED gets its new `Name`; one
 /// whose name is unchanged keeps its source bytes. Only a name the model
 /// carries is written: the model cannot spell "cleared" (an absent entry
 /// is also what a document saved before names were modelled reads back
 /// as), so a source name with no model entry passes through.
-#[cfg(feature = "item-names")]
 fn patch_item_name(
     start: BytesStart<'static>,
     spread: &Spread,
@@ -1411,13 +1407,6 @@ fn patch_item_name(
         |k, _| (k == b"Name").then(|| Patch::Set(name.clone())),
         &[("Name", model.clone())],
     )
-}
-#[cfg(not(feature = "item-names"))]
-fn patch_item_name(
-    start: BytesStart<'static>,
-    _spread: &Spread,
-) -> Result<BytesStart<'static>, quick_xml::Error> {
-    Ok(start)
 }
 
 /// Serialise an inserted `<TextFrame>`. The model classification is
@@ -1960,21 +1949,47 @@ fn host_path_length(spread: &Spread, id: &str) -> Option<f32> {
     let is = |s: &Option<String>| s.as_deref() == Some(id);
     let (anchors, starts, open, bounds, open_default) =
         if let Some(r) = spread.rectangles.iter().find(|r| is(&r.self_id)) {
-            (&r.anchors, &r.subpath_starts, &r.subpath_open, r.bounds, false)
+            (
+                &r.anchors,
+                &r.subpath_starts,
+                &r.subpath_open,
+                r.bounds,
+                false,
+            )
         } else if let Some(p) = spread.polygons.iter().find(|p| is(&p.self_id)) {
-            (&p.anchors, &p.subpath_starts, &p.subpath_open, p.bounds, false)
+            (
+                &p.anchors,
+                &p.subpath_starts,
+                &p.subpath_open,
+                p.bounds,
+                false,
+            )
         } else if let Some(l) = spread.graphic_lines.iter().find(|l| is(&l.self_id)) {
-            (&l.anchors, &l.subpath_starts, &l.subpath_open, l.bounds, true)
+            (
+                &l.anchors,
+                &l.subpath_starts,
+                &l.subpath_open,
+                l.bounds,
+                true,
+            )
         } else {
             return None;
         };
     if anchors.is_empty() {
         let w = (bounds.right - bounds.left).abs() as f64;
         let h = (bounds.bottom - bounds.top).abs() as f64;
-        let len = if open_default { w.hypot(h) } else { 2.0 * (w + h) };
+        let len = if open_default {
+            w.hypot(h)
+        } else {
+            2.0 * (w + h)
+        };
         return (len > 0.0).then_some(len as f32);
     }
-    let end = starts.get(1).copied().unwrap_or(anchors.len()).min(anchors.len());
+    let end = starts
+        .get(1)
+        .copied()
+        .unwrap_or(anchors.len())
+        .min(anchors.len());
     let contour = &anchors[..end];
     let closed = !open.first().copied().unwrap_or(open_default);
     let len = contour_length(contour, closed);
@@ -5366,16 +5381,15 @@ fn rewrite_story_part(
                         writer.write_event(Event::Start(start))?;
                     }
                     b"CharacterStyleRange" if table_depth == 0 => {
-                        (current_run, current_run_split, current_first) =
-                            resolve_run_skipping_new(
-                                &mut writer,
-                                &provenance,
-                                event_pos,
-                                story_para,
-                                &mut run_offset,
-                                &new_runs,
-                                open_sources == 0,
-                            )?;
+                        (current_run, current_run_split, current_first) = resolve_run_skipping_new(
+                            &mut writer,
+                            &provenance,
+                            event_pos,
+                            story_para,
+                            &mut run_offset,
+                            &new_runs,
+                            open_sources == 0,
+                        )?;
                         csr_open = true;
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
@@ -7831,7 +7845,6 @@ mod tests {
 
     /// ADR 131 — a renamed SOURCE item gets its new `Name`; an inserted
     /// item gets its `Name`; an unchanged one keeps its bytes.
-    #[cfg(feature = "item-names")]
     #[test]
     fn item_names_are_written_for_renamed_and_new_items() {
         const XML: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

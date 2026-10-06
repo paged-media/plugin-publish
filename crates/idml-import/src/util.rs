@@ -100,8 +100,14 @@ pub(crate) fn label_value(e: &quick_xml::events::BytesStart) -> Option<String> {
 
 /// The page-item kinds whose IDML `Name` is recorded (ADR 131: the six
 /// `ElementId` page-item kinds, groups included).
-pub(crate) const NAMED_ITEM_KINDS: [&[u8]; 6] =
-    [b"TextFrame", b"Rectangle", b"Oval", b"Polygon", b"GraphicLine", b"Group"];
+pub(crate) const NAMED_ITEM_KINDS: [&[u8]; 6] = [
+    b"TextFrame",
+    b"Rectangle",
+    b"Oval",
+    b"Polygon",
+    b"GraphicLine",
+    b"Group",
+];
 
 /// Record `e`'s IDML `Name` under its `Self` when `e` is a named page
 /// item. InDesign writes `Name="$ID/"` for an item nobody named; that, and

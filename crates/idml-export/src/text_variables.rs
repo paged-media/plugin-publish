@@ -218,7 +218,9 @@ fn insertion_point(original: &[u8]) -> Result<(u64, Side), quick_xml::Error> {
         match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
             Event::Start(e) => {
-                if depth == 1 && before_first.is_none() && AFTER_VARIABLES.contains(&e.name().as_ref())
+                if depth == 1
+                    && before_first.is_none()
+                    && AFTER_VARIABLES.contains(&e.name().as_ref())
                 {
                     before_first = Some(pos);
                 }
@@ -228,8 +230,7 @@ fn insertion_point(original: &[u8]) -> Result<(u64, Side), quick_xml::Error> {
                 if depth == 1 {
                     if e.name().as_ref() == b"TextVariable" {
                         after_last = Some(reader.buffer_position());
-                    } else if before_first.is_none()
-                        && AFTER_VARIABLES.contains(&e.name().as_ref())
+                    } else if before_first.is_none() && AFTER_VARIABLES.contains(&e.name().as_ref())
                     {
                         before_first = Some(pos);
                     }
@@ -264,9 +265,7 @@ fn preference_element(variable_type: &str) -> Option<&'static str> {
         "LastPageNumberType" => "PageNumberVariablePreference",
         "ChapterNumberType" => "ChapterNumberVariablePreference",
         "FileNameType" => "FileNameVariablePreference",
-        "CreationDateType" | "ModificationDateType" | "OutputDateType" => {
-            "DateVariablePreference"
-        }
+        "CreationDateType" | "ModificationDateType" | "OutputDateType" => "DateVariablePreference",
         _ => return None,
     })
 }
@@ -314,10 +313,7 @@ pub(crate) fn write_variable(out: &mut W, v: &TextVariable) -> Result<(), quick_
                 "ChangeCase",
                 v.change_case.clone().unwrap_or_else(|| "None".to_string()),
             ));
-            attrs.push((
-                "DeleteEndPunctuation",
-                v.delete_end_punctuation.to_string(),
-            ));
+            attrs.push(("DeleteEndPunctuation", v.delete_end_punctuation.to_string()));
         }
         "PageNumberVariablePreference" => {
             attrs.push((
