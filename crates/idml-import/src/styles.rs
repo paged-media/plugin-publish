@@ -950,6 +950,10 @@ fn parse_cell_style(e: &quick_xml::events::BytesStart) -> Option<CellStyleDef> {
         left_edge_stroke_weight: attr(e, b"LeftEdgeStrokeWeight").and_then(|s| s.parse().ok()),
         right_edge_stroke_color: normalize(attr(e, b"RightEdgeStrokeColor")),
         right_edge_stroke_weight: attr(e, b"RightEdgeStrokeWeight").and_then(|s| s.parse().ok()),
+        top_edge_stroke_type: attr(e, b"TopEdgeStrokeType"),
+        bottom_edge_stroke_type: attr(e, b"BottomEdgeStrokeType"),
+        left_edge_stroke_type: attr(e, b"LeftEdgeStrokeType"),
+        right_edge_stroke_type: attr(e, b"RightEdgeStrokeType"),
     })
 }
 

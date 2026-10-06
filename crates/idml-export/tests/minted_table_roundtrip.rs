@@ -55,6 +55,8 @@ fn table() -> Table {
     }
     cells[0].column_span = 2; // header cell spanning two columns
     cells[5].paragraphs.clear(); // an EMPTY cell
+                                 // A double rule under the header (PowerPoint's `cmpd="dbl"`).
+    cells[1].top_edge_stroke_type = Some("StrokeStyle/$ID/ThickThick".into());
     Table {
         self_id: Some("u7".into()),
         header_row_count: 1,
@@ -171,6 +173,10 @@ fn a_table_in_a_minted_story_is_written_and_reads_back() {
     assert_eq!(t.cells[5].paragraphs.len(), 1);
     assert!(t.cells[5].paragraphs[0].runs.is_empty());
     assert_eq!(t.cells[1].text_top_inset, 4.0);
+    assert_eq!(
+        t.cells[1].top_edge_stroke_type.as_deref(),
+        Some("StrokeStyle/$ID/ThickThick")
+    );
     assert_eq!(t.columns[1].single_column_width, Some(61.0));
     assert_eq!(t.rows[1].single_row_height, Some(18.5));
     assert_eq!(story.story.paragraphs[2].runs[0].text, "After");
