@@ -310,6 +310,7 @@ struct CommonAttrs {
     fill_tint: Option<f32>,
     gradient_fill_angle: Option<f32>,
     gradient_fill_length: Option<f32>,
+    gradient_fill_start: Option<[f32; 2]>,
     gradient_stroke_angle: Option<f32>,
     gradient_stroke_length: Option<f32>,
     stroke_color: Option<String>,
@@ -368,6 +369,13 @@ fn read_common_attrs(e: &quick_xml::events::BytesStart) -> CommonAttrs {
         fill_tint: parse_tint_attr(e, b"FillTint"),
         gradient_fill_angle: attr(e, b"GradientFillAngle").and_then(|s| s.parse().ok()),
         gradient_fill_length: attr(e, b"GradientFillLength").and_then(|s| s.parse().ok()),
+        gradient_fill_start: attr(e, b"GradientFillStart").and_then(|s| {
+            let v: Vec<f32> = s
+                .split_whitespace()
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            (v.len() == 2).then(|| [v[0], v[1]])
+        }),
         gradient_stroke_angle: attr(e, b"GradientStrokeAngle").and_then(|s| s.parse().ok()),
         gradient_stroke_length: attr(e, b"GradientStrokeLength").and_then(|s| s.parse().ok()),
         stroke_color: attr(e, b"StrokeColor"),
@@ -1149,6 +1157,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         item_layer: common.item_layer,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
+                        gradient_fill_start: common.gradient_fill_start,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
                         applied_toc_style: attr(&e, b"AppliedTOCStyle"),
@@ -1250,6 +1259,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corners: corner.corners,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
+                        gradient_fill_start: common.gradient_fill_start,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
                         overprint_fill: common.overprint_fill,
@@ -1348,6 +1358,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         item_layer: common.item_layer,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
+                        gradient_fill_start: common.gradient_fill_start,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
                         overprint_fill: common.overprint_fill,
@@ -2482,6 +2493,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         item_layer: common.item_layer,
                         gradient_fill_angle: common.gradient_fill_angle,
                         gradient_fill_length: common.gradient_fill_length,
+                        gradient_fill_start: common.gradient_fill_start,
                         gradient_stroke_angle: common.gradient_stroke_angle,
                         gradient_stroke_length: common.gradient_stroke_length,
                         overprint_fill: common.overprint_fill,
@@ -4031,6 +4043,7 @@ mod tests {
             <Rectangle Self="r1" GeometricBounds="0 0 100 200"
                        FillColor="Gradient/Sky" StrokeColor="Gradient/Sun"
                        GradientFillAngle="45" GradientFillLength="120"
+                       GradientFillStart="12.5 -4"
                        GradientStrokeAngle="-30" GradientStrokeLength="80"/>
           </Spread>
         </idPkg:Spread>"#;
@@ -4038,6 +4051,7 @@ mod tests {
         let r = &s.rectangles[0];
         assert_eq!(r.gradient_fill_angle, Some(45.0));
         assert_eq!(r.gradient_fill_length, Some(120.0));
+        assert_eq!(r.gradient_fill_start, Some([12.5, -4.0]));
         assert_eq!(r.gradient_stroke_angle, Some(-30.0));
         assert_eq!(r.gradient_stroke_length, Some(80.0));
     }

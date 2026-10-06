@@ -999,6 +999,9 @@ fn write_contour_path_geometry(
 struct GradientGeom {
     fill_angle: Option<f32>,
     fill_length: Option<f32>,
+    /// `GradientFillStart` (`"x y"`, inner coordinates) — where a radial
+    /// gradient is centred.
+    fill_start: Option<[f32; 2]>,
     stroke_angle: Option<f32>,
     stroke_length: Option<f32>,
 }
@@ -1020,6 +1023,9 @@ impl GradientGeom {
                 attrs.push((k, format_f32(v)));
             }
         }
+        if let Some(p) = self.fill_start {
+            attrs.push(("GradientFillStart", format_point(p)));
+        }
     }
 }
 
@@ -1031,18 +1037,42 @@ fn patch_gradient_geometry(
     geom: GradientGeom,
 ) -> Result<BytesStart<'static>, quick_xml::Error> {
     let keys = geom.keys();
-    let extras: Vec<(&str, String)> = keys
+    let mut extras: Vec<(&str, String)> = keys
         .iter()
         .filter_map(|(k, v)| v.map(|v| (*k, format_f32(v))))
         .collect();
+    if let Some(p) = geom.fill_start {
+        extras.push(("GradientFillStart", format_point(p)));
+    }
     patch_start(
         start,
         |k, raw| {
+            if k == b"GradientFillStart" {
+                let p = geom.fill_start?;
+                // An equal point keeps the source's spelling.
+                let same = std::str::from_utf8(raw).ok().is_some_and(|r| {
+                    let v: Vec<f32> = r
+                        .split_whitespace()
+                        .filter_map(|t| t.parse().ok())
+                        .collect();
+                    v.len() == 2 && (v[0] - p[0]).abs() < 1e-4 && (v[1] - p[1]).abs() < 1e-4
+                });
+                return Some(if same {
+                    Patch::Keep
+                } else {
+                    Patch::Set(format_point(p))
+                });
+            }
             let (_, v) = keys.iter().find(|(key, _)| key.as_bytes() == k)?;
             v.map(|v| preserving_f32_patch(std::str::from_utf8(raw).ok(), Some(v)))
         },
         &extras,
     )
+}
+
+/// An IDML point attribute: `"x y"`.
+fn format_point(p: [f32; 2]) -> String {
+    format!("{} {}", format_f32(p[0]), format_f32(p[1]))
 }
 
 struct NewItemPaint<'a> {
@@ -1376,6 +1406,7 @@ fn write_new_text_frame(
         gradient: GradientGeom {
             fill_angle: f.gradient_fill_angle,
             fill_length: f.gradient_fill_length,
+            fill_start: f.gradient_fill_start,
             stroke_angle: f.gradient_stroke_angle,
             stroke_length: f.gradient_stroke_length,
         },
@@ -1956,6 +1987,7 @@ fn write_new_item(
                         gradient: GradientGeom {
                             fill_angle: rect.gradient_fill_angle,
                             fill_length: rect.gradient_fill_length,
+                            fill_start: rect.gradient_fill_start,
                             stroke_angle: rect.gradient_stroke_angle,
                             stroke_length: rect.gradient_stroke_length,
                         },
@@ -2000,6 +2032,7 @@ fn write_new_item(
                         gradient: GradientGeom {
                             fill_angle: o.gradient_fill_angle,
                             fill_length: o.gradient_fill_length,
+                            fill_start: o.gradient_fill_start,
                             ..GradientGeom::default()
                         },
                         end_cap: o.end_cap.as_deref(),
@@ -2038,6 +2071,7 @@ fn write_new_item(
                         gradient: GradientGeom {
                             fill_angle: p.gradient_fill_angle,
                             fill_length: p.gradient_fill_length,
+                            fill_start: p.gradient_fill_start,
                             ..GradientGeom::default()
                         },
                         end_cap: p.end_cap.as_deref(),
@@ -3886,6 +3920,7 @@ fn patch_spread_item(
                 GradientGeom {
                     fill_angle: frame.gradient_fill_angle,
                     fill_length: frame.gradient_fill_length,
+                    fill_start: frame.gradient_fill_start,
                     stroke_angle: frame.gradient_stroke_angle,
                     stroke_length: frame.gradient_stroke_length,
                 },
@@ -3914,6 +3949,7 @@ fn patch_spread_item(
                     gradient: GradientGeom {
                         fill_angle: r.gradient_fill_angle,
                         fill_length: r.gradient_fill_length,
+                        fill_start: r.gradient_fill_start,
                         stroke_angle: r.gradient_stroke_angle,
                         stroke_length: r.gradient_stroke_length,
                     },
@@ -3950,6 +3986,7 @@ fn patch_spread_item(
                     gradient: GradientGeom {
                         fill_angle: r.gradient_fill_angle,
                         fill_length: r.gradient_fill_length,
+                        fill_start: r.gradient_fill_start,
                         ..GradientGeom::default()
                     },
                     start_arrow: None,
@@ -3990,6 +4027,7 @@ fn patch_spread_item(
                     gradient: GradientGeom {
                         fill_angle: r.gradient_fill_angle,
                         fill_length: r.gradient_fill_length,
+                        fill_start: r.gradient_fill_start,
                         ..GradientGeom::default()
                     },
                     // C-62 — a pen path's line ends and cap.
@@ -6608,6 +6646,33 @@ mod tests {
             String::from_utf8_lossy(&out),
             String::from_utf8_lossy(GROUP_SPREAD)
         );
+    }
+
+    /// `GradientFillStart` — where a radial gradient is centred — is
+    /// written on both lanes and reads back; an equal point keeps the
+    /// source's spelling.
+    #[test]
+    fn gradient_start_is_written_and_reads_back() {
+        let mut spread = grouped();
+        spread.rectangles[0].gradient_fill_start = Some([10.0, 20.5]);
+        let mut minted = spread.rectangles[0].clone();
+        minted.self_id = Some("rg".to_string());
+        spread.rectangles.push(minted);
+        spread
+            .frames_in_order
+            .push(idml_import::FrameRef::Rectangle(2));
+        let out = rewrite_spread(GROUP_SPREAD, &spread).expect("rewrite");
+        let back = idml_import::parse_spread(&out).expect("parse");
+        for id in ["r1", "rg"] {
+            let r = back
+                .rectangles
+                .iter()
+                .find(|r| r.self_id.as_deref() == Some(id))
+                .expect(id);
+            assert_eq!(r.gradient_fill_start, Some([10.0, 20.5]), "{id}");
+        }
+        let again = rewrite_spread(&out, &back).expect("rewrite");
+        assert_eq!(again, out, "an unchanged start keeps its bytes");
     }
 
     /// THE PRIME INVARIANT. Every C-19 lane (group triage, the
