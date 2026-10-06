@@ -26,7 +26,10 @@ mod pkg;
 
 use idml_export::write_idml;
 
-fn geometry(open: bool, points: &[((f32, f32), (f32, f32), (f32, f32))]) -> String {
+/// `(left direction, anchor, right direction)`.
+type Point = ((f32, f32), (f32, f32), (f32, f32));
+
+fn geometry(open: bool, points: &[Point]) -> String {
     let pts: String = points
         .iter()
         .map(|(l, a, r)| {
