@@ -80,6 +80,7 @@ pub mod based_on;
 pub mod cell_insets;
 pub mod dangling;
 mod document_labels;
+mod text_variables;
 mod effects;
 mod emit;
 pub mod face;
@@ -875,6 +876,13 @@ pub(crate) fn write_package(
         })?;
         // The document's own labels (plugin state on no page item).
         new = document_labels::patch_document_labels(&new, &doc.designmap.labels).map_err(
+            |source| WriteError::Rewrite {
+                entry: DESIGNMAP_SRC.to_string(),
+                source,
+            },
+        )?;
+        // The text variable definitions (authored, changed, deleted).
+        new = text_variables::patch_text_variables(&new, &doc.designmap.text_variables).map_err(
             |source| WriteError::Rewrite {
                 entry: DESIGNMAP_SRC.to_string(),
                 source,

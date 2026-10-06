@@ -134,7 +134,7 @@ pub(crate) fn story_part(
     write_paragraphs(&mut writer, &story.paragraphs, anchors, host_width)?;
     writer.write_event(Event::End(BytesEnd::new("Story")))?;
     writer.write_event(Event::End(BytesEnd::new("idPkg:Story")))?;
-    Ok(writer.into_inner().into_inner())
+    Ok(assign_instance_ids(writer.into_inner().into_inner(), self_id))
 }
 
 pub(crate) const NO_CHARACTER_STYLE: &str = "CharacterStyle/$ID/[No character style]";
@@ -204,24 +204,7 @@ pub(crate) fn write_paragraphs(
         for (ri, r) in p.runs.iter().enumerate() {
             rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
             emit_applied_font(writer, &r.font)?;
-            if let Some(source) = &r.hyperlink_source {
-                rewrite::emit_start_with_attrs(
-                    writer,
-                    "HyperlinkTextSource",
-                    &[
-                        ("Self", source.clone()),
-                        (
-                            "Name",
-                            source.rsplit('/').next().unwrap_or(source).to_string(),
-                        ),
-                        ("Hidden", "false".to_string()),
-                    ],
-                )?;
-                rewrite::write_run_content(writer, &r.text)?;
-                writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
-            } else {
-                rewrite::write_run_content(writer, &r.text)?;
-            }
+            write_run_body(writer, r, true)?;
             if mark_on_runs && ri == last_run {
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             }
@@ -1005,7 +988,98 @@ pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String
             out.push((k, v.to_string()));
         }
     }
+    // A text variable instance sits in a range of its own marked
+    // `PageNumberType="TextVariable"` — InDesign's own spelling.
+    if r.text_variable.is_some() {
+        out.push(("PageNumberType", "TextVariable".to_string()));
+    }
     out
+}
+
+/// The `Self` a `<TextVariableInstance>` minted by this writer carries
+/// until [`assign_instance_ids`] gives it a real one (an instance needs
+/// a document-unique id, and the writers that emit one do not know the
+/// story they are writing).
+pub(crate) const NEW_INSTANCE_SELF: &str = "paged-new-text-variable-instance";
+
+/// A run's inline body: a text variable instance (a run tagged
+/// `text_variable`), a hyperlink source around the text (a run tagged
+/// `hyperlink_source`, when `wrap_source`), or the plain text.
+pub(crate) fn write_run_body(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    r: &CharacterRun,
+    wrap_source: bool,
+) -> Result<(), quick_xml::Error> {
+    if let Some(variable) = &r.text_variable {
+        // InDesign writes `Name` as the variable's name, which its own
+        // ids spell after the `dTextVariablen` prefix.
+        let name = variable
+            .strip_prefix("dTextVariablen")
+            .or_else(|| variable.rsplit('/').next())
+            .unwrap_or(variable);
+        return rewrite::emit_empty_with_attrs(
+            writer,
+            "TextVariableInstance",
+            &[
+                ("Self", NEW_INSTANCE_SELF.to_string()),
+                ("Name", name.to_string()),
+                ("ResultText", r.text.clone()),
+                ("AssociatedTextVariable", variable.clone()),
+            ],
+        );
+    }
+    match (&r.hyperlink_source, wrap_source) {
+        (Some(source), true) => {
+            rewrite::emit_start_with_attrs(
+                writer,
+                "HyperlinkTextSource",
+                &[
+                    ("Self", source.clone()),
+                    (
+                        "Name",
+                        source.rsplit('/').next().unwrap_or(source).to_string(),
+                    ),
+                    ("Hidden", "false".to_string()),
+                ],
+            )?;
+            rewrite::write_run_content(writer, &r.text)?;
+            writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
+        }
+        _ => rewrite::write_run_content(writer, &r.text)?,
+    }
+    Ok(())
+}
+
+/// Give every `<TextVariableInstance>` this writer minted (see
+/// [`NEW_INSTANCE_SELF`]) a `Self` unique in the document: the story's
+/// own id plus `tvi<n>`, skipping any id the part already uses.
+pub(crate) fn assign_instance_ids(part: Vec<u8>, story_id: &str) -> Vec<u8> {
+    let marker = format!("Self=\"{NEW_INSTANCE_SELF}\"");
+    let text = match String::from_utf8(part) {
+        Ok(t) => t,
+        Err(e) => return e.into_bytes(),
+    };
+    if !text.contains(&marker) {
+        return text.into_bytes();
+    }
+    let prefix = sanitize_id(story_id);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    let mut n = 0usize;
+    while let Some(at) = rest.find(&marker) {
+        out.push_str(&rest[..at]);
+        let id = loop {
+            let candidate = format!("{prefix}tvi{n}");
+            n += 1;
+            if !text.contains(&format!("Self=\"{candidate}\"")) {
+                break candidate;
+            }
+        };
+        out.push_str(&format!("Self=\"{id}\""));
+        rest = &rest[at + marker.len()..];
+    }
+    out.push_str(rest);
+    out.into_bytes()
 }
 
 /// Serialise a full `Spreads/Spread_*.xml` part from the in-memory

@@ -4908,6 +4908,103 @@ pub fn rewrite_story_in_frame(
     story: &Story,
     host_width: Option<f32>,
 ) -> Result<Vec<u8>, quick_xml::Error> {
+    let out = rewrite_story_part(original, story, host_width)?;
+    Ok(match story_self_id(original) {
+        Some(id) => crate::emit::assign_instance_ids(out, &id),
+        None => out,
+    })
+}
+
+/// The `Self` of a story part's `<Story>`.
+fn story_self_id(original: &[u8]) -> Option<String> {
+    let mut r = Reader::from_reader(original);
+    let mut b = Vec::new();
+    loop {
+        match r.read_event_into(&mut b).ok()? {
+            Event::Eof => return None,
+            Event::Start(ref e) | Event::Empty(ref e) if e.name().as_ref() == b"Story" => {
+                return attr_value(e, b"Self");
+            }
+            _ => {}
+        }
+        b.clear();
+    }
+}
+
+/// Text variable instances the MODEL added since the part was written
+/// (`InsertField` with a text variable), as `(paragraph address, run
+/// index)` over the story-level paragraphs.
+///
+/// The parser makes each `<TextVariableInstance>` a run of its own, so a
+/// model run tagged `text_variable` is either one of the source's
+/// instances or new. Walking a paragraph's variable runs against the
+/// source paragraph's, in order, the ones that do not line up are new.
+/// They have no source element: the writer emits each as a range of its
+/// own (see [`resolve_run_skipping_new`] and [`split_tail`]), and the
+/// source ranges around them keep resolving to the right model runs.
+fn new_variable_runs(model: &[Paragraph], source: &[Paragraph]) -> NewRuns {
+    let mut out = NewRuns::new();
+    for (i, mp) in model.iter().enumerate() {
+        let src: Vec<&str> = source
+            .get(i)
+            .map(|sp| {
+                sp.runs
+                    .iter()
+                    .filter_map(|r| r.text_variable.as_deref())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut k = 0usize;
+        for (ri, r) in mp.runs.iter().enumerate() {
+            let Some(id) = r.text_variable.as_deref() else {
+                continue;
+            };
+            if src.get(k) == Some(&id) {
+                k += 1;
+            } else {
+                out.insert((mp as *const Paragraph as usize, ri));
+            }
+        }
+    }
+    out
+}
+
+type NewRuns = std::collections::HashSet<(usize, usize)>;
+
+fn is_new_run(new_runs: &NewRuns, para: Option<&Paragraph>, i: usize) -> bool {
+    para.is_some_and(|p| new_runs.contains(&(p as *const Paragraph as usize, i)))
+}
+
+/// [`resolve_run`], first writing every NEW model run (see
+/// [`new_variable_runs`]) that sits before the range's own run as a
+/// range of its own, and stepping `offset` past it.
+#[allow(clippy::too_many_arguments)]
+fn resolve_run_skipping_new<'a>(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    provenance: &idml_import::StoryProvenance,
+    pos: u64,
+    para: Option<&'a Paragraph>,
+    offset: &mut usize,
+    new_runs: &NewRuns,
+    wrap: bool,
+) -> Result<(Option<&'a CharacterRun>, bool, Option<usize>), quick_xml::Error> {
+    loop {
+        let resolved = resolve_run(provenance, pos, para, *offset);
+        match (resolved.2, para) {
+            (Some(i), Some(p)) if is_new_run(new_runs, para, i) => {
+                write_split_run(writer, &p.runs[i], wrap, false)?;
+                *offset += 1;
+            }
+            _ => return Ok(resolved),
+        }
+    }
+}
+
+fn rewrite_story_part(
+    original: &[u8],
+    story: &Story,
+    host_width: Option<f32>,
+) -> Result<Vec<u8>, quick_xml::Error> {
     // Tab stops and bullet characters are `<Properties>` children, not
     // range attributes; they are spelled first, and the provenance below
     // is derived from the spelled bytes. The pass adds, replaces and
@@ -4915,10 +5012,14 @@ pub fn rewrite_story_in_frame(
     // runs either way.
     let spelled = crate::paragraph_props::spell(original, story)?;
     let original: &[u8] = &spelled;
-    let (provenance, provenance_ok) = match idml_import::parse_story_with_provenance(original) {
-        Ok((_, p)) => (p, true),
-        Err(_) => (Default::default(), false),
-    };
+    let (provenance, provenance_ok, new_runs) =
+        match idml_import::parse_story_with_provenance(original) {
+            Ok((parsed, p)) => {
+                let new_runs = new_variable_runs(&story.paragraphs, &parsed.paragraphs);
+                (p, true, new_runs)
+            }
+            Err(_) => (Default::default(), false, NewRuns::new()),
+        };
     // How many story-level `<ParagraphStyleRange>`s the source carries —
     // so the LAST one is recognisable when the model appends paragraphs
     // after it (see the `</ParagraphStyleRange>` arm).
@@ -5178,7 +5279,15 @@ pub fn rewrite_story_in_frame(
                     }
                     b"CharacterStyleRange" if table_depth == 0 => {
                         (current_run, current_run_split, current_first) =
-                            resolve_run(&provenance, event_pos, story_para, run_offset);
+                            resolve_run_skipping_new(
+                                &mut writer,
+                                &provenance,
+                                event_pos,
+                                story_para,
+                                &mut run_offset,
+                                &new_runs,
+                                open_sources == 0,
+                            )?;
                         csr_open = true;
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
@@ -5434,7 +5543,13 @@ pub fn rewrite_story_in_frame(
                             body.text.clone()
                         };
                         let extras = if body.active && !body.foreign && !current_run_split {
-                            split_tail(scope, current_first, &source_text, prev_ended_with_br)
+                            split_tail(
+                                scope,
+                                current_first,
+                                &source_text,
+                                prev_ended_with_br,
+                                &new_runs,
+                            )
                         } else {
                             Vec::new()
                         };
@@ -5947,6 +6062,7 @@ fn split_tail(
     first: Option<usize>,
     source_text: &str,
     prev_br: bool,
+    new_runs: &NewRuns,
 ) -> Vec<usize> {
     let (Some(para), Some(first)) = (para, first) else {
         return Vec::new();
@@ -5959,22 +6075,37 @@ fn split_tail(
     } else {
         head.text.as_str()
     };
-    if head_text == source_text || !source_text.starts_with(head_text) {
+    if !source_text.starts_with(head_text) {
         return Vec::new();
     }
+    // A NEW text variable instance (see [`new_variable_runs`]) adds no
+    // source text: it is a piece of its own wherever it falls — inside
+    // the range (an insert that split it) or right after it.
+    let is_new = |i: usize| new_runs.contains(&(para as *const Paragraph as usize, i));
     let mut acc = head_text.to_string();
+    let mut matched = acc == source_text;
     let mut extras = Vec::new();
     for (i, r) in para.runs.iter().enumerate().skip(first + 1) {
+        if is_new(i) {
+            extras.push(i);
+            continue;
+        }
+        if matched {
+            break;
+        }
         acc.push_str(&r.text);
         extras.push(i);
         if acc == source_text {
-            return extras;
-        }
-        if !source_text.starts_with(&acc) {
-            break;
+            matched = true;
+        } else if !source_text.starts_with(&acc) {
+            return Vec::new();
         }
     }
-    Vec::new()
+    if matched {
+        extras
+    } else {
+        Vec::new()
+    }
 }
 
 /// One `<CharacterStyleRange>` for a split-off model run (see
@@ -5991,24 +6122,7 @@ fn write_split_run(
         &crate::emit::character_run_attrs(r),
     )?;
     crate::emit::emit_applied_font(writer, &r.font)?;
-    match (&r.hyperlink_source, wrap_source) {
-        (Some(src), true) => {
-            emit_start_with_attrs(
-                writer,
-                "HyperlinkTextSource",
-                &[
-                    ("Self", src.clone()),
-                    ("Name", src.rsplit('/').next().unwrap_or(src).to_string()),
-                    ("Hidden", "false".to_string()),
-                ],
-            )?;
-            write_run_content(writer, &r.text)?;
-            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
-                "HyperlinkTextSource",
-            )))?;
-        }
-        _ => write_run_content(writer, &r.text)?,
-    }
+    crate::emit::write_run_body(writer, r, wrap_source)?;
     if mark {
         writer.write_event(Event::Empty(BytesStart::new("Br")))?;
     }
