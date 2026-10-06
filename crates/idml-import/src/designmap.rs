@@ -72,8 +72,38 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // carried, resolved after the whole file is read.
     let mut hyperlink_keys: Vec<Option<String>> = Vec::new();
 
+    // Open element names, root first — only to recognise the
+    // DOCUMENT's own `<Properties><Label>` (an element nested anywhere
+    // else in the designmap labels that element, not the document).
+    let mut open_path: Vec<Vec<u8>> = Vec::new();
+
     loop {
         let ev = reader.read_event_into(&mut buf)?;
+        match &ev {
+            Event::Start(e) => open_path.push(e.name().as_ref().to_vec()),
+            Event::End(_) => {
+                open_path.pop();
+            }
+            Event::Empty(e)
+                if e.name().as_ref() == b"KeyValuePair"
+                    && open_path.len() == 3
+                    && open_path[0] == b"Document"
+                    && open_path[1] == b"Properties"
+                    && open_path[2] == b"Label" =>
+            {
+                let key = crate::util::attr_unescaped(e, b"Key");
+                let value = crate::util::attr_unescaped(e, b"Value");
+                if let (Some(key), Some(value)) = (key, value) {
+                    // One entry per key, last write wins — the
+                    // page-item label rule.
+                    match out.labels.iter_mut().find(|(k, _)| *k == key) {
+                        Some(slot) => slot.1 = value,
+                        None => out.labels.push((key, value)),
+                    }
+                }
+            }
+            _ => {}
+        }
         if let Event::End(ref e) = ev {
             match e.name().as_ref() {
                 b"Layer" => {
