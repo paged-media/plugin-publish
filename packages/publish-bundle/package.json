@@ -16,15 +16,15 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@paged-media/plugin-api": ">=0.2.43-canary.0",
-    "@paged-media/plugin-sdk": ">=0.2.43-canary.0"
+    "@paged-media/plugin-api": ">=0.2.44-canary.0",
+    "@paged-media/plugin-sdk": ">=0.2.44-canary.0"
   },
   "devDependencies": {
     "@types/node": "20.19.39",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
-    "@paged-media/plugin-api": "0.2.43-canary.0",
-    "@paged-media/plugin-sdk": "0.2.43-canary.0",
+    "@paged-media/plugin-api": "0.2.45-canary.0",
+    "@paged-media/plugin-sdk": "0.2.45-canary.0",
     "@paged-media/canvas-wasm": "0.70.0",
     "vitest": "^3.2.7"
   },
