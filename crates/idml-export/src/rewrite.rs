@@ -2027,7 +2027,7 @@ fn write_new_item(
                         nonprinting: o.nonprinting,
                         applied_object_style: o.applied_object_style.as_deref(),
                         item_layer: o.item_layer.as_deref(),
-                        drop_shadow: None,
+                        drop_shadow: o.drop_shadow.as_ref(),
                         effects: o.effects.as_ref(),
                         gradient: GradientGeom {
                             fill_angle: o.gradient_fill_angle,
@@ -2066,7 +2066,7 @@ fn write_new_item(
                         nonprinting: p.nonprinting,
                         applied_object_style: p.applied_object_style.as_deref(),
                         item_layer: p.item_layer.as_deref(),
-                        drop_shadow: None,
+                        drop_shadow: p.drop_shadow.as_ref(),
                         effects: p.effects.as_ref(),
                         gradient: GradientGeom {
                             fill_angle: p.gradient_fill_angle,
@@ -2126,7 +2126,7 @@ fn write_new_item(
                         nonprinting: l.nonprinting,
                         applied_object_style: l.applied_object_style.as_deref(),
                         item_layer: l.item_layer.as_deref(),
-                        drop_shadow: None,
+                        drop_shadow: l.drop_shadow.as_ref(),
                         effects: l.effects.as_ref(),
                         end_cap: l.end_cap.as_deref(),
                         style: NewItemStyle {

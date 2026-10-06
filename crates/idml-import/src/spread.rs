@@ -1460,9 +1460,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                         }
                                         CurrentFrameKind::Line(_)
                                         | CurrentFrameKind::Polygon(_) => {
-                                            // GraphicLine + Polygon have
-                                            // no shadow fields today;
-                                            // ignore.
+                                            // GraphicLine + Polygon keep
+                                            // one (object-level) shadow;
+                                            // a stroke-only one is not
+                                            // modelled for them.
                                         }
                                     }
                                 } else {
@@ -1476,11 +1477,14 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                         CurrentFrameKind::Oval(i) => {
                                             out.ovals[i].drop_shadow = Some(setting);
                                         }
-                                        CurrentFrameKind::Line(_)
-                                        | CurrentFrameKind::Polygon(_) => {
-                                            // GraphicLine + Polygon have
-                                            // no drop_shadow field today;
-                                            // ignore.
+                                        CurrentFrameKind::Polygon(i) => {
+                                            out.polygons[i].drop_shadow = Some(setting);
+                                        }
+                                        // A line has no fill: its
+                                        // object-level shadow is cast
+                                        // by the stroke.
+                                        CurrentFrameKind::Line(i) => {
+                                            out.graphic_lines[i].drop_shadow = Some(setting);
                                         }
                                     }
                                 }

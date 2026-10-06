@@ -105,7 +105,7 @@ fn owners_of(spread: &Spread) -> HashMap<String, Owner> {
             Owner {
                 opacity: p.opacity,
                 blend_mode: p.blend_mode.clone(),
-                drop_shadow: None,
+                drop_shadow: p.drop_shadow.clone(),
                 effects: p.effects.clone(),
             },
         );
@@ -116,7 +116,7 @@ fn owners_of(spread: &Spread) -> HashMap<String, Owner> {
             Owner {
                 opacity: None,
                 blend_mode: None,
-                drop_shadow: None,
+                drop_shadow: l.drop_shadow.clone(),
                 effects: l.effects.clone(),
             },
         );
