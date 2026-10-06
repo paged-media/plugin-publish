@@ -1013,8 +1013,6 @@ pub(crate) fn spread_part(
     dom_version: &str,
     layer: Option<&str>,
 ) -> Result<Vec<u8>, quick_xml::Error> {
-    let mut writer = new_part_writer()?;
-    open_pkg_root(&mut writer, "idPkg:Spread", dom_version)?;
     let mut attrs: Vec<(&str, String)> = Vec::new();
     if let Some(id) = &spread.self_id {
         attrs.push(("Self", id.clone()));
@@ -1034,7 +1032,51 @@ pub(crate) fn spread_part(
         "ItemTransform",
         rewrite::format_matrix(&spread.item_transform.unwrap_or(IDENTITY)),
     ));
-    rewrite::emit_start_with_attrs(&mut writer, "Spread", &attrs)?;
+    spread_like_part(spread, dom_version, layer, "Spread", &attrs)
+}
+
+/// Serialise a full `MasterSpreads/MasterSpread_*.xml` part for a master
+/// the source archive never carried (`CreateMaster`). InDesign spells a
+/// master's name three ways — `NamePrefix`, `BaseName` and the `Name`
+/// they compose — and this reader takes `Name`; a minted master's
+/// `Name` is its whole name, with `prefix` as its `NamePrefix`.
+pub(crate) fn master_spread_part(
+    master: &paged_scene::ParsedMasterSpread,
+    prefix: &str,
+    dom_version: &str,
+    layer: Option<&str>,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let spread = &master.spread;
+    let name = master.name.clone().unwrap_or_else(|| prefix.to_string());
+    let attrs: Vec<(&str, String)> = vec![
+        ("Self", master.self_id.clone()),
+        ("Name", name.clone()),
+        ("NamePrefix", prefix.to_string()),
+        ("BaseName", name),
+        ("PageCount", spread.pages.len().to_string()),
+        ("ShowMasterItems", "true".to_string()),
+        (
+            "ItemTransform",
+            rewrite::format_matrix(&spread.item_transform.unwrap_or(IDENTITY)),
+        ),
+    ];
+    spread_like_part(spread, dom_version, layer, "MasterSpread", &attrs)
+}
+
+/// The shared body of [`spread_part`] and [`master_spread_part`]: the
+/// `<{element}>` with `attrs`, its pages (with their labels and guides)
+/// and every item.
+fn spread_like_part(
+    spread: &Spread,
+    dom_version: &str,
+    layer: Option<&str>,
+    element: &str,
+    attrs: &[(&str, String)],
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let mut writer = new_part_writer()?;
+    let pkg = format!("idPkg:{element}");
+    open_pkg_root(&mut writer, &pkg, dom_version)?;
+    rewrite::emit_start_with_attrs(&mut writer, element, attrs)?;
     let page_count = spread.pages.len();
     // A guide lands in the page its index names, clamped to the last.
     let page_of = |g: &idml_import::RulerGuide| -> usize {
@@ -1082,10 +1124,20 @@ pub(crate) fn spread_part(
             .enumerate()
             .filter(|(_, g)| page_of(g) == pi)
             .collect();
-        if guides_here.is_empty() {
+        let labelled = p
+            .self_id
+            .as_deref()
+            .and_then(|id| spread.labels.get(id))
+            .is_some_and(|v| !v.is_empty());
+        if guides_here.is_empty() && !labelled {
             rewrite::emit_empty_with_attrs(&mut writer, "Page", &pa)?;
         } else {
             rewrite::emit_start_with_attrs(&mut writer, "Page", &pa)?;
+            if let (true, Some(id)) = (labelled, p.self_id.as_deref()) {
+                writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+                rewrite::write_item_label(&mut writer, spread, id)?;
+                writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+            }
             for (gi, g) in guides_here {
                 let mut g = *g;
                 g.page_index = pi as u32;
@@ -1110,8 +1162,8 @@ pub(crate) fn spread_part(
         }
     }
     rewrite::write_inserted_items(&mut writer, spread, &std::collections::HashSet::new())?;
-    writer.write_event(Event::End(BytesEnd::new("Spread")))?;
-    writer.write_event(Event::End(BytesEnd::new("idPkg:Spread")))?;
+    writer.write_event(Event::End(BytesEnd::new(element)))?;
+    writer.write_event(Event::End(BytesEnd::new(pkg.as_str())))?;
     Ok(writer.into_inner().into_inner())
 }
 

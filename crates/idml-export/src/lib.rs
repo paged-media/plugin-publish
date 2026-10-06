@@ -85,7 +85,9 @@ pub mod face;
 pub mod fonts;
 pub mod guides;
 pub mod images;
+mod masters;
 mod navigation;
+mod page_labels;
 mod paged;
 mod paragraph_props;
 pub mod preferences;
@@ -432,6 +434,13 @@ pub(crate) fn write_package(
                         source,
                     }
                 })?;
+            // A page's own label: a slide's notes and transition.
+            let new = page_labels::rewrite_page_labels(&new, &spread.spread).map_err(|source| {
+                WriteError::Rewrite {
+                    entry: spread.src.clone(),
+                    source,
+                }
+            })?;
             if new != orig.as_slice() {
                 patched.insert(spread.src.clone(), new);
             }
@@ -479,18 +488,45 @@ pub(crate) fn write_package(
     // EDIT TO A MASTER PAGE VANISH: the user changed a master, saved,
     // reopened, and the change was gone with no error anywhere.
     //
-    // A master with no source entry is NOT minted here. `emit` mints
-    // spreads and stories because `InsertPage` / `InsertTextFrame` can
-    // create them; nothing creates a master spread today, so a model
-    // master the archive doesn't carry would be a shape this writer has
-    // never seen. Skipping it keeps that an untouched hole rather than
-    // an untested emitter.
+    // A master with no source entry was made by `CreateMaster` and is
+    // written whole (`emit::master_spread_part`); a source master the
+    // model no longer has was removed by `DeleteMaster`, and its part
+    // and designmap reference go.
     //
     // Iterated in `src` order because `master_spreads` is a `HashMap`
     // and a save must not depend on hash iteration order.
     let mut masters: Vec<&paged_scene::ParsedMasterSpread> = doc.master_spreads.values().collect();
     masters.sort_by(|a, b| a.src.cmp(&b.src));
+    let master_srcs: std::collections::HashSet<&str> =
+        masters.iter().map(|m| m.src.as_str()).collect();
+    let source_masters: Vec<String> = src
+        .file_names()
+        .filter(|n| n.starts_with("MasterSpreads/"))
+        .map(str::to_string)
+        .collect();
+    let dropped_master_srcs: Vec<String> = source_masters
+        .iter()
+        .filter(|n| !master_srcs.contains(n.as_str()))
+        .cloned()
+        .collect();
+    let mut minted_master_srcs: Vec<String> = Vec::new();
     for master in masters {
+        if !source_masters.contains(&master.src) {
+            // InDesign's prefixes run A, B, C… in master order.
+            let ordinal = source_masters.len() + minted_master_srcs.len();
+            let prefix = match u8::try_from(ordinal).ok().filter(|n| *n < 26) {
+                Some(n) => char::from(b'A' + n).to_string(),
+                None => format!("M{ordinal}"),
+            };
+            let body = emit::master_spread_part(master, &prefix, &dom_version, default_layer)
+                .map_err(|source| WriteError::Rewrite {
+                    entry: master.src.clone(),
+                    source,
+                })?;
+            minted_master_srcs.push(master.src.clone());
+            new_entries.push((master.src.clone(), body));
+            continue;
+        }
         if let Some(orig) = entry_bytes(&mut src, &master.src)? {
             let with_prefs = text_frame_prefs::rewrite_text_frame_prefs(&orig, &master.spread)
                 .map_err(|source| WriteError::Rewrite {
@@ -526,6 +562,13 @@ pub(crate) fn write_package(
                     source,
                 }
             })?;
+            let new =
+                masters::rewrite_master_name(&new, master.name.as_deref()).map_err(|source| {
+                    WriteError::Rewrite {
+                        entry: master.src.clone(),
+                        source,
+                    }
+                })?;
             if new != orig.as_slice() {
                 patched.insert(master.src.clone(), new);
             }
@@ -797,6 +840,11 @@ pub(crate) fn write_package(
                 },
             )?;
         }
+        new = masters::patch_designmap_masters(&new, &minted_master_srcs, &dropped_master_srcs)
+            .map_err(|source| WriteError::Rewrite {
+                entry: DESIGNMAP_SRC.to_string(),
+                source,
+            })?;
         if !dropped_story_srcs.is_empty() {
             new = emit::patch_designmap(&new, &[], &[], &dropped_story_srcs).map_err(|source| {
                 WriteError::Rewrite {
@@ -924,7 +972,7 @@ pub(crate) fn write_package(
             // `write_package`'s doc. `write_paged` keeps them.
             continue;
         }
-        if dropped_story_srcs.contains(&name) {
+        if dropped_story_srcs.contains(&name) || dropped_master_srcs.contains(&name) {
             // An orphan story's part (see the stories loop above).
             continue;
         }

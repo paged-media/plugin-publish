@@ -230,6 +230,7 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
                 src: src.clone(),
                 self_id,
                 spread: parsed,
+                name: master_spread_name(raw),
             },
         );
     }
@@ -291,4 +292,21 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
     };
     document.rebuild_indexes();
     Ok(document)
+}
+
+/// The `Name` attribute of a master spread part's `<MasterSpread>`.
+fn master_spread_name(xml: &[u8]) -> Option<String> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.name().as_ref() == b"MasterSpread" => {
+                return crate::util::attr_unescaped(&e, b"Name");
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            _ => {}
+        }
+        buf.clear();
+    }
 }

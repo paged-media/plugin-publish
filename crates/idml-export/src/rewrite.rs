@@ -171,11 +171,10 @@
 //!   — the page survives on reopen. (INSERTED pages/spreads — and
 //!   stories minted by InsertTextFrame — DO save since C-8: the `emit`
 //!   module serialises a full part for any model spread/story with no
-//!   source entry and references it from designmap.) Master-spread
-//!   inserts and the removal manifest-drop remain deferred — an EDIT to
-//!   an existing master does save now (`write_idml` runs
-//!   `MasterSpreads/*.xml` through this same rewrite); minting a master
-//!   the archive never carried does not.
+//!   source entry and references it from designmap.) Masters are whole:
+//!   an edit to one saves (`write_idml` runs `MasterSpreads/*.xml`
+//!   through this same rewrite), a created one is minted and a deleted
+//!   one dropped with its designmap reference (`masters`).
 //! * **Singular group transform.** A group whose `ItemTransform` linear
 //!   part is non-invertible can't have its member transforms de-composed;
 //!   such a member keeps its `ItemTransform` verbatim (degenerate case;
@@ -1305,7 +1304,7 @@ pub(crate) fn emit_empty_with_attrs(
 /// on-element corner attrs, …) are still lost — that is the standing
 /// characteristic of the move lanes, shared with B-18's paste-into, and
 /// is listed under "Known losses".
-fn write_item_label(
+pub(crate) fn write_item_label(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     spread: &Spread,
     self_id: &str,
@@ -6094,7 +6093,7 @@ pub(crate) fn opt_bool_patch(v: Option<bool>) -> Patch {
 ///
 /// `None` when either attribute is missing or undecodable; such a pair
 /// can't be compared, so the label is not treated as unchanged.
-fn key_value_pair(e: &BytesStart) -> Option<(String, String)> {
+pub(crate) fn key_value_pair(e: &BytesStart) -> Option<(String, String)> {
     fn normalized(e: &BytesStart, key: &[u8]) -> Option<String> {
         e.attributes()
             .flatten()

@@ -312,3 +312,87 @@ fn collect(
 /// Shared corpus plumbing for the opt-in lanes.
 #[path = "support/corpus.rs"]
 mod corpus;
+
+/// v69 — a master the model made (`CreateMaster`) is written whole and
+/// referenced; renaming one patches its `Name`; deleting one drops its
+/// part and reference. Each survives a reopen.
+#[test]
+fn created_renamed_and_deleted_masters_survive_save_and_reopen() {
+    let package = build_package();
+    let mut doc = open(&package);
+
+    // Created: a copy of the source master under a new id and name.
+    let mut created = master(&doc).clone();
+    created.self_id = "uNew".to_string();
+    created.src = "MasterSpreads/MasterSpread_uNew.xml".to_string();
+    created.name = Some("Title Slide".to_string());
+    created.spread.self_id = Some("uNew".to_string());
+    created.spread.pages[0].self_id = Some("npg1".to_string());
+    created.spread.rectangles[0].self_id = Some("nr1".to_string());
+    created.spread.ovals[0].self_id = Some("no1".to_string());
+    doc.master_spreads.insert("uNew".to_string(), created);
+    // Renamed: the source master.
+    doc.master_spreads.get_mut("uad").unwrap().name = Some("Content".to_string());
+
+    let out = write_idml(&doc, &package).expect("write");
+    let designmap = String::from_utf8(entry(&out, "designmap.xml")).unwrap();
+    assert!(
+        designmap.contains(r#"<idPkg:MasterSpread src="MasterSpreads/MasterSpread_uad.xml"/><idPkg:MasterSpread src="MasterSpreads/MasterSpread_uNew.xml"/>"#),
+        "{designmap}"
+    );
+    let reopened = open(&out);
+    assert_eq!(reopened.master_spreads.len(), 2);
+    let new = reopened
+        .master_spread("MasterSpread/uNew")
+        .expect("created master");
+    assert_eq!(new.name.as_deref(), Some("Title Slide"));
+    assert_eq!(new.spread.rectangles.len(), 1);
+    assert_eq!(new.spread.ovals.len(), 1);
+    assert_eq!(master(&reopened).name.as_deref(), Some("Content"));
+    let xml = String::from_utf8(entry(&out, MASTER_SRC)).unwrap();
+    assert!(
+        xml.contains(r#"Name="Content" NamePrefix="A" BaseName="Content""#),
+        "{xml}"
+    );
+
+    // Deleted: detach the page, drop the master.
+    let mut doc = reopened;
+    doc.spreads[0].spread.pages[0].applied_master = Some("MasterSpread/uNew".to_string());
+    doc.master_spreads.remove("uad");
+    let again = write_idml(&doc, &out).expect("write");
+    let names: Vec<String> = zip::ZipArchive::new(std::io::Cursor::new(&again))
+        .unwrap()
+        .file_names()
+        .map(str::to_string)
+        .collect();
+    assert!(!names.iter().any(|n| n == MASTER_SRC), "{names:?}");
+    let designmap = String::from_utf8(entry(&again, "designmap.xml")).unwrap();
+    assert!(!designmap.contains("MasterSpread_uad"), "{designmap}");
+    let last = open(&again);
+    assert_eq!(last.master_spreads.len(), 1);
+    assert!(last.master_spreads.contains_key("uNew"));
+}
+
+/// v69 — a page's plugin metadata (`spread.labels` keyed by the page id:
+/// a slide's notes) survives save and reopen, and leaves an unlabelled
+/// package byte-identical.
+#[test]
+fn page_labels_survive_save_and_reopen() {
+    let package = build_package();
+    let mut doc = open(&package);
+    doc.spreads[0].spread.labels.insert(
+        "pg1".to_string(),
+        vec![(
+            "x-paged:media.paged.slide".to_string(),
+            r#"{"v":1,"data":{"notes":"Say hello\nthen go"}}"#.to_string(),
+        )],
+    );
+    let out = write_idml(&doc, &package).expect("write");
+    let reopened = open(&out);
+    assert_eq!(
+        reopened.spreads[0].spread.labels.get("pg1"),
+        doc.spreads[0].spread.labels.get("pg1")
+    );
+    // Written again unchanged: byte-identical.
+    assert_eq!(write_idml(&reopened, &out).expect("write"), out);
+}

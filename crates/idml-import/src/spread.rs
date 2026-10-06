@@ -612,6 +612,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
     // outer group's `members` can carry a `FrameRef::Group(idx)`.
     let mut group_builders: Vec<GroupBuilder> = Vec::new();
     let mut current_frame: Option<CurrentFrame> = None;
+    // The `<Page>` element still open (a `Start`, never a self-closed
+    // one): its `<Properties><Label>` entries are the page's plugin
+    // metadata, keyed by the page's `Self` like an item's.
+    let mut open_page: Option<String> = None;
     // `ShowMasterItems` is a SPREAD attribute, not a page one. InDesign
     // writes it on `<Spread>` (1,006 times across the corpus packs) and
     // `<MasterSpread>` (296) and never once on `<Page>` — and it
@@ -1053,6 +1057,11 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     }
                 }
                 b"Page" => {
+                    open_page = if event_is_start {
+                        attr(&e, b"Self")
+                    } else {
+                        None
+                    };
                     if let Some(bounds) =
                         attr(&e, b"GeometricBounds").and_then(|s| parse_bounds(&s))
                     {
@@ -1842,6 +1851,19 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // frames are skipped by this parser, so their
                     // labels are ignored rather than mis-attached
                     // to the host).
+                    if current_frame.is_none() {
+                        if let (Some(page), Some(key), Some(value)) = (
+                            open_page.clone(),
+                            crate::util::attr_unescaped(&e, b"Key"),
+                            crate::util::attr_unescaped(&e, b"Value"),
+                        ) {
+                            let entries = out.labels.entry(page).or_default();
+                            match entries.iter_mut().find(|(k, _)| *k == key) {
+                                Some(slot) => slot.1 = value,
+                                None => entries.push((key, value)),
+                            }
+                        }
+                    }
                     if let Some(cf) = current_frame.as_ref() {
                         let key = crate::util::attr_unescaped(&e, b"Key");
                         let value = crate::util::attr_unescaped(&e, b"Value");
@@ -2521,6 +2543,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                 _ => {}
             },
             Event::End(e) => match e.name().as_ref() {
+                b"Page" => open_page = None,
                 b"Group" if !group_transforms.is_empty() => {
                     group_transforms.pop();
                     if let Some(builder) = group_builders.pop() {
@@ -3056,6 +3079,40 @@ mod tests {
         ));
         assert!((s.guides[1].location - 240.0).abs() < 1e-3);
         assert_eq!(s.guides[1].page_index, 1);
+    }
+
+    #[test]
+    fn parses_page_labels_keyed_by_the_page() {
+        // A page's `Properties/Label` is its plugin metadata (a slide's
+        // notes and transition). A self-closed page has none, and a
+        // spread-level item after it keeps its own.
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <Spread Self="spread1">
+    <Page Self="p1" GeometricBounds="0 0 540 960">
+      <Properties>
+        <PageColor type="enumeration">UseMasterColor</PageColor>
+        <Label>
+          <KeyValuePair Key="x-paged:slide" Value="{&quot;v&quot;:1}"/>
+        </Label>
+      </Properties>
+    </Page>
+    <Page Self="p2" GeometricBounds="0 960 540 1920"/>
+    <Rectangle Self="u1" GeometricBounds="0 0 10 10" ItemTransform="1 0 0 1 0 0">
+      <Properties><Label><KeyValuePair Key="k" Value="v"/></Label></Properties>
+    </Rectangle>
+  </Spread>
+</idPkg:Spread>"#;
+        let s = parse_spread(xml.as_bytes()).unwrap();
+        assert_eq!(
+            s.labels.get("p1"),
+            Some(&vec![(
+                "x-paged:slide".to_string(),
+                "{\"v\":1}".to_string()
+            )])
+        );
+        assert!(!s.labels.contains_key("p2"));
+        assert_eq!(s.labels.get("u1").map(Vec::len), Some(1));
     }
 
     #[test]
