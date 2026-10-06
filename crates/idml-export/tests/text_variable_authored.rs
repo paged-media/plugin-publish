@@ -85,7 +85,7 @@ fn check(at: usize) {
     let dm = pkg::entry(&out, "designmap.xml").expect("designmap");
     assert!(
         dm.contains(
-            r#"<TextVariable Self="dTextVariablenPrice" Name="Price" VariableType="CustomTextType"><CustomTextVariablePreference TextBefore="" TextAfter=""><Properties><Contents type="string">9.99</Contents></Properties></CustomTextVariablePreference></TextVariable>"#
+            r#"<TextVariable Self="dTextVariablenPrice" Name="Price" VariableType="CustomTextType"><CustomTextVariablePreference><Properties><Contents type="string">9.99</Contents></Properties></CustomTextVariablePreference></TextVariable>"#
         ),
         "the definition, in InDesign's spelling:\n{dm}"
     );

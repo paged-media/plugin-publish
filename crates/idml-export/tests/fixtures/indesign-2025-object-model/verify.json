@@ -1,0 +1,89 @@
+{
+  "indesign": "20.0.1.32",
+  "opened": {
+    "items": [
+      {
+        "kind": "GraphicLine",
+        "name": "baseline",
+        "visible": true,
+        "locked": false
+      },
+      {
+        "kind": "Rectangle",
+        "name": "price-box",
+        "visible": false,
+        "locked": false
+      },
+      {
+        "kind": "TextFrame",
+        "name": "body",
+        "visible": true,
+        "locked": true
+      }
+    ],
+    "customVariables": [
+      {
+        "name": "Price",
+        "contents": "9.99"
+      }
+    ],
+    "variableInstances": [
+      {
+        "variable": "Price",
+        "resultText": "9.99",
+        "story": "Hello \u0018world"
+      }
+    ],
+    "textPaths": [
+      {
+        "contents": "Type on a path",
+        "overflows": false,
+        "startBracket": 10,
+        "endBracket": 300
+      }
+    ]
+  },
+  "savedAndReopened": {
+    "items": [
+      {
+        "kind": "GraphicLine",
+        "name": "baseline",
+        "visible": true,
+        "locked": false
+      },
+      {
+        "kind": "Rectangle",
+        "name": "price-box",
+        "visible": false,
+        "locked": false
+      },
+      {
+        "kind": "TextFrame",
+        "name": "body",
+        "visible": true,
+        "locked": true
+      }
+    ],
+    "customVariables": [
+      {
+        "name": "Price",
+        "contents": "9.99"
+      }
+    ],
+    "variableInstances": [
+      {
+        "variable": "Price",
+        "resultText": "9.99",
+        "story": "Hello \u0018world"
+      }
+    ],
+    "textPaths": [
+      {
+        "contents": "Type on a path",
+        "overflows": false,
+        "startBracket": 10,
+        "endBracket": 300
+      }
+    ]
+  }
+}

@@ -23,7 +23,8 @@
 //! * a definition the source lacks is written in InDesign's own spelling
 //!   (a typed `…VariablePreference` child; a custom variable's value as
 //!   `<Properties><Contents type="string">`, measured on InDesign 20.0.1
-//!   packages), after the source's last `<TextVariable>` — or, with none,
+//!   packages and verified by InDesign 2025 reading it back — see
+//!   `tests/indesign_object_model.rs`), after the source's last `<TextVariable>` — or, with none,
 //!   where InDesign puts them: after the preferences, before the tags,
 //!   layers and spread references;
 //! * a definition the model changed is rewritten whole;
@@ -288,11 +289,21 @@ pub(crate) fn write_variable(out: &mut W, v: &TextVariable) -> Result<(), quick_
         return emit_empty_with_attrs(out, "TextVariable", &head);
     };
     emit_start_with_attrs(out, "TextVariable", &head)?;
-    let mut attrs: Vec<(&str, String)> = Vec::new();
-    let deco = |attrs: &mut Vec<(&str, String)>| {
-        attrs.push(("TextBefore", v.text_before.clone().unwrap_or_default()));
+    // Every typed preference carries `TextBefore` / `TextAfter`, except
+    // InDesign's custom one, which it writes bare (a custom variable has no
+    // decoration in InDesign's UI); there they are written only when set.
+    let custom = pref == "CustomTextVariablePreference";
+    let decoration = |d: &Option<String>| -> Option<String> {
+        if custom {
+            d.clone().filter(|s| !s.is_empty())
+        } else {
+            Some(d.clone().unwrap_or_default())
+        }
     };
-    deco(&mut attrs);
+    let mut attrs: Vec<(&str, String)> = Vec::new();
+    if let Some(b) = decoration(&v.text_before) {
+        attrs.push(("TextBefore", b));
+    }
     match pref {
         "MatchParagraphStylePreference" | "MatchCharacterStylePreference" => {
             let (key, style) = if pref == "MatchParagraphStylePreference" {
@@ -345,8 +356,10 @@ pub(crate) fn write_variable(out: &mut W, v: &TextVariable) -> Result<(), quick_
         }
         _ => {}
     }
-    attrs.push(("TextAfter", v.text_after.clone().unwrap_or_default()));
-    if pref == "CustomTextVariablePreference" {
+    if let Some(a) = decoration(&v.text_after) {
+        attrs.push(("TextAfter", a));
+    }
+    if custom {
         emit_start_with_attrs(out, pref, &attrs)?;
         out.write_event(Event::Start(BytesStart::new("Properties")))?;
         let mut c = BytesStart::new("Contents");
