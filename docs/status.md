@@ -27,6 +27,59 @@ What this repository ships and what it does not, read from the code at commit `6
 - **Open a PDF as page images.** When the editable path fails, each page is rendered at
   150 dpi and opened as one full-page image.
 
+## Pending release: core protocol 71
+
+The `om/object-model` branch carries IDML export fixes that need core protocol 71 (core
+branch `om/protocol-71`, not yet tagged). They do not build against the current core pin
+(`f6a8c56`, protocol 70): the model field `Spread::item_names` and the store reader
+`paged_store::from_parts` exist from protocol 71 on. Built and tested against a local
+checkout of that core branch:
+
+- **Hidden and locked page items.** `Visible` and `Locked` follow the model on items the
+  source carried and on items created since load. Before, a hidden item came back visible.
+- **Authored text variables.** A variable created in the model is written as a
+  `<TextVariable>` definition in `designmap.xml`, in InDesign's own spelling; a changed one
+  is rewritten and a deleted one dropped. An instance inserted into text is written as a
+  `<TextVariableInstance>` in a range of its own, in a source story or in a story written
+  whole. The importer reads both back.
+- **Text on a path with no end bracket.** `EndBracket` is written as the host path's arc
+  length. InDesign reads a missing `EndBracket` as 0 and shows no text.
+- **Page-item names.** The `item-names` feature gate is removed: `Name` is always read
+  into `Spread::item_names` and written for new and renamed items.
+- **PDF import test.** The model part keeps its images as separate blob parts (pgm v4), so
+  the round-trip test reads it with `paged_store::from_parts`.
+
+InDesign 2025 (20.0.1) opened an export with all four changes, saved it as `.indd` and
+reopened it. The hidden item stayed hidden, the locked frame stayed locked, the variable
+showed `9.99`, the text sat on the path without overset, and the new name stayed. The
+recording is `crates/idml-export/tests/fixtures/indesign-2025-object-model/verify.json`.
+`crates/idml-export/tests/indesign/probe.sh` re-records it.
+
+### Release order
+
+The two repositories pin each other by git revision, so the steps run in this order:
+
+1. **core:** merge `om/protocol-71` into `main` and tag `v0.71.0`. Call that commit `C`.
+2. **plugin-publish:** in the workspace `Cargo.toml`, move the three core pins
+   (`paged-model`, `paged-scene`, `paged-store`) to `rev = "C"` and update `Cargo.lock`. No
+   local `[patch]` block may be committed. Run `cargo test --workspace`,
+   `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all --check`,
+   then commit the pin together with this branch, so `main` never holds the ungated code on
+   the old pin. Call the merged commit `P`.
+3. **core:** move the eight `idml-import` / `idml-export` git pins
+   (`paged-canvas` ×2, `paged-cli`, `paged-export-pdf`, `paged-gen`, `paged-introspect`,
+   `paged-introspect-wasm`, `paged-mutate`) to `rev = "P"`. The pinned-defect assertions
+   in `crates/paged-canvas/tests/idml_export_object_model_state.rs` then fail. Change them
+   to assert the fix:
+   - `a_hidden_item_is_visible_false_in_the_exported_spread` should assert
+     `Visible="false"`;
+   - `an_authored_text_variable_reaches_the_idml` should assert that both the definition
+     and the instance are written.
+   Then commit and push, and check that CI passes.
+4. **core:** tag the patch release `v0.71.1`. The wire protocol does not change, so the
+   plugin SDK's vendored contract stays as it is. Downstream, the editor moves its engine
+   pins, and plugin-draw drops its `textPathEndBracketAbsent` finding, which now flips.
+
 ## Limits of what is shipped
 
 - **The IDML code ships with the engine, not with the bundle.** `@paged-media/publish`
@@ -69,8 +122,9 @@ What this repository ships and what it does not, read from the code at commit `6
   are behind the package versions. `readNative` is declared and unused. Comments in
   `crates/pdf-import`, `scripts/build-wasm.sh` and `packages/pdf-bundle/src/` still name
   pdf.js as the reader, and two call `bin/` gitignored; it is tracked.
-- **Test coverage.** Nothing here runs InDesign, the ten corpus tests do not run in CI, the
-  PDFium path has no test, and `packages/publish-bundle` has no tests.
+- **Test coverage.** CI does not run InDesign (one recorded InDesign probe is asserted, see
+  above), the ten corpus tests do not run in CI, the PDFium path has no test, and
+  `packages/publish-bundle` has no tests.
 
 ## Not built
 
