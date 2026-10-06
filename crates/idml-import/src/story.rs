@@ -541,6 +541,19 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // they don't unbalance the stack.)
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
                         let self_id = attr(&e, b"Self").unwrap_or_default();
+                        // A `<Br/>` held just before the source was interior
+                        // after all — the source is content — and it belongs
+                        // to the text BEFORE the source, not inside it. Held
+                        // until the source's first `<Content>`, it became the
+                        // first character of the source's run: a Data Merge
+                        // template `<<name>>¶<<subtitle>>` read back as
+                        // `<<name>><<¶subtitle>>` (paged.data D-25).
+                        if let Some(run) = current_run.as_mut() {
+                            for _ in 0..pending_breaks {
+                                run.text.push('\n');
+                            }
+                            pending_breaks = 0;
+                        }
                         // InDesign's OWN spelling nests the source INSIDE the
                         // `<CharacterStyleRange>`, around the `<Content>` it
                         // covers (measured: `<CharacterStyleRange><Content>
@@ -1692,6 +1705,14 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         .unwrap_or_default();
                     if in_content {
                         if let Some(run) = current_run.as_mut() {
+                            // Content, like a Text event: a held mark before
+                            // it was interior. Without this a `<Content>` that
+                            // OPENS with an entity (`&lt;&lt;name&gt;&gt;`)
+                            // took the mark after its first entity.
+                            for _ in 0..pending_breaks {
+                                run.text.push('\n');
+                            }
+                            pending_breaks = 0;
                             push_content_text(&mut run.text, &resolved);
                         }
                     } else {
@@ -2190,6 +2211,75 @@ mod tests {
         );
         assert_eq!(runs[1].text, "paged.media");
         assert_eq!(runs[2].hyperlink_source, None);
+    }
+
+    #[test]
+    fn paragraph_mark_between_adjacent_sources_stays_between_them() {
+        // paged.data D-25 — InDesign's own spelling of a Data Merge
+        // template whose lines are bare placeholders (measured: the
+        // `empty-field-lines` template, InDesign 20): each field is a
+        // `<HyperlinkTextSource>` nested in the range, its `<Content>`
+        // opening with an entity, and the paragraph mark sits between two
+        // sources. The mark belongs between them, not inside the second.
+        let xml = br#"<Story>
+          <ParagraphStyleRange>
+            <CharacterStyleRange>
+              <HyperlinkTextSource Self="u100" Name="Quelle">
+                <Content>&lt;&lt;name&gt;&gt;</Content>
+              </HyperlinkTextSource>
+              <Br />
+              <HyperlinkTextSource Self="ufd" Name="Quelle">
+                <Content>&lt;&lt;subtitle&gt;&gt;</Content>
+              </HyperlinkTextSource>
+              <Br />
+              <Content>Price: </Content>
+              <HyperlinkTextSource Self="uf8" Name="Quelle">
+                <Content>&lt;&lt;price&gt;&gt;</Content>
+              </HyperlinkTextSource>
+            </CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let text: Vec<String> = s
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert_eq!(text.join("\n"), "<<name>>\n<<subtitle>>\nPrice: <<price>>");
+        let fields: Vec<(&str, &str)> = s
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .filter_map(|r| Some((r.hyperlink_source.as_deref()?, r.text.as_str())))
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("u100", "<<name>>"),
+                ("ufd", "<<subtitle>>"),
+                ("uf8", "<<price>>")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_held_mark_before_an_entity_lands_before_it() {
+        let xml = br#"<Story>
+          <ParagraphStyleRange>
+            <CharacterStyleRange>
+              <Content>a</Content>
+              <Br />
+              <Content>&lt;b</Content>
+            </CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let text: Vec<String> = s
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert_eq!(text.join("\n"), "a\n<b");
     }
 
     #[test]
