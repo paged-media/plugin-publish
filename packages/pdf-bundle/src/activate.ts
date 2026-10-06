@@ -31,12 +31,15 @@ import type {
 import manifestJson from "../manifest.json";
 
 import { contributePdfIo } from "./io/pdf";
+import { contributePdfCommands } from "./commands";
 
 export function activate(host: BundleHost): BundleHandle {
   // Phase 0 — the PDF importer, capability-gated. Surfaces the engine's
   // EXISTING IDML/inline-image path (via the native-document door) through
   // the plugin registry.
   const pdfIoSub = contributePdfIo(host);
+  // ADR 323 — the import as a typed command (Node CLI, scripts).
+  const commandsSub = contributePdfCommands(host);
   host.log.info(
     `activated — PDF importer (apiVersion ${manifestJson.apiVersion})`,
   );
@@ -45,6 +48,7 @@ export function activate(host: BundleHost): BundleHandle {
   return {
     dispose() {
       pdfIoSub.dispose();
+      commandsSub?.dispose();
     },
   };
 }

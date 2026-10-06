@@ -37,6 +37,8 @@ import type {
   ExportResult,
 } from "@paged-media/plugin-api";
 
+import { exportIdmlResult } from "../commands";
+
 export const IDML_IMPORTER_ID = "media.paged.publish.importer.idml";
 export const IDML_EXPORTER_ID = "media.paged.publish.exporter.idml";
 export const IDML_MIME = "application/vnd.adobe.indesign-idml-package";
@@ -81,12 +83,16 @@ async function importIdml(host: BundleHost, file: ImportRequest): Promise<void> 
  * anything other than a successful `idmlExported` reply (nothing to save).
  */
 async function exportIdml(host: BundleHost): Promise<ExportResult | null> {
-  const reply = await host.editor.client.send({ kind: "exportIdml", payload: {} });
-  if (reply.kind !== "idmlExported") return null;
-  return {
-    bytes: Uint8Array.from(reply.payload.idmlBytes),
-    fileName: "document.idml",
-  };
+  try {
+    // The typed command's path: the engine's losses become diagnostics there
+    // and the file is named after the document.
+    const r = await exportIdmlResult(host, "");
+    for (const d of r.diagnostics) host.log.warn(`${IDML_EXPORTER_ID}: ${d.message}`);
+    return { bytes: r.bytes, fileName: r.fileName };
+  } catch (err) {
+    host.log.error(`${IDML_EXPORTER_ID}: export failed — ${String(err)}`);
+    return null;
+  }
 }
 
 // ------------------------------------------------------- registration

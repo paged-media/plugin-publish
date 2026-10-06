@@ -22,3 +22,20 @@ export {
   IDML_EXPORTER_ID,
   IDML_MIME,
 } from "./io/idml";
+export {
+  contributePublishCommands,
+  exportPdf,
+  exportIdmlResult,
+  openIdml,
+  parsePageRange,
+  pdfExportArgs,
+  pdfWireOptions,
+  EXPORT_IDML_COMMAND,
+  EXPORT_PAGED_COMMAND,
+  EXPORT_PDF_ARGS_TYPE,
+  EXPORT_PDF_COMMAND,
+  EXPORT_RESULT_TYPE,
+  IMPORT_IDML_COMMAND,
+  PDF_EXPORT_DEFAULTS,
+} from "./commands";
+export type { ExportDiagnostic, ExportResult, PdfExportArgs, PdfWireOptions } from "./commands";

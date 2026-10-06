@@ -67,15 +67,22 @@ function isNode(): boolean {
 }
 
 /** The default glue importer: the bundle-relative wasm-bindgen ESM. BROWSER:
- *  instantiate from the bundler's `?url` asset URL. NODE: leave the glue
- *  un-instantiated (the real-wasm Node path is the injected `importGlue`;
- *  the default path stays honestly not-loaded). */
+ *  instantiate from the bundler's `?url` asset URL. NODE: instantiate from
+ *  the wasm bytes read beside the glue. */
 async function importBundledGlue(): Promise<PdfMapperGlue> {
   // @ts-ignore — bin/pdf_import.js is the committed wasm-bindgen glue (built
   // by scripts/build-wasm.sh from crates/pdf-import); tsup bundles it as a
   // sibling dist chunk. tsc doesn't typecheck the JS — typed via PdfMapperGlue.
   const glue = (await import("../bin/pdf_import.js")) as unknown as PdfMapperGlue;
-  if (isNode()) return glue;
+  if (isNode()) {
+    // NODE (the headless host, the Node CLI): instantiate from the bytes
+    // beside the glue — wasm-bindgen's own fetch of a file: URL fails here.
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const b = await readFile(fileURLToPath(new URL("../bin/pdf_import_bg.wasm", import.meta.url)));
+    await glue.default({ module_or_path: new Uint8Array(b.buffer, b.byteOffset, b.byteLength) });
+    return glue;
+  }
   // @ts-ignore — `?url` is a bundler affordance (untyped), kept external by
   // tsup so Vite resolves it to a served asset URL.
   const wasmUrl = (await import("../bin/pdf_import_bg.wasm?url")) as {

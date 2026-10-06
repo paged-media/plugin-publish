@@ -5,10 +5,40 @@
   "apiVersion": "^0.2",
   "publisher": "paged.media",
   "capabilities": {
-    "document": { "read": "broad", "readNative": true, "openNative": true }
+    "document": { "read": "broad", "readNative": true, "openNative": true },
+    "documents": { "open": true, "export": true }
   },
   "contributes": {
     "importers": ["media.paged.publish.importer.idml"],
-    "exporters": ["media.paged.publish.exporter.idml"]
+    "exporters": ["media.paged.publish.exporter.idml"],
+    "objectModel": {
+      "kinds": [],
+      "commands": [
+        {
+          "id": "media.paged.publish.exportPdf",
+          "title": "Export PDF",
+          "args": "schema/export-pdf.args.json",
+          "result": "schema/export-result.json"
+        },
+        {
+          "id": "media.paged.publish.exportIdml",
+          "title": "Export IDML",
+          "args": "schema/export-idml.args.json",
+          "result": "schema/export-result.json"
+        },
+        {
+          "id": "media.paged.publish.exportPaged",
+          "title": "Save as .paged",
+          "args": "schema/export-paged.args.json",
+          "result": "schema/export-result.json"
+        },
+        {
+          "id": "media.paged.publish.importIdml",
+          "title": "Open IDML",
+          "args": "schema/import-idml.args.json",
+          "result": "schema/import-result.json"
+        }
+      ]
+    }
   }
 }

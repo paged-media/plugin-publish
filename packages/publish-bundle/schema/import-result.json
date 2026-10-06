@@ -1,0 +1,6 @@
+{
+  "kind": "struct",
+  "fields": {
+    "pages": { "kind": "list", "of": { "kind": "ref", "to": "page" } }
+  }
+}

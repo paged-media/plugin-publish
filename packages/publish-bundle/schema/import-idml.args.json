@@ -1,0 +1,7 @@
+{
+  "kind": "struct",
+  "fields": {
+    "bytes": { "kind": "bytes", "mime": ["application/vnd.adobe.indesign-idml-package"] },
+    "name": { "kind": "text" }
+  }
+}

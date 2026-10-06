@@ -73,6 +73,22 @@ interface Fpdf {
 let cached: Promise<Fpdf | null> | undefined;
 
 /** Load + memoize the PDFium wasm engine, or `null` if it can't load. */
+/** The PDFium wasm bytes. BROWSER: the bundler's `?url` asset, fetched and
+ *  handed in so the module never does its own relative fetch (which 404s
+ *  under Vite). NODE (the headless host, the Node CLI): read beside the
+ *  glue, as the slide and canvas engines boot under Node. */
+async function pdfiumWasmBytes(): Promise<Uint8Array> {
+  if (typeof process !== "undefined" && process.versions?.node != null) {
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const b = await readFile(fileURLToPath(new URL("../bin/pdfium.esm.wasm", import.meta.url)));
+    return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+  }
+  // @ts-ignore — `?url` asset the bundler serves.
+  const wasmUrl = (await import("../bin/pdfium.esm.wasm?url")).default as string;
+  return new Uint8Array(await (await fetch(wasmUrl)).arrayBuffer());
+}
+
 export async function loadPdfium(): Promise<Fpdf | null> {
   if (cached) return cached;
   cached = (async (): Promise<Fpdf | null> => {
@@ -81,10 +97,7 @@ export async function loadPdfium(): Promise<Fpdf | null> {
       const factory = (await import("../bin/pdfium.esm.js")).default as (
         arg: Record<string, unknown>,
       ) => Promise<unknown>;
-      // @ts-ignore — `?url` asset the bundler serves; hand the bytes in so the
-      // module never does its own relative fetch (which 404s under Vite).
-      const wasmUrl = (await import("../bin/pdfium.esm.wasm?url")).default as string;
-      const wasmBinary = new Uint8Array(await (await fetch(wasmUrl)).arrayBuffer());
+      const wasmBinary = await pdfiumWasmBytes();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const M = (await factory({ wasmBinary })) as any;
       const cw = (n: string, ret: string | null, args: string[]) => M.cwrap(n, ret, args);

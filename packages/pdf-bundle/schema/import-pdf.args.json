@@ -1,0 +1,10 @@
+{
+  "kind": "struct",
+  "fields": {
+    "bytes": { "kind": "bytes", "mime": ["application/pdf"] },
+    "name": { "kind": "text" },
+    "mode": { "kind": "enum", "members": ["auto", "editable", "image"] },
+    "maxPages": { "kind": "number", "integer": true },
+    "dpi": { "kind": "number", "unit": "ppi" }
+  }
+}

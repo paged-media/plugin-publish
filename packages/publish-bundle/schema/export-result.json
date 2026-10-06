@@ -1,0 +1,21 @@
+{
+  "kind": "struct",
+  "fields": {
+    "bytes": { "kind": "bytes" },
+    "fileName": { "kind": "text" },
+    "mimeType": { "kind": "text" },
+    "pageCount": { "kind": "number", "integer": true },
+    "diagnostics": {
+      "kind": "list",
+      "of": {
+        "kind": "struct",
+        "fields": {
+          "severity": { "kind": "enum", "members": ["error", "warning", "info"] },
+          "code": { "kind": "text" },
+          "message": { "kind": "text", "multiline": true },
+          "page": { "kind": "number", "integer": true }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "kind": "struct",
+  "fields": {
+    "standard": { "kind": "enum", "members": ["pdf17", "pdfx4"] },
+    "pages": { "kind": "text", "maxLength": 32 },
+    "outputIntentProfile": { "kind": "text" },
+    "outputCondition": { "kind": "text" },
+    "colorPolicy": { "kind": "enum", "members": ["preserveNumbers", "convertToDestination"] },
+    "cropMarks": { "kind": "bool" },
+    "registrationMarks": { "kind": "bool" },
+    "colorBars": { "kind": "bool" },
+    "pageInfo": { "kind": "bool" },
+    "marksOffset": { "kind": "length" },
+    "bleed": { "kind": "list", "of": { "kind": "length" }, "maxItems": 4 },
+    "downsamplePpi": { "kind": "number", "unit": "ppi" },
+    "effectDpi": { "kind": "number", "unit": "ppi" },
+    "restrictedFontPolicy": { "kind": "enum", "members": ["outline", "fail"] },
+    "title": { "kind": "text" }
+  }
+}

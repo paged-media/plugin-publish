@@ -64,21 +64,11 @@ async function importPdf(host: BundleHost, file: ImportRequest): Promise<void> {
     return;
   }
   try {
-    // Phase 1 — try the editable reconstruction first (wasm mapper present).
-    const editable = await tryEditableImport(host, file.bytes);
-    if (editable) {
-      await host.nativeDocument.open(editable.paged);
-      host.log.info(
-        `${PDF_IMPORTER_ID}: opened ${file.name} as an editable document (${editable.pageCount} page(s))`,
-      );
-      return;
-    }
-    // Phase 0 — image-only fallback (mapper unavailable or reconstruction failed).
-    const pages = await rasterizePdf(file.bytes);
-    const idml = await buildIdmlFromRasters(pages);
-    await host.nativeDocument.open(idml);
+    const r = await openPdf(host, file.bytes, PDF_IMPORT_DEFAULTS, (bytes) => host.nativeDocument.open(bytes));
     host.log.info(
-      `${PDF_IMPORTER_ID}: opened ${file.name} as ${pages.length} image page(s) (image fallback)`,
+      r.mode === "editable"
+        ? `${PDF_IMPORTER_ID}: opened ${file.name} as an editable document (${r.pageCount} page(s))`
+        : `${PDF_IMPORTER_ID}: opened ${file.name} as ${r.pageCount} image page(s) (image fallback)`,
     );
   } catch (err) {
     host.log.error(
@@ -87,17 +77,60 @@ async function importPdf(host: BundleHost, file: ImportRequest): Promise<void> {
   }
 }
 
+/** How a PDF is read (`schema/import-pdf.args.json` without the file). */
+export interface PdfImportOptions {
+  /** `auto`: editable when the mapper loads, else page images. */
+  mode: "auto" | "editable" | "image";
+  /** Page cap; 0 = the path's default (12 editable, 20 image). */
+  maxPages: number;
+  /** Raster resolution of the image path, ppi. */
+  dpi: number;
+}
+
+export const PDF_IMPORT_DEFAULTS: Readonly<PdfImportOptions> = Object.freeze({ mode: "auto", maxPages: 0, dpi: 150 });
+
+/** Read `bytes` per `options` and hand the document to `open`. Throws
+ *  `invalidValue: …` on out-of-range options and `failed: …` when the
+ *  requested path cannot run. */
+export async function openPdf(
+  host: BundleHost,
+  bytes: Uint8Array,
+  options: PdfImportOptions,
+  open: (bytes: Uint8Array) => Promise<void>,
+): Promise<{ mode: "editable" | "image"; pageCount: number }> {
+  if (!Number.isInteger(options.maxPages) || options.maxPages < 0 || options.maxPages > 2000) {
+    throw new Error("invalidValue: maxPages is 0 (default) to 2000");
+  }
+  if (options.dpi < 36 || options.dpi > 600) throw new Error("invalidValue: dpi is 36–600");
+  const maxPages = options.maxPages === 0 ? undefined : options.maxPages;
+  if (options.mode !== "image") {
+    // Phase 1 — the editable reconstruction (wasm mapper present).
+    const editable = await tryEditableImport(host, bytes, maxPages);
+    if (editable) {
+      await open(editable.paged);
+      return { mode: "editable", pageCount: editable.pageCount };
+    }
+    if (options.mode === "editable") throw new Error("failed: the editable reconstruction could not run");
+  }
+  // Phase 0 — image-only fallback (mapper unavailable or reconstruction failed).
+  const pages = await rasterizePdf(bytes, { dpi: options.dpi, ...(maxPages ? { maxPages } : {}) });
+  const idml = await buildIdmlFromRasters(pages);
+  await open(idml);
+  return { mode: "image", pageCount: pages.length };
+}
+
 /** Attempt the Phase 1 editable path: reconstruct → wasm map → `.paged`.
  *  Returns `null` (never throws) when the wasm mapper isn't loaded or the
  *  reconstruction/mapping fails, so the caller cleanly falls back to Phase 0. */
 async function tryEditableImport(
   host: BundleHost,
   bytes: Uint8Array,
+  maxPages?: number,
 ): Promise<{ paged: Uint8Array; pageCount: number } | null> {
   const mapper = await loadPdfMapper(host);
   if (!mapper) return null;
   try {
-    const ir = await extractPdf(bytes);
+    const ir = await extractPdf(bytes, maxPages ? { maxPages } : {});
     const paged = mapper.mapIrToPaged(ir);
     if (!paged) return null;
     return { paged, pageCount: ir.pages.length };

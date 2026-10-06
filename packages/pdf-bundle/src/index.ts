@@ -18,7 +18,10 @@
 // when the editable path can't run. No pdf.js.
 
 export { pdfBundle, activate } from "./activate";
-export { contributePdfIo, PDF_IMPORTER_ID, PDF_MIME } from "./io/pdf";
+export { contributePdfIo, openPdf, PDF_IMPORT_DEFAULTS, PDF_IMPORTER_ID, PDF_MIME } from "./io/pdf";
+export type { PdfImportOptions } from "./io/pdf";
+export { contributePdfCommands, IMPORT_PDF_ARGS_TYPE, IMPORT_PDF_COMMAND, IMPORT_PDF_RESULT_TYPE } from "./commands";
+export type { PdfImportArgs } from "./commands";
 export { buildIdmlFromRasters } from "./idml-fallback";
 export type { PdfPageRaster } from "./idml-fallback";
 // The PDFium reader engine — editable reconstruction + the raster fallback.

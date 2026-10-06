@@ -30,12 +30,16 @@ import type {
 import manifestJson from "../manifest.json";
 
 import { contributeIdmlIo } from "./io/idml";
+import { contributePublishCommands } from "./commands";
 
 export function activate(host: BundleHost): BundleHandle {
   // ADR-022 Phase 4 — the IDML importer + exporter, capability-gated. Both
   // surface the engine's EXISTING IDML path (native-document door for import,
   // the `host.editor` escape hatch for export) through the plugin registry.
   const idmlIoSub = contributeIdmlIo(host);
+  // ADR 323 — import/export as typed commands (the Node CLI's
+  // `paged export --format pdf|idml|paged`, scripts, generated forms).
+  const commandsSub = contributePublishCommands(host);
   host.log.info(
     `activated — IDML importer + exporter (apiVersion ${manifestJson.apiVersion})`,
   );
@@ -44,6 +48,7 @@ export function activate(host: BundleHost): BundleHandle {
   return {
     dispose() {
       idmlIoSub.dispose();
+      commandsSub?.dispose();
     },
   };
 }
