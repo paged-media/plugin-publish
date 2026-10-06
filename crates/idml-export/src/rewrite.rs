@@ -76,6 +76,9 @@
 //!     `false`, so turning it off drops the attribute; a source that
 //!     already spelled `"false"` keeps its bytes. See
 //!     [`preserving_bool_patch`].
+//!   - `Visible` / `Locked` (ElementVisible / ElementLocked) — the same
+//!     rule with InDesign's defaults (visible, unlocked); groups model
+//!     neither and pass theirs through. See [`patch_item_state`].
 //!   - `AppliedObjectStyle` (AppliedObjectStyle) — the reference into
 //!     the `<ObjectStyle>` definitions [`crate::resources::patch_styles`]
 //!     writes. IDML has no "no object style", so a CLEARED reference
@@ -1086,6 +1089,11 @@ struct NewItemPaint<'a> {
     /// `<BlendingSetting BlendMode="…">`.
     blend_mode: Option<&'a str>,
     nonprinting: bool,
+    /// `Visible` / `Locked` (the model's `visible` / `locked`). Written
+    /// only when they differ from InDesign's defaults (visible, unlocked):
+    /// a hidden item minted since load used to come back visible.
+    visible: bool,
+    locked: bool,
     /// `AppliedObjectStyle`. `None` ⇒ IDML's reserved
     /// [`NONE_OBJECT_STYLE`] sentinel, which is what an item with no
     /// style applied carries.
@@ -1158,6 +1166,8 @@ impl Default for NewItemPaint<'_> {
             opacity: None,
             blend_mode: None,
             nonprinting: false,
+            visible: true,
+            locked: false,
             applied_object_style: None,
             item_layer: None,
             drop_shadow: None,
@@ -1255,6 +1265,12 @@ fn push_common_item_attrs(
     }
     if paint.nonprinting {
         attrs.push(("Nonprinting", "true".to_string()));
+    }
+    if !paint.visible {
+        attrs.push(("Visible", "false".to_string()));
+    }
+    if paint.locked {
+        attrs.push(("Locked", "true".to_string()));
     }
     if let Some(l) = paint.item_layer {
         attrs.push(("ItemLayer", l.to_string()));
@@ -1376,7 +1392,10 @@ fn push_item_name(_attrs: &mut Vec<(&str, String)>, _spread: &Spread, _self_id: 
 /// is also what a document saved before names were modelled reads back
 /// as), so a source name with no model entry passes through.
 #[cfg(feature = "item-names")]
-fn patch_item_name(start: BytesStart<'static>, spread: &Spread) -> Result<BytesStart<'static>, quick_xml::Error> {
+fn patch_item_name(
+    start: BytesStart<'static>,
+    spread: &Spread,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
     let Some(self_id) = attr_value(&start, b"Self") else {
         return Ok(start);
     };
@@ -1394,7 +1413,10 @@ fn patch_item_name(start: BytesStart<'static>, spread: &Spread) -> Result<BytesS
     )
 }
 #[cfg(not(feature = "item-names"))]
-fn patch_item_name(start: BytesStart<'static>, _spread: &Spread) -> Result<BytesStart<'static>, quick_xml::Error> {
+fn patch_item_name(
+    start: BytesStart<'static>,
+    _spread: &Spread,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
     Ok(start)
 }
 
@@ -1439,6 +1461,8 @@ fn write_new_text_frame(
         opacity: f.opacity,
         blend_mode: f.blend_mode.as_deref(),
         nonprinting: f.nonprinting,
+        visible: f.visible,
+        locked: f.locked,
         applied_object_style: f.applied_object_style.as_deref(),
         item_layer: f.item_layer.as_deref(),
         drop_shadow: f.drop_shadow.as_ref(),
@@ -2022,6 +2046,8 @@ fn write_new_item(
                         opacity: rect.opacity,
                         blend_mode: rect.blend_mode.as_deref(),
                         nonprinting: rect.nonprinting,
+                        visible: rect.visible,
+                        locked: rect.locked,
                         applied_object_style: rect.applied_object_style.as_deref(),
                         item_layer: rect.item_layer.as_deref(),
                         drop_shadow: rect.drop_shadow.as_ref(),
@@ -2067,6 +2093,8 @@ fn write_new_item(
                         opacity: o.opacity,
                         blend_mode: o.blend_mode.as_deref(),
                         nonprinting: o.nonprinting,
+                        visible: o.visible,
+                        locked: o.locked,
                         applied_object_style: o.applied_object_style.as_deref(),
                         item_layer: o.item_layer.as_deref(),
                         drop_shadow: o.drop_shadow.as_ref(),
@@ -2106,6 +2134,8 @@ fn write_new_item(
                         opacity: p.opacity,
                         blend_mode: p.blend_mode.as_deref(),
                         nonprinting: p.nonprinting,
+                        visible: p.visible,
+                        locked: p.locked,
                         applied_object_style: p.applied_object_style.as_deref(),
                         item_layer: p.item_layer.as_deref(),
                         drop_shadow: p.drop_shadow.as_ref(),
@@ -2166,6 +2196,8 @@ fn write_new_item(
                         stroke_color: &l.stroke_color,
                         stroke_weight: l.stroke_weight,
                         nonprinting: l.nonprinting,
+                        visible: l.visible,
+                        locked: l.locked,
                         applied_object_style: l.applied_object_style.as_deref(),
                         item_layer: l.item_layer.as_deref(),
                         drop_shadow: l.drop_shadow.as_ref(),
@@ -3894,9 +3926,83 @@ fn patch_spread_item(
         group_accum,
     )?;
     match patched {
-        Some(start) => patch_item_name(start, spread).map(Some),
+        Some(start) => patch_item_name(patch_item_state(start, spread)?, spread).map(Some),
         None => Ok(None),
     }
+}
+
+/// `Visible` / `Locked` of a page item the source XML carries, from the
+/// model's `visible` / `locked` (`element.visible` / `element.locked`).
+///
+/// The parser reads an absent `Visible` as `true` and an absent `Locked`
+/// as `false` (InDesign's defaults), so the same byte-preserving rule as
+/// `Nonprinting` applies: a value the source already says passes through,
+/// a changed one is set, and a return to the default drops a source
+/// spelling of the other value. Before this the attributes passed through
+/// untouched, so an item hidden in paged came back visible in InDesign.
+/// Groups model neither and keep their source attributes.
+fn patch_item_state(
+    start: BytesStart<'static>,
+    spread: &Spread,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
+    let Some(self_id) = attr_value(&start, b"Self") else {
+        return Ok(start);
+    };
+    let Some((visible, locked)) = item_state(spread, &self_id) else {
+        return Ok(start);
+    };
+    let src_visible = attr_value(&start, b"Visible");
+    let src_locked = attr_value(&start, b"Locked");
+    let reads = |raw: &Option<String>, default: bool| {
+        raw.as_deref()
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(default)
+    };
+    if reads(&src_visible, true) == visible && reads(&src_locked, false) == locked {
+        return Ok(start);
+    }
+    let mut extras = Vec::new();
+    if !visible {
+        extras.push(("Visible", "false".to_string()));
+    }
+    if locked {
+        extras.push(("Locked", "true".to_string()));
+    }
+    patch_start(
+        &start,
+        |k, raw| {
+            let raw = std::str::from_utf8(raw).ok();
+            match k {
+                b"Visible" => Some(preserving_bool_patch(raw, visible, true)),
+                b"Locked" => Some(preserving_bool_patch(raw, locked, false)),
+                _ => None,
+            }
+        },
+        &extras,
+    )
+}
+
+/// The model's `(visible, locked)` for the page item `id`, across the
+/// five kinds that carry them.
+fn item_state(spread: &Spread, id: &str) -> Option<(bool, bool)> {
+    let is = |s: &Option<String>| s.as_deref() == Some(id);
+    if let Some(f) = spread.text_frames.iter().find(|f| is(&f.self_id)) {
+        return Some((f.visible, f.locked));
+    }
+    if let Some(r) = spread.rectangles.iter().find(|r| is(&r.self_id)) {
+        return Some((r.visible, r.locked));
+    }
+    if let Some(o) = spread.ovals.iter().find(|o| is(&o.self_id)) {
+        return Some((o.visible, o.locked));
+    }
+    if let Some(p) = spread.polygons.iter().find(|p| is(&p.self_id)) {
+        return Some((p.visible, p.locked));
+    }
+    spread
+        .graphic_lines
+        .iter()
+        .find(|l| is(&l.self_id))
+        .map(|l| (l.visible, l.locked))
 }
 
 /// The model-owned attributes of a page-item start tag (everything but
@@ -6221,7 +6327,10 @@ pub(crate) fn key_value_pair(e: &BytesStart) -> Option<(String, String)> {
     // InDesign-saved label the model did not change compares equal and
     // keeps its source bytes.
     let value = normalized(e, b"Value")?;
-    Some((normalized(e, b"Key")?, idml_import::decode_aid_escapes(&value).into_owned()))
+    Some((
+        normalized(e, b"Key")?,
+        idml_import::decode_aid_escapes(&value).into_owned(),
+    ))
 }
 
 /// Read an attribute's decoded value off a start tag.
@@ -7504,11 +7613,16 @@ mod tests {
         let spread = idml_import::parse_spread(XML).expect("parse");
         assert_eq!(
             spread.labels.get("r1"),
-            Some(&vec![("x-paged:aid".to_string(), "{\"t\":\"\u{1F600}\"}".to_string())])
+            Some(&vec![(
+                "x-paged:aid".to_string(),
+                "{\"t\":\"\u{1F600}\"}".to_string()
+            )])
         );
         let out = String::from_utf8(rewrite_spread(XML, &spread).expect("rewrite")).unwrap();
         assert!(
-            out.contains(r#"Value="{&quot;t&quot;:&quot;&lt;?AID d83d?&gt;&lt;?AID de00?&gt;&quot;}""#),
+            out.contains(
+                r#"Value="{&quot;t&quot;:&quot;&lt;?AID d83d?&gt;&lt;?AID de00?&gt;&quot;}""#
+            ),
             "{out}"
         );
     }
@@ -7523,23 +7637,40 @@ mod tests {
 <Spread Self="s"><Rectangle Self="r1" Name="photo" ItemTransform="1 0 0 1 10 10" GeometricBounds="0 0 50 50" FillColor="Color/Black"/><Polygon Self="p1" Name="star" ItemTransform="1 0 0 1 20 20" GeometricBounds="0 0 30 30" FillColor="Color/Paper"/><Group Self="g1" ItemTransform="1 0 0 1 100 0"><Rectangle Self="r2" Name="$ID/" ItemTransform="1 0 0 1 5 5" GeometricBounds="0 0 20 20" FillColor="Color/Paper"/></Group></Spread>
 </idPkg:Spread>"#;
         let mut spread = idml_import::parse_spread(XML).expect("parse");
-        assert_eq!(spread.item_names.get("r1").map(String::as_str), Some("photo"));
+        assert_eq!(
+            spread.item_names.get("r1").map(String::as_str),
+            Some("photo")
+        );
         assert!(!spread.item_names.contains_key("r2"), "$ID/ is unnamed");
         spread.item_names.insert("r1".into(), "hero & photo".into());
         spread.item_names.insert("g1".into(), "card".into());
         let mut p = inserted_polygon(&spread, "unew", None);
         p.fill_color = Some("Color/Black".into());
         spread.polygons.push(p);
-        spread.frames_in_order.push(idml_import::FrameRef::Polygon(1));
+        spread
+            .frames_in_order
+            .push(idml_import::FrameRef::Polygon(1));
         spread.item_names.insert("unew".into(), "fresh".into());
 
         let out = rewrite_spread(XML, &spread).expect("rewrite");
         let s = String::from_utf8(out.clone()).unwrap();
-        assert!(s.contains(r#"<Polygon Self="p1" Name="star" "#), "unchanged keeps its bytes: {s}");
+        assert!(
+            s.contains(r#"<Polygon Self="p1" Name="star" "#),
+            "unchanged keeps its bytes: {s}"
+        );
         assert!(s.contains(r#"Name="hero &amp; photo""#), "{s}");
         let back = idml_import::parse_spread(&out).expect("re-parse");
-        for (id, name) in [("r1", "hero & photo"), ("p1", "star"), ("g1", "card"), ("unew", "fresh")] {
-            assert_eq!(back.item_names.get(id).map(String::as_str), Some(name), "{id}: {s}");
+        for (id, name) in [
+            ("r1", "hero & photo"),
+            ("p1", "star"),
+            ("g1", "card"),
+            ("unew", "fresh"),
+        ] {
+            assert_eq!(
+                back.item_names.get(id).map(String::as_str),
+                Some(name),
+                "{id}: {s}"
+            );
         }
     }
 }
