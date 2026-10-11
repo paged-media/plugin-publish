@@ -338,11 +338,19 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
                 ]
             })
             .unwrap_or([0.0; 4]);
+        // A frame with no transform of its own that NAMES a fit is placed
+        // with that fit — the engine's rule (paged_model::fitting), so the
+        // export and the render agree: FillProportionally covers the frame
+        // at a uniform scale instead of stretching into it.
+        let transform = r.image_item_transform.or_else(|| {
+            let (w, h) = r.image_bytes.as_deref().and_then(image_dimensions)?;
+            named_fit(r.frame_fitting.as_ref(), crops, r.bounds, w, h)
+        });
         add(
             r.self_id.as_deref(),
             r.image_link.as_deref(),
             r.image_bytes.as_deref(),
-            r.image_item_transform,
+            transform,
             r.bounds,
             crops,
         );
@@ -368,6 +376,31 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
         );
     }
     out
+}
+
+/// The transform a frame's NAMED fit resolves to when it stores none:
+/// only without crops — crops are the resolved placement InDesign bakes
+/// out, and they keep the crop-box placement below. A fit the engine does
+/// not model as a content fit (`None`, `FrameToContent`) also keeps it.
+fn named_fit(
+    fitting: Option<&paged_model::FrameFittingOption>,
+    crops: [f32; 4],
+    frame: Bounds,
+    w: u32,
+    h: u32,
+) -> Option<[f32; 6]> {
+    let ff = fitting?;
+    let mode = paged_model::fitting::FitMode::from_idml(ff.fitting_on_empty_frame.as_deref()?)?;
+    if crops.iter().any(|c| *c != 0.0) {
+        return None;
+    }
+    paged_model::fitting::fit_transform(
+        mode,
+        ff.reference_point.as_deref(),
+        frame,
+        w as f32,
+        h as f32,
+    )
 }
 
 /// The `<Image>`'s own box and its `ItemTransform`, in InDesign's
@@ -798,6 +831,33 @@ mod tests {
         jpg.extend_from_slice(&[0u8; 12]);
         assert_eq!(image_dimensions(&jpg), Some((24, 8)));
         assert_eq!(image_dimensions(b"not a picture"), None);
+    }
+
+    #[test]
+    fn a_named_fill_covers_the_frame_at_one_scale() {
+        // The reported case: a portrait 918×1224 picture in a landscape
+        // ~249×187 pt frame that names FillProportionally and stores no
+        // transform. It must scale uniformly (cover), never stretch.
+        let frame = Bounds {
+            top: 134.0,
+            left: 108.0,
+            bottom: 321.0,
+            right: 357.0,
+        };
+        let ff = paged_model::FrameFittingOption {
+            fitting_on_empty_frame: Some("FillProportionally".into()),
+            ..Default::default()
+        };
+        let t = named_fit(Some(&ff), [0.0; 4], frame, 918, 1224).expect("a fill resolves");
+        assert!((t[0] - t[3]).abs() < 1e-6, "uniform scale, got {t:?}");
+        assert!(
+            (t[0] - 249.0 / 918.0).abs() < 1e-4,
+            "covers the width, got {t:?}"
+        );
+        // Crops are a resolved placement: they keep the crop-box rule.
+        assert!(named_fit(Some(&ff), [1.0, 0.0, 0.0, 0.0], frame, 918, 1224).is_none());
+        // No fit named: nothing to apply.
+        assert!(named_fit(None, [0.0; 4], frame, 918, 1224).is_none());
     }
 
     #[test]

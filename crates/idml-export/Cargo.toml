@@ -14,6 +14,7 @@ workspace = true
 base64 = { workspace = true }
 idml-import = { path = "../idml-import" }
 paged-scene = { workspace = true }
+paged-model = { workspace = true }
 thiserror = { workspace = true }
 # Same wasm-compatible config idml-import reads zips with: default
 # features off + deflate only. No native-only deps so the crate
