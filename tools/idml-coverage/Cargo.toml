@@ -1,0 +1,19 @@
+[package]
+name = "idml-coverage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Static inventory of the IDML elements and attributes idml-import reads and idml-export writes; emits docs/reference/idml-coverage.json."
+
+[lints]
+workspace = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "printing", "parsing"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"

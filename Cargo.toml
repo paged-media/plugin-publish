@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/idml-import", "crates/idml-export", "crates/pdf-import"]
+members = ["crates/idml-import", "crates/idml-export", "crates/pdf-import", "tools/idml-coverage"]
 
 [workspace.package]
 version = "0.0.0"

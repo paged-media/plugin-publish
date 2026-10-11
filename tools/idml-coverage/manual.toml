@@ -1,0 +1,510 @@
+# Hand-kept facts the syn walk in tools/idml-coverage cannot see.
+#
+# Every entry is checked against the code: a literal named here must still
+# appear in the item named here, and a fn must still exist, or the tool fails.
+# See README.md for what each table means.
+
+# ------------------------------------------------------------- importer
+
+# A function's element(s), where call-site inference cannot tell.
+
+[[fn]]
+file = "crates/idml-import/src/story.rs"
+name = "make_anchored_frame"
+# `anchored_kind_from_name`: the inline-anchored page items.
+elements = ["TextFrame", "Rectangle", "Group"]
+
+[[fn]]
+file = "crates/idml-import/src/util.rs"
+name = "record_item_name"
+# `NAMED_ITEM_KINDS`.
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+
+# `(N, b"Child")` arms in the story parser: which element's <Properties>
+# kind N is (`properties_kind` = 1 inside a run, 2 inside a paragraph).
+
+[[properties_kind]]
+file = "crates/idml-import/src/story.rs"
+kind = 1
+element = "CharacterStyleRange"
+
+[[properties_kind]]
+file = "crates/idml-import/src/story.rs"
+kind = 2
+element = "ParagraphStyleRange"
+# InDesign's record-form tab stop: <TabList><ListItem type="record">.
+rename = { Position = "TabList/ListItem/Position", Alignment = "TabList/ListItem/Alignment", AlignmentCharacter = "TabList/ListItem/AlignmentCharacter", Leader = "TabList/ListItem/Leader" }
+
+# Properties children the style parser reads as text (`pending_property`),
+# with the styles each arm's guard admits.
+
+[[properties_child]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_stylesheet"
+children = ["AppliedFont", "BasedOn"]
+elements = ["CharacterStyle", "ParagraphStyle", "ObjectStyle", "CellStyle", "TableStyle"]
+
+[[properties_child]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_stylesheet"
+children = ["Leading"]
+elements = ["CharacterStyle", "ParagraphStyle"]
+coarse_type = "number"
+
+[[properties_child]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_stylesheet"
+children = [
+  "NumberingExpression",
+  "NumberingFormat",
+  "AppliedNumberingList",
+  "SpanSplitColumnCount",
+  "BulletsCharacterStyle",
+  "NumberingCharacterStyle",
+  "BulletsTextAfter",
+]
+elements = ["ParagraphStyle"]
+
+[[properties_child]]
+file = "crates/idml-import/src/designmap.rs"
+item = "parse_designmap"
+# `<Properties><Destination type="object">` (`PendingProperty`).
+children = ["Destination"]
+elements = ["Hyperlink"]
+
+[[properties_child]]
+file = "crates/idml-import/src/designmap.rs"
+item = "parse_designmap"
+children = ["PageNumberStyle"]
+elements = ["Section"]
+
+# Reads through a computed key.
+
+[[read]]
+file = "crates/idml-import/src/spread.rs"
+item = "read_corner_attrs"
+attributes = [
+  "TopLeftCornerOption",
+  "TopRightCornerOption",
+  "BottomRightCornerOption",
+  "BottomLeftCornerOption",
+]
+# The arms that call `read_corner_attrs`.
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+coarse_type = "enum"
+field = "CornerSpec.option"
+
+[[read]]
+file = "crates/idml-import/src/spread.rs"
+item = "read_corner_attrs"
+attributes = [
+  "TopLeftCornerRadius",
+  "TopRightCornerRadius",
+  "BottomRightCornerRadius",
+  "BottomLeftCornerRadius",
+]
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+coarse_type = "number"
+field = "CornerSpec.radius"
+
+# `parse_paragraph_rule(e, "RuleAbove" | "RuleBelow")` assembles each key
+# from the family prefix and a suffix; elements are inferred from its callers.
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAbove", "RuleBelow"]
+verify = [""]
+coarse_type = "bool"
+field = "ParagraphRule.on"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveColor", "RuleBelowColor"]
+verify = ["Color"]
+coarse_type = "string"
+field = "ParagraphRule.color"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveTint", "RuleBelowTint"]
+verify = ["Tint"]
+coarse_type = "number"
+field = "ParagraphRule.tint"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveLineWeight", "RuleBelowLineWeight"]
+verify = ["LineWeight"]
+coarse_type = "number"
+field = "ParagraphRule.weight"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveWeight", "RuleBelowWeight"]
+verify = ["Weight"]
+coarse_type = "number"
+field = "ParagraphRule.weight"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveOffset", "RuleBelowOffset"]
+verify = ["Offset"]
+coarse_type = "number"
+field = "ParagraphRule.offset"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveLeftIndent", "RuleBelowLeftIndent"]
+verify = ["LeftIndent"]
+coarse_type = "number"
+field = "ParagraphRule.left_indent"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveRightIndent", "RuleBelowRightIndent"]
+verify = ["RightIndent"]
+coarse_type = "number"
+field = "ParagraphRule.right_indent"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_rule"
+attributes = ["RuleAboveWidth", "RuleBelowWidth"]
+verify = ["Width"]
+coarse_type = "string"
+field = "ParagraphRule.width"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_border"
+attributes = ["ParagraphBorderTopLeftCornerOption", "ParagraphBorderTopRightCornerOption", "ParagraphBorderBottomRightCornerOption", "ParagraphBorderBottomLeftCornerOption"]
+coarse_type = "enum"
+field = "CornerSpec.option"
+
+[[read]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_paragraph_border"
+attributes = ["ParagraphBorderTopLeftCornerRadius", "ParagraphBorderTopRightCornerRadius", "ParagraphBorderBottomRightCornerRadius", "ParagraphBorderBottomLeftCornerRadius"]
+coarse_type = "number"
+field = "CornerSpec.radius"
+
+[[read]]
+file = "crates/idml-import/src/designmap.rs"
+item = "parse_designmap"
+# Read once before the match on the part reference's name.
+attributes = ["src"]
+elements = ["idPkg:Spread", "idPkg:Story", "idPkg:MasterSpread"]
+
+[[ignore]]
+file = "crates/idml-import/src/util.rs"
+item = "NAMED_ITEM_KINDS"
+literals = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+reason = "element names, not attributes"
+
+# ------------------------------------------------------------- exporter
+
+[[fn]]
+file = "crates/idml-export/src/emit.rs"
+name = "open_pkg_root"
+elements = ["idPkg:Story", "idPkg:Spread", "idPkg:MasterSpread"]
+
+[[fn]]
+file = "crates/idml-export/src/resources.rs"
+name = "write_gradient"
+elements = ["Gradient"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "write_text_paths"
+elements = ["TextPath"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "line_end_extras"
+elements = ["GraphicLine", "Polygon"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "keys"
+# `GradientGeom`: the gradient geometry of a page item.
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "push_attrs"
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "patch_gradient_geometry"
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "patch_item_name"
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "patch_item_state"
+# "Groups model neither and keep their source attributes."
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine"]
+
+[[fn]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "PER_CORNER_KEYS"
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+
+[[fn]]
+file = "crates/idml-export/src/row_attrs.rs"
+name = "patched"
+elements = ["Row"]
+
+[[fn]]
+file = "crates/idml-export/src/text_variables.rs"
+name = "write_variable"
+# The decoration every typed preference carries (`preference_element`);
+# the per-type keys sit in `match pref` arms the walk reads itself.
+elements = [
+  "CustomTextVariablePreference",
+  "MatchParagraphStylePreference",
+  "MatchCharacterStylePreference",
+  "PageNumberVariablePreference",
+  "ChapterNumberVariablePreference",
+  "FileNameVariablePreference",
+  "DateVariablePreference",
+]
+
+# Writes the tuple walk cannot see.
+
+[[export]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "PER_CORNER_KEYS"
+attributes = [
+  "TopLeftCornerRadius",
+  "TopRightCornerRadius",
+  "BottomRightCornerRadius",
+  "BottomLeftCornerRadius",
+]
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "RULE_ABOVE"
+attributes = [
+  "RuleAbove",
+  "RuleAboveColor",
+  "RuleAboveTint",
+  "RuleAboveLineWeight",
+  "RuleAboveOffset",
+  "RuleAboveLeftIndent",
+  "RuleAboveRightIndent",
+  "RuleAboveWidth",
+]
+# `paragraph_rule_attrs`, from `paragraph_attrs` and `paragraph_style_attrs`.
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "RULE_BELOW"
+attributes = [
+  "RuleBelow",
+  "RuleBelowColor",
+  "RuleBelowTint",
+  "RuleBelowLineWeight",
+  "RuleBelowOffset",
+  "RuleBelowLeftIndent",
+  "RuleBelowRightIndent",
+  "RuleBelowWidth",
+]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+
+# Typed <Properties> children.
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "emit_applied_font"
+attributes = ["AppliedFont"]
+elements = ["CharacterStyleRange"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/resources.rs"
+item = "emit_style_element"
+attributes = ["AppliedFont", "Leading"]
+elements = ["ParagraphStyle", "CharacterStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/resources.rs"
+item = "write_based_on_child"
+attributes = ["BasedOn"]
+elements = ["ParagraphStyle", "CharacterStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_span_split_column_count"
+attributes = ["SpanSplitColumnCount"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_numbering_format"
+attributes = ["NumberingFormat"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_bullets_character_style"
+attributes = ["BulletsCharacterStyle"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_numbering_character_style"
+attributes = ["NumberingCharacterStyle"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_numbering_expression"
+attributes = ["NumberingExpression"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_applied_numbering_list"
+attributes = ["AppliedNumberingList"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_tab_list"
+attributes = ["Alignment", "AlignmentCharacter", "Leader", "Position"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+prefix = "TabList/ListItem/"
+
+[[ignore]]
+file = "crates/idml-export/src/navigation.rs"
+item = "write_xref_format"
+literals = ["CustomStringBuildingBlock", "FullParagraphBuildingBlock", "PageNumberBuildingBlock"]
+reason = "BlockType values, not attribute names"
+
+[[export]]
+file = "crates/idml-export/src/navigation.rs"
+item = "write_hyperlink"
+attributes = ["BorderColor", "Destination"]
+elements = ["Hyperlink"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/navigation.rs"
+item = "write_section"
+attributes = ["PageNumberStyle"]
+elements = ["Section"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/navigation.rs"
+item = "emit_section"
+attributes = ["PageNumberStyle"]
+elements = ["Section"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/navigation.rs"
+item = "write_condition"
+attributes = ["IndicatorColor"]
+elements = ["Condition"]
+properties_child = true
+
+# Shared helpers whose keys depend on an argument: the walk's per-function
+# attribution is replaced by the elements each key is really written for.
+
+[[ignore]]
+file = "crates/idml-export/src/text_variables.rs"
+item = "write_variable"
+literals = ["AppliedParagraphStyle", "AppliedCharacterStyle"]
+reason = "chosen by `pref`; attributed below"
+
+[[export]]
+file = "crates/idml-export/src/text_variables.rs"
+item = "write_variable"
+attributes = ["AppliedParagraphStyle"]
+elements = ["MatchParagraphStylePreference"]
+
+[[export]]
+file = "crates/idml-export/src/text_variables.rs"
+item = "write_variable"
+attributes = ["AppliedCharacterStyle"]
+elements = ["MatchCharacterStylePreference"]
+
+[[ignore]]
+file = "crates/idml-export/src/navigation.rs"
+item = "emit_destination"
+literals = ["DestinationURL", "DestinationPage"]
+reason = "patched by destination kind; attributed below"
+
+[[export]]
+file = "crates/idml-export/src/navigation.rs"
+item = "emit_destination"
+attributes = ["DestinationURL"]
+elements = ["HyperlinkURLDestination"]
+
+[[export]]
+file = "crates/idml-export/src/navigation.rs"
+item = "emit_destination"
+attributes = ["DestinationPage"]
+elements = ["HyperlinkPageDestination"]
+
+[[ignore]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "frame_attr_patch"
+literals = ["NextTextFrame", "LeftLineEnd", "RightLineEnd"]
+reason = "only patched when the caller passes the field; attributed below"
+
+[[export]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "frame_attr_patch"
+attributes = ["NextTextFrame"]
+elements = ["TextFrame"]
+
+[[export]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "frame_attr_patch"
+attributes = ["LeftLineEnd", "RightLineEnd"]
+elements = ["GraphicLine", "Polygon"]
+
+[[ignore]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "frame_attr_extras"
+literals = ["NextTextFrame", "LeftLineEnd", "RightLineEnd"]
+reason = "only written when the caller passes the field; attributed below"
+
+[[export]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "frame_attr_extras"
+attributes = ["NextTextFrame"]
+elements = ["TextFrame"]
+
+[[export]]
+file = "crates/idml-export/src/rewrite.rs"
+item = "frame_attr_extras"
+attributes = ["LeftLineEnd", "RightLineEnd"]
+elements = ["GraphicLine", "Polygon"]
