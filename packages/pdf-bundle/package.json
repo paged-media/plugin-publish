@@ -29,7 +29,7 @@
     "vitest": "^3.2.7",
     "@paged-media/plugin-api": "0.2.45-canary.0",
     "@paged-media/plugin-sdk": "0.2.45-canary.0",
-    "@paged-media/canvas-wasm": "0.70.0"
+    "@paged-media/canvas-wasm": "0.71.1"
   },
   "files": [
     "bin",
