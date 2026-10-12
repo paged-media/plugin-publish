@@ -866,15 +866,16 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         // `<ParagraphStyleRange>` will start the
                         // footnote body in a fresh `current_paragraph`.
                         // On `</Footnote>` we restore and attach.
-                        // The model is about to give a footnote its
-                        // anchor (core, ADR 034): build with either
-                        // shape of `Footnote`.
-                        #[allow(clippy::needless_update)]
+                        // The reference stands HERE in the host
+                        // paragraph: the note is set at the foot of
+                        // the frame holding this line (core bee1e5d1).
+                        let anchor =
+                            anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
                         footnote_stack.push(FootnoteContext {
                             footnote: Footnote {
                                 self_id: attr(&e, b"Self"),
+                                anchor: Some(anchor),
                                 paragraphs: Vec::new(),
-                                ..Default::default()
                             },
                             outer_paragraph: current_paragraph.take(),
                             outer_run: current_run.take(),
@@ -3546,6 +3547,8 @@ mod tests {
         assert_eq!(fn0.self_id.as_deref(), Some("Footnote/u1"));
         assert_eq!(fn0.paragraphs.len(), 1);
         assert_eq!(fn0.paragraphs[0].runs[0].text, "This is the footnote body.");
+        // The reference stands after "before": six characters in.
+        assert_eq!(fn0.anchor, Some(6));
     }
 
     #[test]
