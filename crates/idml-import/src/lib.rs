@@ -198,6 +198,7 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
     let mut designmap = parse_designmap(&archive.designmap_raw)?;
     if let Some(raw) = archive.entry("Resources/Preferences.xml") {
         designmap.chapter_number = designmap::parse_chapter_number_preference(raw)?;
+        designmap::parse_preferences_part(raw, &mut designmap)?;
     }
     let mut palette = match archive.entry("Resources/Graphic.xml") {
         Some(raw) => parse_graphic(raw)?,

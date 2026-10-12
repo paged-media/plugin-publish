@@ -199,6 +199,112 @@ pub fn patch_preferences(
     Ok(writer.into_inner().into_inner())
 }
 
+/// The document's bleed and slug written onto the `<DocumentPreference>`
+/// the part already carries — in `Resources/Preferences.xml`, where
+/// InDesign keeps it, or in `designmap.xml`, where the engine's older
+/// fixtures put it.
+///
+/// Only an existing element is patched, attribute by attribute: InDesign
+/// re-shuffles every page into its own spread when a package that never
+/// had a `DocumentPreference` gains one without its page-size and
+/// facing-page attributes (measured 2026-09-05), so a part without the
+/// element is left alone. Byte-identical when every value already agrees.
+pub fn patch_document_preference(
+    original: &[u8],
+    pref: &paged_model::DocumentPreference,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let wanted: [(&[u8], f32); 8] = [
+        (b"DocumentBleedTopOffset", pref.bleed_top),
+        (b"DocumentBleedBottomOffset", pref.bleed_bottom),
+        (
+            b"DocumentBleedInsideOrLeftOffset",
+            pref.bleed_inside_or_left,
+        ),
+        (
+            b"DocumentBleedOutsideOrRightOffset",
+            pref.bleed_outside_or_right,
+        ),
+        (b"SlugTopOffset", pref.slug_top),
+        (b"SlugBottomOffset", pref.slug_bottom),
+        (b"SlugInsideOrLeftOffset", pref.slug_inside_or_left),
+        (b"SlugRightOrOutsideOffset", pref.slug_right_or_outside),
+    ];
+    // An absent attribute reads as 0 on import, so 0 needs no attribute.
+    let differs = |e: &BytesStart| {
+        wanted.iter().any(|(name, v)| {
+            let have = e
+                .attributes()
+                .flatten()
+                .find(|a| a.key.as_ref() == *name)
+                .and_then(|a| std::str::from_utf8(&a.value).ok()?.parse::<f32>().ok())
+                .unwrap_or(0.0);
+            (have - v).abs() > 1e-4
+        })
+    };
+    let needs = {
+        let mut reader = Reader::from_reader(original);
+        reader.config_mut().trim_text(false);
+        let mut buf = Vec::new();
+        let mut found = false;
+        loop {
+            match reader.read_event_into(&mut buf)? {
+                Event::Eof => break,
+                Event::Empty(e) | Event::Start(e)
+                    if e.name().as_ref() == b"DocumentPreference" && differs(&e) =>
+                {
+                    found = true;
+                    break;
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+        found
+    };
+    if !needs {
+        return Ok(original.to_vec());
+    }
+    let rewrite = |e: &BytesStart| -> BytesStart<'static> {
+        let mut out = BytesStart::new(String::from_utf8_lossy(e.name().as_ref()).into_owned());
+        let mut written: Vec<&[u8]> = Vec::new();
+        for a in e.attributes().flatten() {
+            match wanted.iter().find(|(name, _)| a.key.as_ref() == *name) {
+                Some((name, v)) => {
+                    out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+                    written.push(name);
+                }
+                None => out.push_attribute((a.key.as_ref(), a.value.as_ref())),
+            }
+        }
+        for (name, v) in &wanted {
+            if !written.contains(name) && v.abs() > 1e-4 {
+                out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+            }
+        }
+        out
+    };
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Empty(ref e) if e.name().as_ref() == b"DocumentPreference" => {
+                writer.write_event(Event::Empty(rewrite(e)))?
+            }
+            Event::Start(ref e) if e.name().as_ref() == b"DocumentPreference" => {
+                writer.write_event(Event::Start(rewrite(e)))?
+            }
+            other => writer.write_event(other)?,
+        }
+        buf.clear();
+    }
+    Ok(writer.into_inner().into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +357,27 @@ mod tests {
                 src.as_bytes()
             );
         }
+    }
+
+    #[test]
+    fn a_changed_bleed_is_written_onto_the_existing_preference() {
+        let src = br#"<idPkg:Preferences><DocumentPreference PageWidth="595" FacingPages="false" DocumentBleedTopOffset="0" DocumentBleedBottomOffset="0"/></idPkg:Preferences>"#;
+        let mut p = paged_model::DocumentPreference::default();
+        assert_eq!(
+            patch_document_preference(src, &p).unwrap(),
+            src.to_vec(),
+            "unchanged"
+        );
+        p.bleed_top = 8.5;
+        p.bleed_outside_or_right = 3.0;
+        let out = String::from_utf8(patch_document_preference(src, &p).unwrap()).unwrap();
+        assert!(out.contains(r#"PageWidth="595" FacingPages="false" DocumentBleedTopOffset="8.5" DocumentBleedBottomOffset="0" DocumentBleedOutsideOrRightOffset="3""#), "{out}");
+        let none = br#"<idPkg:Preferences><TextPreference/></idPkg:Preferences>"#;
+        assert_eq!(
+            patch_document_preference(none, &p).unwrap(),
+            none.to_vec(),
+            "no element is minted"
+        );
     }
 
     #[test]
