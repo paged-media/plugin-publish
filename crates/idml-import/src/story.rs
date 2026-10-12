@@ -211,6 +211,14 @@ struct OpenRange {
 /// A fixture that omits the attribute composes the way InDesign composes it.
 const DEFAULT_CELL_INSET_PT: f32 = 4.0;
 
+/// `<Change ChangeType="DeletedText">`: text a tracked change removed.
+fn is_tracked_deletion(e: &quick_xml::events::BytesStart) -> bool {
+    e.name().as_ref() == b"Change"
+        && e.attributes()
+            .flatten()
+            .any(|a| a.key.as_ref() == b"ChangeType" && a.value.as_ref() == b"DeletedText")
+}
+
 pub fn parse_story(xml: &[u8]) -> Result<Story, ParseError> {
     parse_story_with_provenance(xml).map(|(story, _)| story)
 }
@@ -517,7 +525,14 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     buf.clear();
                     continue;
                 }
-                if matches!(name, b"HiddenText" | b"Note") {
+                // Tracked deletions print nowhere: InDesign composes and
+                // exports a story as if every change were accepted (asked of
+                // InDesign 20.0.1: "KEEP one ADDED two" with a deleted
+                // "DELETEME " prints without it). A deletion carries its own
+                // nested paragraph and character ranges, which read as body
+                // text derailed the whole story. Inserted and moved text is
+                // the story's text; its `<Change>` wrapper is transparent.
+                if matches!(name, b"HiddenText" | b"Note") || is_tracked_deletion(&e) {
                     suppress_depth = 1;
                     buf.clear();
                     continue;
@@ -1466,7 +1481,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // (`<Br/>` / `<Tab/>` / `<TextVariableInstance/>`)
                 // nested inside an open suppressed subtree are
                 // also dropped to keep the wrapper truly silent.
-                if suppress_depth > 0 || matches!(name, b"HiddenText" | b"Note") {
+                if suppress_depth > 0
+                    || matches!(name, b"HiddenText" | b"Note")
+                    || is_tracked_deletion(&e)
+                {
                     buf.clear();
                     continue;
                 }
@@ -3166,6 +3184,81 @@ mod tests {
     }
 
     // ---- CJK Stage 1 (parser surface) ----
+
+    /// InDesign 20.0.1's own export of a story with tracking on: one
+    /// insertion, one deletion carrying nested ranges. InDesign prints
+    /// "KEEP one ADDED two OLDWORD three" (its PDF and `story.contents`).
+    #[test]
+    fn a_tracked_story_reads_as_if_every_change_were_accepted() {
+        let xml = br#"<Story Self="udf" UserText="true" TrackChanges="true">
+<StoryPreference OpticalMarginAlignment="false" StoryOrientation="Horizontal"/>
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+<Content>KEEP one </Content>
+<Change Date="2026-10-12T21:28:17" ChangeType="InsertedText" UserName="$ID/Unknown User Name" AppliedDocumentUser="dDocumentUser0">
+<Content>ADDED </Content>
+</Change>
+<Change Date="2026-10-12T21:28:17" ChangeType="DeletedText" UserName="$ID/Unknown User Name" AppliedDocumentUser="dDocumentUser0">
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+<Content>DELETEME </Content>
+</CharacterStyleRange>
+</ParagraphStyleRange>
+</Change>
+<Content>two OLDWORD three</Content>
+</CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>"#;
+        let s = parse_story(xml).unwrap();
+        let text: String = s
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, "KEEP one ADDED two OLDWORD three");
+    }
+
+    /// A deleted paragraph mark joins two paragraphs; an inserted one splits
+    /// them. InDesign 20.0.1's export and its `story.contents`:
+    /// "FIRST NEW one\rNEW two SECOND para".
+    #[test]
+    fn tracked_paragraph_marks_join_and_split_as_indesign_prints_them() {
+        let xml = br#"<Story Self="u1" TrackChanges="true">
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+<Content>FIRST </Content>
+<Change ChangeType="DeletedText" UserName="$ID/Unknown User Name">
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+<Content>para</Content>
+<Br />
+</CharacterStyleRange>
+</ParagraphStyleRange>
+</Change>
+<Change ChangeType="InsertedText" UserName="$ID/Unknown User Name">
+<Content>N</Content>
+</Change>
+<Change ChangeType="InsertedText" UserName="$ID/Unknown User Name">
+<Content>EW one</Content>
+<Br />
+<Content>NEW two </Content>
+</Change>
+<Content>SECOND para</Content>
+</CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>"#;
+        let s = parse_story(xml).unwrap();
+        // Paragraphs of one range are one model paragraph split at `\n`
+        // (the renderer splits them), so the text is InDesign's exactly.
+        let text: String = s
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, "FIRST NEW one\nNEW two SECOND para");
+    }
 
     #[test]
     fn parses_story_direction_vertical() {
