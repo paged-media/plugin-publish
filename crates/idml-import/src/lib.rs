@@ -199,10 +199,15 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
     if let Some(raw) = archive.entry("Resources/Preferences.xml") {
         designmap.chapter_number = designmap::parse_chapter_number_preference(raw)?;
     }
-    let palette = match archive.entry("Resources/Graphic.xml") {
+    let mut palette = match archive.entry("Resources/Graphic.xml") {
         Some(raw) => parse_graphic(raw)?,
         None => Graphic::default(),
     };
+    // Colour groups live in designmap.xml in InDesign's files (and in
+    // Graphic.xml in the engine's older fixtures); the designmap wins.
+    for g in graphic::parse_color_groups_in(&archive.designmap_raw)? {
+        palette.color_groups.insert(g.self_id.clone(), g);
+    }
     let mut styles = match archive.entry("Resources/Styles.xml") {
         Some(raw) => parse_stylesheet(raw)?,
         None => StyleSheet::default(),
@@ -211,6 +216,10 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
     // (measured, InDesign 20.0.1) and in `Resources/Styles.xml` in every
     // engine-built fixture before 2026-09. Read both; the designmap wins
     // on an id clash, being the spelling InDesign writes.
+    // Numbering lists, likewise: InDesign writes them in designmap.xml.
+    for l in styles::parse_numbering_lists_in(&archive.designmap_raw)? {
+        styles.numbering_lists.insert(l.self_id.clone(), l);
+    }
     let (dm_conditions, dm_sets) = parse_conditions(&archive.designmap_raw)?;
     styles.conditions.extend(dm_conditions);
     styles.condition_sets.extend(dm_sets);

@@ -251,6 +251,45 @@ fn parse_swatch(e: &quick_xml::events::BytesStart) -> Option<SwatchEntry> {
     })
 }
 
+/// The colour groups of `designmap.xml`, where InDesign writes them (265
+/// of the 305 census documents): `<ColorGroup Self Name IsRootColorGroup>`
+/// with one `<ColorGroupSwatch SwatchItemRef="Color/…"/>` child per member.
+/// The root group (`IsRootColorGroup="true"`) is InDesign's container for
+/// every ungrouped swatch, not a group the user made, so it is skipped.
+pub fn parse_color_groups_in(xml: &[u8]) -> Result<Vec<ColorGroupEntry>, ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut out = Vec::new();
+    let mut open: Option<ColorGroupEntry> = None;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) if e.name().as_ref() == b"ColorGroup" => {
+                let root = attr(&e, b"IsRootColorGroup").is_some_and(|v| v == "true");
+                open = if root { None } else { parse_color_group(&e) };
+            }
+            Event::Empty(e) if e.name().as_ref() == b"ColorGroup" => {
+                let root = attr(&e, b"IsRootColorGroup").is_some_and(|v| v == "true");
+                if !root {
+                    out.extend(parse_color_group(&e));
+                }
+            }
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"ColorGroupSwatch" => {
+                if let (Some(g), Some(item)) = (open.as_mut(), attr(&e, b"SwatchItemRef")) {
+                    g.members.push(item);
+                }
+            }
+            Event::End(e) if e.name().as_ref() == b"ColorGroup" => {
+                out.extend(open.take());
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
 fn parse_color_group(e: &quick_xml::events::BytesStart) -> Option<ColorGroupEntry> {
     let self_id = attr(e, b"Self")?;
     let members = attr(e, b"ColorGroupSwatches")

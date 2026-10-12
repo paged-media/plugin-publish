@@ -927,11 +927,25 @@ pub(crate) fn write_package(
                 entry: STYLES_SRC.to_string(),
                 source,
             })?;
-        let new = resources::patch_styles_with(&stripped, &doc.styles, opts.default_face.is_some())
-            .map_err(|source| WriteError::Rewrite {
-                entry: STYLES_SRC.to_string(),
-                source,
-            })?;
+        let lists_in_designmap = match entry_bytes(&mut src, "designmap.xml")? {
+            Some(dm) => {
+                resources::numbering_list_ids(&dm).map_err(|source| WriteError::Rewrite {
+                    entry: "designmap.xml".to_string(),
+                    source,
+                })?
+            }
+            None => Default::default(),
+        };
+        let new = resources::patch_styles_defined_elsewhere(
+            &stripped,
+            &doc.styles,
+            opts.default_face.is_some(),
+            &lists_in_designmap,
+        )
+        .map_err(|source| WriteError::Rewrite {
+            entry: STYLES_SRC.to_string(),
+            source,
+        })?;
         // … and every paragraph style that names a font spells its
         // face (see [`face`]).
         let new =
