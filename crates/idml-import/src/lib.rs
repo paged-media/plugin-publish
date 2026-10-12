@@ -213,6 +213,14 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
         Some(raw) => parse_stylesheet(raw)?,
         None => StyleSheet::default(),
     };
+    // Custom stroke styles (dashed, dotted, striped, wavy) live in
+    // Graphic.xml in InDesign's files; the engine's fixtures put them in
+    // Styles.xml. The same reader serves both, and Graphic.xml wins.
+    if let Some(raw) = archive.entry("Resources/Graphic.xml") {
+        styles
+            .stroke_styles
+            .extend(parse_stylesheet(raw)?.stroke_styles);
+    }
     // Conditions live in `designmap.xml` in InDesign's own exports
     // (measured, InDesign 20.0.1) and in `Resources/Styles.xml` in every
     // engine-built fixture before 2026-09. Read both; the designmap wins

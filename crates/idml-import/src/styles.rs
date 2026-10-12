@@ -1063,7 +1063,12 @@ fn parse_stroke_style(e: &quick_xml::events::BytesStart) -> Option<StrokeStyleDe
         b"WavyStrokeStyle" => StrokeStyleKind::Wavy,
         _ => return None,
     };
+    // InDesign writes the dashes as `DashArray`, in points (asked of
+    // InDesign 20.0.1: a style made with dashArray [12, 3, 3, 3] mm exports
+    // `DashArray="34.0157… 8.5039… 8.5039… 8.5039…"`); `Pattern` is the
+    // engine's older spelling.
     let pattern = attr(e, b"Pattern")
+        .or_else(|| attr(e, b"DashArray"))
         .map(|s| {
             s.split_ascii_whitespace()
                 .filter_map(|tok| tok.parse::<f32>().ok())
