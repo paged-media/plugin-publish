@@ -141,65 +141,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                         default_image_intent: attr(&e, b"DefaultImageIntent"),
                     };
                 }
-                if e.name().as_ref() == b"DocumentPreference" {
-                    let f = |name: &[u8]| -> f32 {
-                        attr(&e, name).and_then(|s| s.parse().ok()).unwrap_or(0.0)
-                    };
-                    out.document_preference = DocumentPreference {
-                        bleed_top: f(b"DocumentBleedTopOffset"),
-                        bleed_bottom: f(b"DocumentBleedBottomOffset"),
-                        bleed_inside_or_left: f(b"DocumentBleedInsideOrLeftOffset"),
-                        bleed_outside_or_right: f(b"DocumentBleedOutsideOrRightOffset"),
-                        slug_top: f(b"SlugTopOffset"),
-                        slug_bottom: f(b"SlugBottomOffset"),
-                        slug_inside_or_left: f(b"SlugInsideOrLeftOffset"),
-                        slug_right_or_outside: f(b"SlugRightOrOutsideOffset"),
-                    };
-                }
-                // W1.8 — `<FootnoteOption>` document-level footnote
-                // separator + spacing settings. InDesign serialises
-                // this once per document (inside `<RootFootnoteStory>`
-                // or directly under `<Document>`); we match on the
-                // element name wherever it appears. Attribute names
-                // mirror the DOM `FootnoteOption` object.
-                if e.name().as_ref() == b"FootnoteOption" {
-                    let f = |name: &[u8]| -> Option<f32> {
-                        attr(&e, name).and_then(|s| s.parse().ok())
-                    };
-                    out.footnote_options = FootnoteOptions {
-                        present: true,
-                        rule_on: attr(&e, b"RuleOn").and_then(|s| s.parse().ok()),
-                        rule_color: attr(&e, b"RuleColor"),
-                        rule_tint: f(b"RuleTint"),
-                        rule_line_weight: f(b"RuleLineWeight"),
-                        rule_width: f(b"RuleWidth"),
-                        rule_left_indent: f(b"RuleLeftIndent"),
-                        rule_offset: f(b"RuleOffset"),
-                        separator_text: attr(&e, b"SeparatorText"),
-                        spacer: f(b"Spacer"),
-                        space_between: f(b"SpaceBetween"),
-                    };
-                }
-                // W2.5 — `<GridPreference>` baseline-grid + document-
-                // grid settings (serialised once under `<Document>`).
-                // Surfaced read-only for the editor's baseline panel +
-                // overlay; the renderer never draws it.
-                if e.name().as_ref() == b"GridPreference" {
-                    let f = |name: &[u8]| -> Option<f32> {
-                        attr(&e, name).and_then(|s| s.parse().ok())
-                    };
-                    out.grid_preference = GridPreference {
-                        present: true,
-                        baseline_start: f(b"BaselineStart"),
-                        baseline_division: f(b"BaselineDivision"),
-                        baseline_grid_shown: attr(&e, b"BaselineGridShown")
-                            .and_then(|s| s.parse().ok()),
-                        baseline_grid_relative_option: attr(&e, b"BaselineGridRelativeOption"),
-                        baseline_color: attr(&e, b"BaselineColor"),
-                        horizontal_gridline_division: f(b"HorizontalGridlineDivision"),
-                        vertical_gridline_division: f(b"VerticalGridlineDivision"),
-                    };
-                }
+                read_preference(&e, &mut out);
                 if e.name().as_ref() == b"Layer" {
                     if let Some(self_id) = attr(&e, b"Self") {
                         out.layers.push(Layer {
@@ -543,6 +485,83 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
         }
     }
     Ok(out)
+}
+
+/// The three document-level preferences InDesign keeps in
+/// `Resources/Preferences.xml` (measured in 271 of the 305 census
+/// documents) and the engine's own older fixtures wrote into
+/// `designmap.xml`. One reader serves both parts.
+fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
+    if e.name().as_ref() == b"DocumentPreference" {
+        let f = |name: &[u8]| -> f32 { attr(e, name).and_then(|s| s.parse().ok()).unwrap_or(0.0) };
+        out.document_preference = DocumentPreference {
+            bleed_top: f(b"DocumentBleedTopOffset"),
+            bleed_bottom: f(b"DocumentBleedBottomOffset"),
+            bleed_inside_or_left: f(b"DocumentBleedInsideOrLeftOffset"),
+            bleed_outside_or_right: f(b"DocumentBleedOutsideOrRightOffset"),
+            slug_top: f(b"SlugTopOffset"),
+            slug_bottom: f(b"SlugBottomOffset"),
+            slug_inside_or_left: f(b"SlugInsideOrLeftOffset"),
+            slug_right_or_outside: f(b"SlugRightOrOutsideOffset"),
+        };
+    }
+    // W1.8 — `<FootnoteOption>` document-level footnote
+    // separator + spacing settings. InDesign serialises
+    // this once per document (inside `<RootFootnoteStory>`
+    // or directly under `<Document>`); we match on the
+    // element name wherever it appears. Attribute names
+    // mirror the DOM `FootnoteOption` object.
+    if e.name().as_ref() == b"FootnoteOption" {
+        let f = |name: &[u8]| -> Option<f32> { attr(e, name).and_then(|s| s.parse().ok()) };
+        out.footnote_options = FootnoteOptions {
+            present: true,
+            rule_on: attr(e, b"RuleOn").and_then(|s| s.parse().ok()),
+            rule_color: attr(e, b"RuleColor"),
+            rule_tint: f(b"RuleTint"),
+            rule_line_weight: f(b"RuleLineWeight"),
+            rule_width: f(b"RuleWidth"),
+            rule_left_indent: f(b"RuleLeftIndent"),
+            rule_offset: f(b"RuleOffset"),
+            separator_text: attr(e, b"SeparatorText"),
+            spacer: f(b"Spacer"),
+            space_between: f(b"SpaceBetween"),
+        };
+    }
+    // W2.5 — `<GridPreference>` baseline-grid + document-
+    // grid settings (serialised once under `<Document>`).
+    // Surfaced read-only for the editor's baseline panel +
+    // overlay; the renderer never draws it.
+    if e.name().as_ref() == b"GridPreference" {
+        let f = |name: &[u8]| -> Option<f32> { attr(e, name).and_then(|s| s.parse().ok()) };
+        out.grid_preference = GridPreference {
+            present: true,
+            baseline_start: f(b"BaselineStart"),
+            baseline_division: f(b"BaselineDivision"),
+            baseline_grid_shown: attr(e, b"BaselineGridShown").and_then(|s| s.parse().ok()),
+            baseline_grid_relative_option: attr(e, b"BaselineGridRelativeOption"),
+            baseline_color: attr(e, b"BaselineColor"),
+            horizontal_gridline_division: f(b"HorizontalGridlineDivision"),
+            vertical_gridline_division: f(b"VerticalGridlineDivision"),
+        };
+    }
+}
+
+/// `Resources/Preferences.xml`: InDesign's place for `DocumentPreference`
+/// (bleed and slug), `FootnoteOption` and `GridPreference`. Read after the
+/// design map, so InDesign's spelling wins over the engine's older one.
+pub fn parse_preferences_part(xml: &[u8], out: &mut DesignMap) -> Result<(), ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) | Event::Empty(e) => read_preference(&e, out),
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(())
 }
 
 /// The document's `<ChapterNumberPreference>` from `Resources/Preferences.xml`
@@ -915,6 +934,40 @@ mod document_preference_tests {
         let xml = br#"<?xml version="1.0"?><Document DOMVersion="18.5"/>"#;
         let dm = parse_designmap(xml).expect("parse");
         assert_eq!(dm.document_preference, DocumentPreference::default());
+    }
+
+    /// InDesign keeps bleed, footnote options and the grid in
+    /// `Resources/Preferences.xml`; read after the design map, its values
+    /// win, and an element the part does not carry leaves the design map's
+    /// reading alone.
+    #[test]
+    fn the_preferences_part_wins_over_the_designmap() {
+        let mut dm = parse_designmap(
+            br#"<Document DOMVersion="20.0" Self="d">
+<DocumentPreference DocumentBleedTopOffset="1"/>
+<GridPreference BaselineDivision="12"/>
+</Document>"#,
+        )
+        .unwrap();
+        parse_preferences_part(
+            br#"<idPkg:Preferences xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+<DocumentPreference PageHeight="841.8897637795275" PageWidth="595.275590551181" FacingPages="false" DocumentBleedTopOffset="8.503937007874017" DocumentBleedBottomOffset="8.503937007874017" DocumentBleedInsideOrLeftOffset="8.503937007874017" DocumentBleedOutsideOrRightOffset="8.503937007874017"/>
+<FootnoteOption RuleOn="true" RuleLineWeight="0.5" SpaceBetween="3" SeparatorText="&#x9;"/>
+</idPkg:Preferences>"#,
+            &mut dm,
+        )
+        .unwrap();
+        let b = &dm.document_preference;
+        assert!((b.bleed_top - 8.503_937).abs() < 1e-3, "{b:?}");
+        assert!((b.bleed_outside_or_right - 8.503_937).abs() < 1e-3);
+        assert!(dm.footnote_options.present);
+        assert_eq!(dm.footnote_options.rule_on, Some(true));
+        assert_eq!(dm.footnote_options.space_between, Some(3.0));
+        assert_eq!(
+            dm.grid_preference.baseline_division,
+            Some(12.0),
+            "kept from the design map"
+        );
     }
 
     #[test]

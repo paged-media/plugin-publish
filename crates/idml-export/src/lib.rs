@@ -828,6 +828,12 @@ pub(crate) fn write_package(
                 source,
             },
         )?;
+        // The bleed and slug, where InDesign keeps them.
+        let new = preferences::patch_document_preference(&new, &doc.designmap.document_preference)
+            .map_err(|source| WriteError::Rewrite {
+                entry: PREFERENCES_SRC.to_string(),
+                source,
+            })?;
         if new != orig.as_slice() {
             patched.insert(PREFERENCES_SRC.to_string(), new);
         }
@@ -888,6 +894,13 @@ pub(crate) fn write_package(
                 source,
             },
         )?;
+        // The bleed and slug, for a package that keeps its
+        // DocumentPreference in the design map (the engine's older spelling).
+        new = preferences::patch_document_preference(&new, &doc.designmap.document_preference)
+            .map_err(|source| WriteError::Rewrite {
+                entry: DESIGNMAP_SRC.to_string(),
+                source,
+            })?;
         if new != orig.as_slice() {
             patched.insert(DESIGNMAP_SRC.to_string(), new);
         }
