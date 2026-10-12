@@ -828,6 +828,12 @@ pub(crate) fn write_package(
                 source,
             },
         )?;
+        // The bleed and slug, where InDesign keeps them.
+        let new = preferences::patch_document_preference(&new, &doc.designmap.document_preference)
+            .map_err(|source| WriteError::Rewrite {
+                entry: PREFERENCES_SRC.to_string(),
+                source,
+            })?;
         if new != orig.as_slice() {
             patched.insert(PREFERENCES_SRC.to_string(), new);
         }
@@ -888,6 +894,13 @@ pub(crate) fn write_package(
                 source,
             },
         )?;
+        // The bleed and slug, for a package that keeps its
+        // DocumentPreference in the design map (the engine's older spelling).
+        new = preferences::patch_document_preference(&new, &doc.designmap.document_preference)
+            .map_err(|source| WriteError::Rewrite {
+                entry: DESIGNMAP_SRC.to_string(),
+                source,
+            })?;
         if new != orig.as_slice() {
             patched.insert(DESIGNMAP_SRC.to_string(), new);
         }
@@ -927,11 +940,25 @@ pub(crate) fn write_package(
                 entry: STYLES_SRC.to_string(),
                 source,
             })?;
-        let new = resources::patch_styles_with(&stripped, &doc.styles, opts.default_face.is_some())
-            .map_err(|source| WriteError::Rewrite {
-                entry: STYLES_SRC.to_string(),
-                source,
-            })?;
+        let lists_in_designmap = match entry_bytes(&mut src, "designmap.xml")? {
+            Some(dm) => {
+                resources::numbering_list_ids(&dm).map_err(|source| WriteError::Rewrite {
+                    entry: "designmap.xml".to_string(),
+                    source,
+                })?
+            }
+            None => Default::default(),
+        };
+        let new = resources::patch_styles_defined_elsewhere(
+            &stripped,
+            &doc.styles,
+            opts.default_face.is_some(),
+            &lists_in_designmap,
+        )
+        .map_err(|source| WriteError::Rewrite {
+            entry: STYLES_SRC.to_string(),
+            source,
+        })?;
         // … and every paragraph style that names a font spells its
         // face (see [`face`]).
         let new =

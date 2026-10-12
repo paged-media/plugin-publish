@@ -601,6 +601,20 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 out.optical_margin_size = f;
                             }
                         }
+                        // InDesign's spelling of the writing direction
+                        // (271 of the 305 census documents); it wins over
+                        // the `Story@StoryDirection` the engine's older
+                        // fixtures wrote. `Unknown` leaves it unset.
+                        match attr(&e, b"StoryOrientation").as_deref() {
+                            Some("Vertical") => {
+                                out.story_direction = Some(StoryDirection::VerticalWritingDirection)
+                            }
+                            Some("Horizontal") => {
+                                out.story_direction =
+                                    Some(StoryDirection::HorizontalWritingDirection)
+                            }
+                            _ => {}
+                        }
                     }
                     b"ParagraphStyleRange" => {
                         open_paragraphs.push(event_pos);
@@ -1507,6 +1521,20 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             if let Ok(f) = v.parse::<f32>() {
                                 out.optical_margin_size = f;
                             }
+                        }
+                        // InDesign's spelling of the writing direction
+                        // (271 of the 305 census documents); it wins over
+                        // the `Story@StoryDirection` the engine's older
+                        // fixtures wrote. `Unknown` leaves it unset.
+                        match attr(&e, b"StoryOrientation").as_deref() {
+                            Some("Vertical") => {
+                                out.story_direction = Some(StoryDirection::VerticalWritingDirection)
+                            }
+                            Some("Horizontal") => {
+                                out.story_direction =
+                                    Some(StoryDirection::HorizontalWritingDirection)
+                            }
+                            _ => {}
                         }
                     }
                     // <BulletChar BulletCharacterType="UnicodeWithFont"
@@ -3150,6 +3178,28 @@ mod tests {
             s.story_direction,
             Some(StoryDirection::VerticalWritingDirection)
         );
+    }
+
+    /// InDesign spells the direction on the story's preference
+    /// (`StoryOrientation`), self-closing or with children.
+    #[test]
+    fn story_orientation_on_the_story_preference_sets_the_direction() {
+        for pref in [
+            r#"<StoryPreference OpticalMarginAlignment="false" StoryOrientation="Vertical" StoryDirection="LeftToRightDirection"/>"#,
+            r#"<StoryPreference StoryOrientation="Vertical"><Properties/></StoryPreference>"#,
+        ] {
+            let xml = format!(
+                r#"<Story Self="u1">{pref}<ParagraphStyleRange><CharacterStyleRange><Content>縦書き</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#
+            );
+            let s = parse_story(xml.as_bytes()).unwrap();
+            assert_eq!(
+                s.story_direction,
+                Some(StoryDirection::VerticalWritingDirection),
+                "{pref}"
+            );
+        }
+        let unknown = br#"<Story Self="u1"><StoryPreference StoryOrientation="Unknown"/><ParagraphStyleRange><CharacterStyleRange><Content>x</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
+        assert_eq!(parse_story(unknown).unwrap().story_direction, None);
     }
 
     #[test]

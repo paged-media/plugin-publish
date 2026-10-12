@@ -457,7 +457,8 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         }
                                         CurrentProperty::BasedOn => {
                                             if p.based_on.is_none() {
-                                                p.based_on = Some(text);
+                                                p.based_on =
+                                                    Some(qualify_parent("ParagraphStyle", text));
                                             }
                                         }
                                         CurrentProperty::Leading => {
@@ -513,7 +514,8 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         }
                                         CurrentProperty::BasedOn => {
                                             if c.based_on.is_none() {
-                                                c.based_on = Some(text);
+                                                c.based_on =
+                                                    Some(qualify_parent("CharacterStyle", text));
                                             }
                                         }
                                         CurrentProperty::Leading => {
@@ -537,7 +539,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                             if let Some(id) = current_object_style.as_deref() {
                                 if let Some(o) = out.object_styles.get_mut(id) {
                                     if o.based_on.is_none() {
-                                        o.based_on = Some(text);
+                                        o.based_on = Some(qualify_parent("ObjectStyle", text));
                                     }
                                 }
                             }
@@ -546,7 +548,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                             if let Some(id) = current_cell_style.as_deref() {
                                 if let Some(c) = out.cell_styles.get_mut(id) {
                                     if c.based_on.is_none() {
-                                        c.based_on = Some(text);
+                                        c.based_on = Some(qualify_parent("CellStyle", text));
                                     }
                                 }
                             }
@@ -555,7 +557,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                             if let Some(id) = current_table_style.as_deref() {
                                 if let Some(t) = out.table_styles.get_mut(id) {
                                     if t.based_on.is_none() {
-                                        t.based_on = Some(text);
+                                        t.based_on = Some(qualify_parent("TableStyle", text));
                                     }
                                 }
                             }
@@ -840,6 +842,22 @@ pub fn parse_conditions(xml: &[u8]) -> Result<ConditionTables, ParseError> {
     Ok((conditions, sets))
 }
 
+/// A style's parent as the id the style table is keyed by.
+///
+/// InDesign names its reserved roots by `$ID` string, without the kind:
+/// `<BasedOn type="string">$ID/[No paragraph style]</BasedOn>`, while the
+/// root itself is keyed `ParagraphStyle/$ID/[No paragraph style]`. Stored
+/// raw, the cascade stopped one step short of the root in every
+/// InDesign-authored document (272 of the 305 in the census), so styles
+/// fell back to engine defaults instead of the document's own root.
+fn qualify_parent(kind: &str, parent: String) -> String {
+    if parent.starts_with("$ID/") {
+        format!("{kind}/{parent}")
+    } else {
+        parent
+    }
+}
+
 fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterStyleDef> {
     // `Swatch/None` is IDML's literal for "no stroke" — normalise to
     // None so a `BasedOn` cascade can fall through to a real colour.
@@ -850,7 +868,7 @@ fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterS
     Some(CharacterStyleDef {
         self_id: attr(e, b"Self")?,
         name: attr(e, b"Name"),
-        based_on: attr(e, b"BasedOn"),
+        based_on: attr(e, b"BasedOn").map(|v| qualify_parent("CharacterStyle", v)),
         font: attr(e, b"AppliedFont"),
         font_style: attr(e, b"FontStyle"),
         point_size: attr(e, b"PointSize").and_then(|s| s.parse().ok()),
@@ -963,6 +981,29 @@ fn parse_condition_set(e: &quick_xml::events::BytesStart) -> Option<ConditionSet
     })
 }
 
+/// Every `<NumberingList>` in a part. InDesign writes them in
+/// `designmap.xml` (271 of the 305 census documents, its own `[Default]`
+/// included); the engine's fixtures wrote them into Styles.xml.
+pub fn parse_numbering_lists_in(xml: &[u8]) -> Result<Vec<NumberingListDef>, ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut out = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"NumberingList" => {
+                if let Some(def) = parse_numbering_list(&e) {
+                    out.push(def);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
 /// W1.22 — parse one `<NumberingList>` resource. Returns `None` when
 /// `Self` is missing (unaddressable). Mirrors `parse_condition`.
 fn parse_numbering_list(e: &quick_xml::events::BytesStart) -> Option<NumberingListDef> {
@@ -985,7 +1026,7 @@ fn parse_table_style(e: &quick_xml::events::BytesStart) -> Option<TableStyleDef>
     Some(TableStyleDef {
         self_id,
         name: attr(e, b"Name"),
-        based_on: attr(e, b"BasedOn"),
+        based_on: attr(e, b"BasedOn").map(|v| qualify_parent("TableStyle", v)),
         header_region_cell_style: normalize(attr(e, b"HeaderRegionCellStyle")),
         body_region_cell_style: normalize(attr(e, b"BodyRegionCellStyle")),
         footer_region_cell_style: normalize(attr(e, b"FooterRegionCellStyle")),
@@ -1034,7 +1075,7 @@ fn parse_cell_style(e: &quick_xml::events::BytesStart) -> Option<CellStyleDef> {
     Some(CellStyleDef {
         self_id,
         name: attr(e, b"Name"),
-        based_on: attr(e, b"BasedOn"),
+        based_on: attr(e, b"BasedOn").map(|v| qualify_parent("CellStyle", v)),
         fill_color: normalize(attr(e, b"FillColor")),
         vertical_justification: attr(e, b"VerticalJustification"),
         rotation_angle: attr(e, b"RotationAngle").and_then(|s| s.parse().ok()),
@@ -1067,7 +1108,7 @@ fn parse_object_style(e: &quick_xml::events::BytesStart) -> Option<ObjectStyleDe
     Some(ObjectStyleDef {
         self_id,
         name: attr(e, b"Name"),
-        based_on: attr(e, b"BasedOn"),
+        based_on: attr(e, b"BasedOn").map(|v| qualify_parent("ObjectStyle", v)),
         fill_color: normalize(attr(e, b"FillColor")),
         fill_tint: parse_tint_attr(e, b"FillTint"),
         stroke_color: normalize(attr(e, b"StrokeColor")),
@@ -1118,7 +1159,12 @@ fn parse_stroke_style(e: &quick_xml::events::BytesStart) -> Option<StrokeStyleDe
         b"WavyStrokeStyle" => StrokeStyleKind::Wavy,
         _ => return None,
     };
+    // InDesign writes the dashes as `DashArray`, in points (asked of
+    // InDesign 20.0.1: a style made with dashArray [12, 3, 3, 3] mm exports
+    // `DashArray="34.0157… 8.5039… 8.5039… 8.5039…"`); `Pattern` is the
+    // engine's older spelling.
     let pattern = attr(e, b"Pattern")
+        .or_else(|| attr(e, b"DashArray"))
         .map(|s| {
             s.split_ascii_whitespace()
                 .filter_map(|tok| tok.parse::<f32>().ok())
@@ -1166,7 +1212,7 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
     Some(ParagraphStyleDef {
         self_id: attr(e, b"Self")?,
         name: attr(e, b"Name"),
-        based_on: attr(e, b"BasedOn"),
+        based_on: attr(e, b"BasedOn").map(|v| qualify_parent("ParagraphStyle", v)),
         font: attr(e, b"AppliedFont"),
         font_style: attr(e, b"FontStyle"),
         point_size: attr(e, b"PointSize").and_then(|s| s.parse().ok()),
@@ -1921,6 +1967,40 @@ mod tests {
         assert_eq!(r.numbering_continue, Some(true));
     }
 
+    /// InDesign's own spelling of a reserved root parent is the `$ID`
+    /// string without the kind; the cascade must still reach the root.
+    #[test]
+    fn resolve_reaches_no_paragraph_style_root() {
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]"
+                            Name="$ID/[No paragraph style]" PointSize="11" Hyphenation="false">
+              <Properties><AppliedFont type="string">Minion Pro</AppliedFont></Properties>
+            </ParagraphStyle>
+            <ParagraphStyle Self="ParagraphStyle/Body" Name="Body" PointSize="9">
+              <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn></Properties>
+            </ParagraphStyle>
+          </RootParagraphStyleGroup>
+          <RootCharacterStyleGroup>
+            <CharacterStyle Self="CharacterStyle/$ID/[No character style]"
+                            Name="$ID/[No character style]"/>
+            <CharacterStyle Self="CharacterStyle/Emph" Name="Emph" FontStyle="Italic"
+                            BasedOn="$ID/[No character style]"/>
+          </RootCharacterStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let r = s.resolve_paragraph("ParagraphStyle/Body");
+        assert_eq!(r.font.as_deref(), Some("Minion Pro"), "the root's face");
+        assert_eq!(r.point_size, Some(9.0), "the style's own size wins");
+        assert_eq!(
+            s.character_styles["CharacterStyle/Emph"]
+                .based_on
+                .as_deref(),
+            Some("CharacterStyle/$ID/[No character style]")
+        );
+    }
+
     /// InDesign exports `AppliedFont` and `BasedOn` as element-form
     /// children of `<Properties>` rather than attributes on the
     /// style element. Without this path the cascade reads
@@ -1954,7 +2034,10 @@ mod tests {
         let s = parse_stylesheet(xml).unwrap();
         let p = s.paragraph_styles.get("ParagraphStyle/Body").unwrap();
         assert_eq!(p.font.as_deref(), Some("Open Sans"));
-        assert_eq!(p.based_on.as_deref(), Some("$ID/[No paragraph style]"));
+        assert_eq!(
+            p.based_on.as_deref(),
+            Some("ParagraphStyle/$ID/[No paragraph style]")
+        );
         let c = s.character_styles.get("CharacterStyle/Emph").unwrap();
         assert_eq!(c.font.as_deref(), Some("Minion Pro"));
         assert_eq!(c.based_on.as_deref(), Some("CharacterStyle/Base"));
