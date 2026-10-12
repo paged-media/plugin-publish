@@ -38,6 +38,7 @@
 //! splice nothing, so an unmutated document's resource entries stay
 //! byte-identical (the writer then takes the verbatim copy path).
 
+use std::collections::HashSet;
 use std::io::Cursor;
 
 use quick_xml::events::{BytesStart, Event};
@@ -635,6 +636,40 @@ pub fn patch_styles_with(
     styles: &StyleSheet,
     basic_paragraph: bool,
 ) -> Result<Vec<u8>, quick_xml::Error> {
+    patch_styles_defined_elsewhere(original, styles, basic_paragraph, &HashSet::new())
+}
+
+/// The ids of the `<NumberingList>`s a part defines — `designmap.xml` is
+/// where InDesign writes them (its own `[Default]` included).
+pub fn numbering_list_ids(part: &[u8]) -> Result<HashSet<String>, quick_xml::Error> {
+    let mut reader = Reader::from_reader(part);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut out = HashSet::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(ref e) | Event::Empty(ref e) if e.name().as_ref() == b"NumberingList" => {
+                if let Some(id) = attr_value(e, b"Self") {
+                    out.insert(id);
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+/// [`patch_styles_with`], where `lists_elsewhere` names the numbering lists
+/// another part already defines: the importer reads them from the design
+/// map, and writing them into Styles.xml as well would define each twice.
+pub fn patch_styles_defined_elsewhere(
+    original: &[u8],
+    styles: &StyleSheet,
+    basic_paragraph: bool,
+    lists_elsewhere: &HashSet<String>,
+) -> Result<Vec<u8>, quick_xml::Error> {
     let layout = scan_styles(original)?;
 
     let mut reader = Reader::from_reader(original);
@@ -830,7 +865,9 @@ pub fn patch_styles_with(
                 // 2026-09-06). Without the definition every
                 // `<AppliedNumberingList>` falls back to `[Default]`.
                 for l in styles.numbering_lists.values() {
-                    if !layout.numbering_lists.contains(&l.self_id) {
+                    if !layout.numbering_lists.contains(&l.self_id)
+                        && !lists_elsewhere.contains(&l.self_id)
+                    {
                         write_numbering_list(&mut writer, l)?;
                     }
                 }

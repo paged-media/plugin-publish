@@ -885,6 +885,29 @@ fn parse_condition_set(e: &quick_xml::events::BytesStart) -> Option<ConditionSet
     })
 }
 
+/// Every `<NumberingList>` in a part. InDesign writes them in
+/// `designmap.xml` (271 of the 305 census documents, its own `[Default]`
+/// included); the engine's fixtures wrote them into Styles.xml.
+pub fn parse_numbering_lists_in(xml: &[u8]) -> Result<Vec<NumberingListDef>, ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut out = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"NumberingList" => {
+                if let Some(def) = parse_numbering_list(&e) {
+                    out.push(def);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
 /// W1.22 — parse one `<NumberingList>` resource. Returns `None` when
 /// `Self` is missing (unaddressable). Mirrors `parse_condition`.
 fn parse_numbering_list(e: &quick_xml::events::BytesStart) -> Option<NumberingListDef> {
