@@ -19,7 +19,14 @@
 //! The output, `docs/reference/idml-coverage.json`, is committed and
 //! byte-stable (no timestamps, no revisions); the
 //! `idml_coverage_json_is_current` test fails when it drifts from the code.
+//!
+//! Each read and write also carries the package part it works on (seeded by
+//! `[[part_entry]]`, carried down the call graph), and the rows are joined
+//! with the vendored corpus census into part-aware shares
+//! ([`parts`]). `docs/reference/idml-coverage-ratchet.json` holds the
+//! baseline the `idml_coverage_ratchet` test keeps from falling.
 
+pub mod parts;
 mod scan;
 mod types;
 
@@ -35,7 +42,9 @@ use types::StructMap;
 pub const IMPORT_SRC: &str = "crates/idml-import/src";
 pub const EXPORT_SRC: &str = "crates/idml-export/src";
 pub const MANUAL: &str = "tools/idml-coverage/manual.toml";
+pub const CENSUS: &str = "tools/idml-coverage/census.json";
 pub const OUTPUT: &str = "docs/reference/idml-coverage.json";
+pub const RATCHET: &str = "docs/reference/idml-coverage-ratchet.json";
 
 // ---------------------------------------------------------------- manual
 
@@ -54,6 +63,19 @@ struct Manual {
     export: Vec<ManualExport>,
     #[serde(default)]
     ignore: Vec<Ignore>,
+    #[serde(default)]
+    part_entry: Vec<PartEntry>,
+    #[serde(default)]
+    unseen: Vec<parts::UnseenEntry>,
+}
+
+/// The package part(s) a function reads or writes; its callees inherit them.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PartEntry {
+    file: String,
+    name: String,
+    parts: Vec<String>,
 }
 
 /// A function's element(s), replacing call-site inference.
@@ -157,6 +179,10 @@ pub struct Row {
     pub coarse_type: Option<String>,
     pub imported: bool,
     pub exported: bool,
+    /// The package parts the importer reads it from.
+    pub import_parts: Vec<String>,
+    /// The package parts the exporter writes it to.
+    pub export_parts: Vec<String>,
     pub source: Source,
     pub export_source: Option<Source>,
 }
@@ -187,14 +213,21 @@ struct Counts {
     importer_read_sites: usize,
     exporter_write_sites: usize,
     unresolved: usize,
+    part_rows: usize,
+    misplaced: usize,
+    unseen: usize,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Output {
+struct Output<'a> {
     generated_from: BTreeMap<&'static str, &'static str>,
+    census: &'a parts::CensusId,
     counts: Counts,
-    rows: Vec<Row>,
+    metrics: &'a parts::Metrics,
+    rows: &'a [Row],
+    misplaced: &'a [parts::Misplaced],
+    unseen: &'a [parts::Unseen],
     unresolved: Vec<Unresolved>,
 }
 
@@ -406,7 +439,15 @@ fn writers(fns: &[FnBody]) -> HashMap<String, usize> {
 
 // ---------------------------------------------------------------- resolve
 
-fn resolve_callee<'a>(
+pub(crate) fn fns_by_name(scan: &Scan) -> HashMap<String, Vec<FnId>> {
+    let mut by_name: HashMap<String, Vec<FnId>> = HashMap::new();
+    for f in &scan.fns {
+        by_name.entry(f.1.clone()).or_default().push(f.clone());
+    }
+    by_name
+}
+
+pub(crate) fn resolve_callee<'a>(
     by_name: &'a HashMap<String, Vec<FnId>>,
     file: &str,
     callee: &str,
@@ -432,10 +473,7 @@ fn fn_elements(
     scan: &Scan,
     manual: &HashMap<FnId, Vec<String>>,
 ) -> HashMap<FnId, BTreeSet<String>> {
-    let mut by_name: HashMap<String, Vec<FnId>> = HashMap::new();
-    for f in &scan.fns {
-        by_name.entry(f.1.clone()).or_default().push(f.clone());
-    }
+    let by_name = fns_by_name(scan);
     let mut strong: HashMap<FnId, BTreeSet<String>> = manual
         .iter()
         .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
@@ -508,6 +546,8 @@ fn fn_elements(
 struct Acc {
     reads: Vec<(Source, Option<String>, String)>,
     writes: Vec<Source>,
+    read_parts: BTreeSet<String>,
+    write_parts: BTreeSet<String>,
 }
 
 fn type_rank(t: &str) -> u8 {
@@ -535,8 +575,29 @@ fn manual_line(
         })
 }
 
+/// The inventory and its census join.
+pub struct Analysis {
+    /// `docs/reference/idml-coverage.json`, as it should be committed.
+    pub json: String,
+    pub joined: parts::Joined,
+    /// How many reads and writes the tool could not attribute.
+    pub unresolved: usize,
+}
+
+impl Analysis {
+    /// The ratchet baseline this analysis would record.
+    pub fn ratchet(&self) -> parts::Ratchet {
+        parts::Ratchet::of(&self.joined, self.unresolved)
+    }
+}
+
 /// Build the coverage JSON for the repository at `root`.
 pub fn generate(root: &Path) -> Result<String, String> {
+    analyse(root).map(|a| a.json)
+}
+
+/// Walk the sources, join them with the census and build the coverage JSON.
+pub fn analyse(root: &Path) -> Result<Analysis, String> {
     let manual_text =
         std::fs::read_to_string(root.join(MANUAL)).map_err(|e| format!("{MANUAL}: {e}"))?;
     let manual: Manual = toml::from_str(&manual_text).map_err(|e| format!("{MANUAL}: {e}"))?;
@@ -615,6 +676,51 @@ pub fn generate(root: &Path) -> Result<String, String> {
     }
     let iels = fn_elements(&iscan, &manual_fns);
     let eels = fn_elements(&escan, &manual_fns);
+
+    // Package parts: the `[[part_entry]]` seeds, carried down each crate's
+    // call graph.
+    let mut iseeds: HashMap<FnId, BTreeSet<String>> = HashMap::new();
+    let mut eseeds: HashMap<FnId, BTreeSet<String>> = HashMap::new();
+    for m in &manual.part_entry {
+        let id = (m.file.clone(), m.name.clone());
+        let seeds = if iscan.fns.contains(&id) {
+            &mut iseeds
+        } else if escan.fns.contains(&id) {
+            &mut eseeds
+        } else {
+            return Err(format!(
+                "{MANUAL}: [[part_entry]] fn {}::{} does not exist",
+                m.file, m.name
+            ));
+        };
+        if let Some(p) = m
+            .parts
+            .iter()
+            .find(|p| !parts::PART_CLASSES.contains(&p.as_str()))
+        {
+            return Err(format!(
+                "{MANUAL}: [[part_entry]] {}::{} names `{p}`, not a part class ({})",
+                m.file,
+                m.name,
+                parts::PART_CLASSES.join(", ")
+            ));
+        }
+        if m.parts.is_empty()
+            || seeds
+                .insert(id, m.parts.iter().cloned().collect())
+                .is_some()
+        {
+            return Err(format!(
+                "{MANUAL}: [[part_entry]] {}::{} is empty or listed twice",
+                m.file, m.name
+            ));
+        }
+    }
+    let iparts = parts::fn_parts(&iscan, &iseeds);
+    let eparts = parts::fn_parts(&escan, &eseeds);
+    let parts_of = |map: &HashMap<FnId, BTreeSet<String>>, f: &FnId| -> BTreeSet<String> {
+        map.get(f).cloned().unwrap_or_default()
+    };
     if std::env::var_os("IDML_COVERAGE_DEBUG").is_some() {
         let mut per: BTreeMap<FnId, (usize, usize)> = BTreeMap::new();
         for w in &escan.writes {
@@ -625,9 +731,10 @@ pub fn generate(root: &Path) -> Result<String, String> {
         }
         for (f, (w, r)) in per {
             let els = eels.get(&f).or_else(|| iels.get(&f));
+            let parts = eparts.get(&f).or_else(|| iparts.get(&f));
             eprintln!(
-                "{}::{} writes={w} reads={r} fn-elements={:?}",
-                f.0, f.1, els
+                "{}::{} writes={w} reads={r} fn-elements={:?} parts={:?}",
+                f.0, f.1, els, parts
             );
         }
     }
@@ -675,11 +782,22 @@ pub fn generate(root: &Path) -> Result<String, String> {
             file: r.file.clone(),
             line: r.line,
         };
+        let rparts = parts_of(&iparts, &r.func);
+        if rparts.is_empty() {
+            unresolved.insert(Unresolved {
+                file: r.file.clone(),
+                line: r.line,
+                side: "import",
+                item: r.func.1.clone(),
+                literal: r.attribute.clone(),
+                reason: "read in a function no [[part_entry]] reaches".into(),
+            });
+        }
         for e in elements {
-            acc.entry((e, r.attribute.clone(), r.kind))
-                .or_default()
-                .reads
+            let a = acc.entry((e, r.attribute.clone(), r.kind)).or_default();
+            a.reads
                 .push((src.clone(), r.field.clone(), r.coarse.clone()));
+            a.read_parts.extend(rparts.iter().cloned());
         }
     }
 
@@ -723,11 +841,21 @@ pub fn generate(root: &Path) -> Result<String, String> {
             file: w.file.clone(),
             line: w.line,
         };
+        let wparts = parts_of(&eparts, &w.func);
+        if wparts.is_empty() {
+            unresolved.insert(Unresolved {
+                file: w.file.clone(),
+                line: w.line,
+                side: "export",
+                item: w.func.1.clone(),
+                literal: w.attribute.clone(),
+                reason: "write in a function no [[part_entry]] reaches".into(),
+            });
+        }
         for e in elements {
-            acc.entry((e, w.attribute.clone(), Kind::Attr))
-                .or_default()
-                .writes
-                .push(src.clone());
+            let a = acc.entry((e, w.attribute.clone(), Kind::Attr)).or_default();
+            a.writes.push(src.clone());
+            a.write_parts.extend(wparts.iter().cloned());
         }
     }
 
@@ -753,6 +881,7 @@ pub fn generate(root: &Path) -> Result<String, String> {
                 m.file, m.item
             ));
         }
+        let rparts = parts_of(&iparts, &(m.file.clone(), m.item.clone()));
         for a in &m.attributes {
             let line = if m.verify.is_empty() {
                 manual_line(&iscan, &m.file, &m.item, a, "[[read]]")?
@@ -761,35 +890,36 @@ pub fn generate(root: &Path) -> Result<String, String> {
             };
             covered.insert((m.file.clone(), m.item.clone(), a.clone()));
             for e in &elements {
-                acc.entry((e.clone(), a.clone(), Kind::Attr))
-                    .or_default()
-                    .reads
-                    .push((
-                        Source {
-                            file: m.file.clone(),
-                            line,
-                        },
-                        m.field.clone(),
-                        m.coarse_type.clone(),
-                    ));
+                let r = acc.entry((e.clone(), a.clone(), Kind::Attr)).or_default();
+                r.reads.push((
+                    Source {
+                        file: m.file.clone(),
+                        line,
+                    },
+                    m.field.clone(),
+                    m.coarse_type.clone(),
+                ));
+                r.read_parts.extend(rparts.iter().cloned());
             }
         }
     }
     for m in &manual.properties_child {
+        let rparts = parts_of(&iparts, &(m.file.clone(), m.item.clone()));
         for c in &m.children {
             let line = manual_line(&iscan, &m.file, &m.item, c, "[[properties_child]]")?;
             for e in &m.elements {
-                acc.entry((e.clone(), c.clone(), Kind::PropertiesChild))
-                    .or_default()
-                    .reads
-                    .push((
-                        Source {
-                            file: m.file.clone(),
-                            line,
-                        },
-                        None,
-                        m.coarse_type.clone(),
-                    ));
+                let r = acc
+                    .entry((e.clone(), c.clone(), Kind::PropertiesChild))
+                    .or_default();
+                r.reads.push((
+                    Source {
+                        file: m.file.clone(),
+                        line,
+                    },
+                    None,
+                    m.coarse_type.clone(),
+                ));
+                r.read_parts.extend(rparts.iter().cloned());
             }
         }
     }
@@ -799,17 +929,19 @@ pub fn generate(root: &Path) -> Result<String, String> {
         } else {
             Kind::Attr
         };
+        let wparts = parts_of(&eparts, &(m.file.clone(), m.item.clone()));
         for a in &m.attributes {
             let line = manual_line(&escan, &m.file, &m.item, a, "[[export]]")?;
             covered.insert((m.file.clone(), m.item.clone(), a.clone()));
             for e in &m.elements {
-                acc.entry((e.clone(), format!("{}{a}", m.prefix), kind))
-                    .or_default()
-                    .writes
-                    .push(Source {
-                        file: m.file.clone(),
-                        line,
-                    });
+                let w = acc
+                    .entry((e.clone(), format!("{}{a}", m.prefix), kind))
+                    .or_default();
+                w.writes.push(Source {
+                    file: m.file.clone(),
+                    line,
+                });
+                w.write_parts.extend(wparts.iter().cloned());
             }
         }
     }
@@ -876,11 +1008,17 @@ pub fn generate(root: &Path) -> Result<String, String> {
                 coarse_type,
                 imported: !a.reads.is_empty(),
                 exported: !a.writes.is_empty(),
+                import_parts: a.read_parts.into_iter().collect(),
+                export_parts: a.write_parts.into_iter().collect(),
                 source,
                 export_source,
             }
         })
         .collect();
+
+    let census_text =
+        std::fs::read_to_string(root.join(CENSUS)).map_err(|e| format!("{CENSUS}: {e}"))?;
+    let joined = parts::join(&census_text, CENSUS, &rows, &manual.unseen, MANUAL)?;
 
     let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
     let counts = Counts {
@@ -904,26 +1042,54 @@ pub fn generate(root: &Path) -> Result<String, String> {
         importer_read_sites: read_sites,
         exporter_write_sites: write_sites,
         unresolved: unresolved.len(),
+        part_rows: joined.part_rows.len(),
+        misplaced: joined.misplaced.len(),
+        unseen: joined.unseen.len(),
     };
     let generated_from = BTreeMap::from([
         ("importer", IMPORT_SRC),
         ("exporter", EXPORT_SRC),
         ("manual", MANUAL),
+        ("census", CENSUS),
         ("tool", "tools/idml-coverage"),
         (
             "regenerate",
             "cargo run -p idml-coverage > docs/reference/idml-coverage.json",
         ),
+        ("ratchet", "cargo run -p idml-coverage -- --ratchet"),
     ]);
+    let unresolved_count = unresolved.len();
     let out = Output {
         generated_from,
+        census: &joined.census,
         counts,
-        rows,
+        metrics: &joined.metrics,
+        rows: &rows,
+        misplaced: &joined.misplaced,
+        unseen: &joined.unseen,
         unresolved: unresolved.into_iter().collect(),
     };
-    let mut json = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
-    json.push('\n');
-    Ok(json)
+    let json = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
+    // `partRows` last, one compact row per line: the census has thousands,
+    // and a line each keeps the file readable and its diffs small.
+    let Some(body) = json.strip_suffix("\n}") else {
+        return Err("coverage JSON does not end in an object".into());
+    };
+    let mut json = format!("{body},\n  \"partRows\": [");
+    for (i, r) in joined.part_rows.iter().enumerate() {
+        json.push_str(if i == 0 { "\n    " } else { ",\n    " });
+        json.push_str(&serde_json::to_string(r).map_err(|e| e.to_string())?);
+    }
+    json.push_str(if joined.part_rows.is_empty() {
+        "]\n}\n"
+    } else {
+        "\n  ]\n}\n"
+    });
+    Ok(Analysis {
+        json,
+        joined,
+        unresolved: unresolved_count,
+    })
 }
 
 /// The repository root, from this crate's manifest directory.
@@ -950,5 +1116,41 @@ mod tests {
             "{OUTPUT} is stale — regenerate: \
              cargo run -p idml-coverage > {OUTPUT}"
         );
+    }
+
+    /// The committed `docs/reference/idml-coverage-ratchet.json` is a floor:
+    /// no covered (part, element, attribute) key may drop, no part-aware
+    /// share may fall, and unresolved, misplaced or unjustified unseen
+    /// reads may not rise. A gain must be recorded too, so the floor moves up with it.
+    #[test]
+    fn idml_coverage_ratchet() {
+        let root = repo_root();
+        let now = analyse(&root).expect("analyse the inventory").ratchet();
+        let text = std::fs::read_to_string(root.join(RATCHET)).unwrap_or_else(|e| {
+            panic!("{RATCHET}: {e} — create it: cargo run -p idml-coverage -- --ratchet")
+        });
+        let base: parts::Ratchet =
+            serde_json::from_str(&text).unwrap_or_else(|e| panic!("{RATCHET}: {e}"));
+        let diff = parts::compare(&base, &now);
+        let mut msg = String::new();
+        if !diff.regressions.is_empty() {
+            msg.push_str(
+                "regressions (fix them; a deliberate one is recorded with \
+                          `cargo run -p idml-coverage -- --ratchet --allow-regression`):\n",
+            );
+            for r in &diff.regressions {
+                msg.push_str(&format!("  - {r}\n"));
+            }
+        }
+        if !diff.unrecorded.is_empty() {
+            msg.push_str(
+                "gains the baseline has not recorded (raise it: \
+                          `cargo run -p idml-coverage -- --ratchet`):\n",
+            );
+            for r in &diff.unrecorded {
+                msg.push_str(&format!("  - {r}\n"));
+            }
+        }
+        assert!(diff.is_empty(), "{RATCHET}:\n{msg}");
     }
 }

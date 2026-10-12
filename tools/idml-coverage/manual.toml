@@ -107,6 +107,15 @@ elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
 coarse_type = "number"
 field = "CornerSpec.radius"
 
+# The inactive-state skip tests `State@Active` in the same condition as the
+# element name, which the walk does not take as element context.
+[[read]]
+file = "crates/idml-import/src/spread.rs"
+item = "parse_spread_with_provenance"
+attributes = ["Active"]
+elements = ["State"]
+coarse_type = "bool"
+
 # `parse_paragraph_rule(e, "RuleAbove" | "RuleBelow")` assembles each key
 # from the family prefix and a suffix; elements are inferred from its callers.
 
@@ -508,3 +517,640 @@ file = "crates/idml-export/src/rewrite.rs"
 item = "frame_attr_extras"
 attributes = ["LeftLineEnd", "RightLineEnd"]
 elements = ["GraphicLine", "Polygon"]
+
+# ------------------------------------------------------------- package parts
+
+# The package part(s) each entry function reads or writes. Its callees
+# inherit the parts down the call graph, adding them to their own entry if
+# they have one, so only the functions that are handed a part's bytes are
+# listed.
+# Mapping by file name would be wrong: `parse_chapter_number_preference`
+# lives in designmap.rs and reads Preferences.xml. Every importer read and
+# exporter write must end up with a part, or it is listed as unresolved.
+# Part names are the census's part classes.
+
+# Importer: what `import_idml_archive` (idml-import/src/lib.rs) hands each.
+
+[[part_entry]]
+file = "crates/idml-import/src/designmap.rs"
+name = "parse_designmap"
+parts = ["designmap"]
+
+[[part_entry]]
+file = "crates/idml-import/src/designmap.rs"
+name = "parse_chapter_number_preference"
+parts = ["Resources/Preferences"]
+
+[[part_entry]]
+file = "crates/idml-import/src/designmap.rs"
+name = "parse_preferences_part"
+parts = ["Resources/Preferences"]
+
+[[part_entry]]
+file = "crates/idml-import/src/graphic.rs"
+name = "parse_graphic"
+parts = ["Resources/Graphic"]
+
+# Colour groups: InDesign writes them in designmap.xml.
+[[part_entry]]
+file = "crates/idml-import/src/graphic.rs"
+name = "parse_color_groups_in"
+parts = ["designmap"]
+
+# Styles.xml, and Graphic.xml for its stroke styles (InDesign's spelling).
+[[part_entry]]
+file = "crates/idml-import/src/styles.rs"
+name = "parse_stylesheet"
+parts = ["Resources/Styles", "Resources/Graphic"]
+
+[[part_entry]]
+file = "crates/idml-import/src/styles.rs"
+name = "parse_numbering_lists_in"
+parts = ["designmap"]
+
+# Conditions: InDesign writes them in designmap.xml; `parse_stylesheet` also
+# hands it Styles.xml (the engine's older fixtures), which it inherits.
+[[part_entry]]
+file = "crates/idml-import/src/styles.rs"
+name = "parse_conditions"
+parts = ["designmap"]
+
+# A <MasterSpread> part has the same schema as a <Spread>.
+[[part_entry]]
+file = "crates/idml-import/src/spread.rs"
+name = "parse_spread"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-import/src/lib.rs"
+name = "master_spread_name"
+parts = ["MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-import/src/story.rs"
+name = "parse_story"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-import/src/story.rs"
+name = "story_text_anchors"
+parts = ["Stories"]
+
+# Exporter: what `write_package` (idml-export/src/lib.rs) hands each patcher
+# or part writer.
+
+# Spreads and master spreads: the patch chain `write_package` runs over both.
+[[part_entry]]
+file = "crates/idml-export/src/text_frame_prefs.rs"
+name = "rewrite_text_frame_prefs"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/guides.rs"
+name = "rewrite_guides"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "rewrite_spread"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/images.rs"
+name = "rewrite_images"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/text_wrap.rs"
+name = "rewrite_text_wrap"
+parts = ["Spreads", "MasterSpreads"]
+
+# Spreads only.
+[[part_entry]]
+file = "crates/idml-export/src/transparency.rs"
+name = "rewrite_transparency"
+parts = ["Spreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/page_labels.rs"
+name = "rewrite_page_labels"
+parts = ["Spreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/emit.rs"
+name = "spread_part"
+parts = ["Spreads"]
+
+# Master spreads only.
+[[part_entry]]
+file = "crates/idml-export/src/emit.rs"
+name = "master_spread_part"
+parts = ["MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/masters.rs"
+name = "rewrite_master_name"
+parts = ["MasterSpreads"]
+
+# Stories: the story patch chain, and a minted story's full part.
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "unformatted_xref_sources"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "inject_story_navigation"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "rewrite_story_in_frame"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/face.rs"
+name = "patch_story_face"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/dangling.rs"
+name = "drop_dangling_style_refs"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/cell_insets.rs"
+name = "spell_cell_insets"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/row_attrs.rs"
+name = "patch_row_attrs"
+parts = ["Stories"]
+
+[[part_entry]]
+file = "crates/idml-export/src/emit.rs"
+name = "story_part"
+parts = ["Stories"]
+
+# Resources/Fonts.xml, patched or minted.
+[[part_entry]]
+file = "crates/idml-export/src/fonts.rs"
+name = "patch_fonts"
+parts = ["Resources/Fonts"]
+
+[[part_entry]]
+file = "crates/idml-export/src/fonts.rs"
+name = "fonts_part"
+parts = ["Resources/Fonts"]
+
+# Resources/Preferences.xml.
+[[part_entry]]
+file = "crates/idml-export/src/preferences.rs"
+name = "patch_preferences"
+parts = ["Resources/Preferences"]
+
+# `<DocumentPreference>` is patched where the source keeps it: Preferences.xml
+# (InDesign) or the designmap (the engine's older fixtures).
+[[part_entry]]
+file = "crates/idml-export/src/preferences.rs"
+name = "patch_document_preference"
+parts = ["Resources/Preferences", "designmap"]
+
+# The gradient-geometry helpers are reached by method call and the corner
+# keys as a const, which the call graph does not follow; they patch page
+# items in both kinds of spread.
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "keys"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "push_attrs"
+parts = ["Spreads", "MasterSpreads"]
+
+[[part_entry]]
+file = "crates/idml-export/src/rewrite.rs"
+name = "PER_CORNER_KEYS"
+parts = ["Spreads", "MasterSpreads"]
+
+# designmap.xml.
+[[part_entry]]
+file = "crates/idml-export/src/emit.rs"
+name = "patch_designmap"
+parts = ["designmap"]
+
+[[part_entry]]
+file = "crates/idml-export/src/masters.rs"
+name = "patch_designmap_masters"
+parts = ["designmap"]
+
+[[part_entry]]
+file = "crates/idml-export/src/emit.rs"
+name = "ensure_fonts_ref"
+parts = ["designmap"]
+
+[[part_entry]]
+file = "crates/idml-export/src/navigation.rs"
+name = "patch_designmap_navigation"
+parts = ["designmap"]
+
+[[part_entry]]
+file = "crates/idml-export/src/document_labels.rs"
+name = "patch_document_labels"
+parts = ["designmap"]
+
+[[part_entry]]
+file = "crates/idml-export/src/text_variables.rs"
+name = "patch_text_variables"
+parts = ["designmap"]
+
+# Resources/Graphic.xml.
+[[part_entry]]
+file = "crates/idml-export/src/resources.rs"
+name = "patch_graphic_with"
+parts = ["Resources/Graphic"]
+
+# Resources/Styles.xml.
+[[part_entry]]
+file = "crates/idml-export/src/resources.rs"
+name = "strip_conditions"
+parts = ["Resources/Styles"]
+
+[[part_entry]]
+file = "crates/idml-export/src/resources.rs"
+name = "patch_styles_defined_elsewhere"
+parts = ["Resources/Styles"]
+
+[[part_entry]]
+file = "crates/idml-export/src/face.rs"
+name = "patch_styles_face"
+parts = ["Resources/Styles"]
+
+[[part_entry]]
+file = "crates/idml-export/src/based_on.rs"
+name = "patch_based_on"
+parts = ["Resources/Styles"]
+
+[[part_entry]]
+file = "crates/idml-export/src/paragraph_props.rs"
+name = "spell_styles"
+parts = ["Resources/Styles"]
+
+[[part_entry]]
+file = "crates/idml-export/src/table_regions.rs"
+name = "spell_region_flags"
+parts = ["Resources/Styles"]
+
+# ------------------------------------------------------------- unseen reads
+
+# Reads of an (element, attribute) that no document in the census carries
+# (`census.json`, the corpus census vendored from the docs repo). Each needs
+# a reason here; the `idml_coverage_ratchet` test fails when an unjustified
+# one appears. `keys` are `Element@Attribute` (any kind); `elements` covers
+# every unseen read on an element. A name that is no longer an unseen read
+# fails the tool, so the list cannot go stale.
+
+[[unseen]]
+reason = "Inside a <Properties> value. The census records the Properties child on its owner (Document@Label, TextFramePreference@InsetSpacing, TextWrapPreference@TextWrapOffset, ParagraphStyleRange@BulletChar and @TabList) and does not descend into the value, so the fields inside are never counted."
+elements = ["KeyValuePair", "InsetSpacing", "TextWrapOffset", "BulletChar"]
+keys = [
+  "ParagraphStyleRange@TabList/ListItem/Alignment",
+  "ParagraphStyleRange@TabList/ListItem/AlignmentCharacter",
+  "ParagraphStyleRange@TabList/ListItem/Leader",
+  "ParagraphStyleRange@TabList/ListItem/Position",
+]
+
+[[unseen]]
+reason = "The engine's older tab-stop record. InDesign writes <TabList><ListItem type=\"record\">, which is read as well (ParagraphStyleRange@TabList/ListItem/*)."
+elements = ["TabStop"]
+
+[[unseen]]
+reason = "Read as an XML attribute. InDesign writes these as <Properties> children, the only form the census finds; the attribute form is the engine's older spelling."
+keys = [
+  "CharacterStyle@AppliedFont",
+  "CharacterStyle@BasedOn",
+  "CharacterStyle@Leading",
+  "CharacterStyleRange@Leading",
+  "GridPreference@BaselineColor",
+  "ParagraphStyle@BulletsCharacterStyle",
+  "ParagraphStyle@KinsokuSet",
+  "ParagraphStyle@Leading",
+  "ParagraphStyle@NumberingFormat",
+  "ParagraphStyle@ParagraphBorderColor",
+  "ParagraphStyle@ParagraphShadingColor",
+  "ParagraphStyle@RuleAboveColor",
+  "ParagraphStyle@RuleBelowColor",
+  "ParagraphStyleRange@KinsokuSet",
+]
+
+[[unseen]]
+reason = "Read as a <Properties> child. InDesign writes these as XML attributes, the only form the census finds, and the attribute is read too."
+keys = [
+  "CharacterStyleRange@FontStyle",
+  "ParagraphStyle@BulletsTextAfter",
+  "ParagraphStyle@NumberingExpression",
+  "ParagraphStyleRange@AppliedNumberingList",
+]
+
+[[unseen]]
+reason = "The style reader's pending-property arm admits every style kind ([[properties_child]] above); cell, object and table styles carry no font in the census."
+keys = ["CellStyle@AppliedFont", "ObjectStyle@AppliedFont", "TableStyle@AppliedFont"]
+
+[[unseen]]
+reason = "Japanese composition (kenten, ruby, mojikumi). No corpus document sets it."
+keys = [
+  "CharacterStyle@KentenCharacter",
+  "CharacterStyle@KentenFontSize",
+  "CharacterStyle@KentenKind",
+  "CharacterStyle@RubyFlag",
+  "CharacterStyle@RubyString",
+  "CharacterStyle@RubyType",
+  "CharacterStyleRange@KentenCharacter",
+  "CharacterStyleRange@RubyFlag",
+  "ParagraphStyle@MojikumiSet",
+  "ParagraphStyle@MojikumiTable",
+  "ParagraphStyleRange@MojikumiSet",
+  "ParagraphStyleRange@MojikumiTable",
+]
+
+[[unseen]]
+reason = "A style attribute applied as a local override, which no corpus document does: the census finds it only on the paragraph or character style."
+keys = [
+  "CharacterStyleRange@OverprintFill",
+  "CharacterStyleRange@OverprintStroke",
+  "ParagraphStyleRange@BulletsCharacterStyle",
+  "ParagraphStyleRange@BulletsTextAfter",
+  "ParagraphStyleRange@HyphenWeight",
+  "ParagraphStyleRange@HyphenateAcrossColumns",
+  "ParagraphStyleRange@HyphenateAfterFirst",
+  "ParagraphStyleRange@HyphenateBeforeLast",
+  "ParagraphStyleRange@HyphenateCapitalizedWords",
+  "ParagraphStyleRange@HyphenateLadderLimit",
+  "ParagraphStyleRange@HyphenateLastWord",
+  "ParagraphStyleRange@HyphenateWordsLongerThan",
+  "ParagraphStyleRange@KeepAllLinesTogether",
+  "ParagraphStyleRange@KeepFirstLines",
+  "ParagraphStyleRange@KeepLastLines",
+  "ParagraphStyleRange@KeepLinesTogether",
+  "ParagraphStyleRange@NumberingCharacterStyle",
+  "ParagraphStyleRange@NumberingContinue",
+  "ParagraphStyleRange@NumberingExpression",
+  "ParagraphStyleRange@NumberingFormat",
+  "ParagraphStyleRange@NumberingStartAt",
+  "ParagraphStyleRange@OverprintFill",
+  "ParagraphStyleRange@OverprintStroke",
+  "ParagraphStyleRange@RuleAboveLeftIndent",
+  "ParagraphStyleRange@RuleAboveOffset",
+  "ParagraphStyleRange@RuleAboveRightIndent",
+  "ParagraphStyleRange@RuleAboveTint",
+  "ParagraphStyleRange@RuleAboveWidth",
+  "ParagraphStyleRange@RuleBelowLeftIndent",
+  "ParagraphStyleRange@RuleBelowOffset",
+  "ParagraphStyleRange@RuleBelowRightIndent",
+  "ParagraphStyleRange@RuleBelowTint",
+  "ParagraphStyleRange@RuleBelowWidth",
+  "ParagraphStyleRange@SpanColumnMinSpaceAfter",
+  "ParagraphStyleRange@SpanColumnMinSpaceBefore",
+  "ParagraphStyleRange@SpanColumnType",
+  "ParagraphStyleRange@SpanSplitColumnCount",
+  "ParagraphStyleRange@SplitColumnOutsideGutter",
+  "ParagraphStyleRange@StartParagraph",
+]
+
+[[unseen]]
+reason = "A style attribute no corpus style sets: the census finds it only as a local override on the range or cell."
+keys = [
+  "CellStyle@RotationAngle",
+  "CharacterStyle@HorizontalScale",
+  "CharacterStyle@OTFFigureStyle",
+  "CharacterStyle@OTFFraction",
+  "CharacterStyle@OTFOrdinal",
+  "CharacterStyle@Skew",
+  "CharacterStyle@VerticalScale",
+  "ParagraphStyle@ParagraphBorderWeight",
+]
+
+[[unseen]]
+reason = "OpenType features and strikethrough no corpus document turns on, in a style or locally."
+keys = [
+  "CharacterStyle@OTFDiscretionaryLigature",
+  "CharacterStyle@OTFSlashedZero",
+  "CharacterStyle@OTFStylisticSets",
+  "CharacterStyle@OTFSwash",
+  "CharacterStyle@OTFTitling",
+  "CharacterStyle@StrikeThru",
+  "CharacterStyleRange@OTFDiscretionaryLigature",
+  "CharacterStyleRange@OTFSlashedZero",
+  "CharacterStyleRange@OTFStylisticSets",
+  "CharacterStyleRange@OTFSwash",
+  "CharacterStyleRange@OTFTitling",
+  "CharacterStyleRange@StrikeThru",
+]
+
+[[unseen]]
+reason = "Paragraph attributes no corpus document sets. RuleAboveWeight and RuleBelowWeight are fallbacks for InDesign's RuleAboveLineWeight and RuleBelowLineWeight, which are read first."
+keys = [
+  "ParagraphStyle@BulletsAndNumberingDigitsCharacterStyle",
+  "ParagraphStyle@DropCapDetail",
+  "ParagraphStyle@RuleAboveWeight",
+  "ParagraphStyle@RuleBelowWeight",
+  "ParagraphStyleRange@DropCapDetail",
+  "ParagraphStyleRange@RuleAboveWeight",
+  "ParagraphStyleRange@RuleBelowWeight",
+]
+
+[[unseen]]
+reason = "Set on a page item, which no corpus document does: the census finds these only on object styles."
+keys = [
+  "GraphicLine@GapColor",
+  "GraphicLine@GapTint",
+  "GraphicLine@LeftArrowHeadScale",
+  "GraphicLine@Nonprinting",
+  "GraphicLine@OverprintFill",
+  "GraphicLine@OverprintStroke",
+  "GraphicLine@RightArrowHeadScale",
+  "Oval@OverprintStroke",
+  "Polygon@OverprintStroke",
+  "Rectangle@GapColor",
+  "Rectangle@GapTint",
+  "Rectangle@Nonprinting",
+  "Rectangle@OverprintStroke",
+  "TextFrame@GapColor",
+  "TextFrame@GapTint",
+  "TextFrame@Nonprinting",
+  "TextFrame@OverprintFill",
+  "TextFrame@OverprintStroke",
+  "TextFrame@StrokeAlignment",
+]
+
+[[unseen]]
+reason = "Page-item geometry no corpus document writes: InDesign describes an item with PathGeometry and ItemTransform (both read), and no corpus item carries a dash pattern of its own."
+keys = [
+  "GraphicLine@GeometricBounds",
+  "GraphicLine@StrokeDashAndGap",
+  "Group@GeometricBounds",
+  "Oval@GeometricBounds",
+  "Oval@StrokeDashAndGap",
+  "Polygon@GeometricBounds",
+  "Polygon@StrokeDashAndGap",
+  "Rectangle@GeometricBounds",
+  "Rectangle@StrokeDashAndGap",
+  "TextFrame@GeometricBounds",
+  "TextFrame@StrokeDashAndGap",
+]
+
+[[unseen]]
+reason = "`make_anchored_frame` reads ParentStory for text frames only; the walk credits the read to every kind the function handles."
+keys = ["Group@ParentStory", "Rectangle@ParentStory"]
+
+[[unseen]]
+reason = "InDesign writes AppliedTOCStyle on <Story>; the TextFrame spelling is the engine's older one, and no corpus frame has it."
+keys = ["TextFrame@AppliedTOCStyle"]
+
+[[unseen]]
+reason = "A fallback for InDesign's `Inverse`, which is read first."
+keys = ["TextWrapPreference@Inverted"]
+
+[[unseen]]
+reason = "Table border strokes set on the table, which no corpus table does: the census finds them only on table styles."
+keys = [
+  "Table@BottomBorderStrokeGapColor",
+  "Table@BottomBorderStrokeGapTint",
+  "Table@BottomBorderStrokeTint",
+  "Table@EndColumnStrokeGapColor",
+  "Table@EndColumnStrokeGapTint",
+  "Table@EndColumnStrokeTint",
+  "Table@EndColumnStrokeType",
+  "Table@EndRowStrokeGapColor",
+  "Table@EndRowStrokeGapTint",
+  "Table@EndRowStrokeType",
+  "Table@LeftBorderStrokeGapColor",
+  "Table@LeftBorderStrokeGapTint",
+  "Table@LeftBorderStrokeTint",
+  "Table@RightBorderStrokeGapColor",
+  "Table@RightBorderStrokeGapTint",
+  "Table@RightBorderStrokeTint",
+  "Table@StartColumnStrokeGapColor",
+  "Table@StartColumnStrokeGapTint",
+  "Table@StartColumnStrokeTint",
+  "Table@StartColumnStrokeType",
+  "Table@StartRowStrokeGapTint",
+  "Table@StartRowStrokeTint",
+  "Table@TopBorderStrokeGapColor",
+  "Table@TopBorderStrokeGapTint",
+  "Table@TopBorderStrokeTint",
+]
+
+[[unseen]]
+reason = "Table, row and cell attributes no corpus table carries (21 corpus documents have tables)."
+keys = [
+  "Cell@FirstBaselineOffset",
+  "Cell@LeftLineStrokeTint",
+  "Cell@RightLineStrokeTint",
+  "Row@KeepWithNextRow",
+  "Row@MaximumHeight",
+  "Table@RepeatingFooter",
+  "Table@RepeatingHeader",
+]
+
+[[unseen]]
+reason = "One reader (`parse_stroke_style`) serves the four custom stroke-style kinds, so each kind is credited with every kind's attributes. The census has few custom stroke styles (dashed in 3 documents, striped and wavy in 1, dotted in none)."
+elements = ["DottedStrokeStyle"]
+keys = [
+  "DashedStrokeStyle@Wavelength",
+  "DashedStrokeStyle@Width",
+  "StripedStrokeStyle@DashArray",
+  "StripedStrokeStyle@GapColor",
+  "StripedStrokeStyle@GapTint",
+  "StripedStrokeStyle@Pattern",
+  "StripedStrokeStyle@Wavelength",
+  "StripedStrokeStyle@Width",
+  "WavyStrokeStyle@DashArray",
+  "WavyStrokeStyle@GapColor",
+  "WavyStrokeStyle@GapTint",
+  "WavyStrokeStyle@Pattern",
+]
+
+[[unseen]]
+reason = "Tint swatches and swatch transparency: no corpus document defines a tint swatch or gives a colour an alpha. The colour reader is shared by <Color> and <Tint>. ColorEditorHotGraphic is read before a swatch's `Color`, which the corpus uses."
+elements = ["Tint"]
+keys = ["Color@Alpha", "Color@AlphaPercentage", "Swatch@ColorEditorHotGraphic"]
+
+[[unseen]]
+reason = "`Mode` is read for FeatherSetting, where InDesign writes it; the read sits in the arm every effect setting shares, so each is credited with it."
+keys = [
+  "BevelAndEmbossSetting@Mode",
+  "DirectionalFeatherSetting@Mode",
+  "GradientFeatherSetting@Mode",
+  "InnerGlowSetting@Mode",
+  "InnerShadowSetting@Mode",
+  "OuterGlowSetting@Mode",
+  "SatinSetting@Mode",
+]
+
+[[unseen]]
+reason = "Effect and gradient-stop spellings the corpus does not use, read beside InDesign's (Noise, Angle, Spread, GradientStart, Midpoint, Opacity, StopColor). The stop reads are shared by <GradientStop> and <OpacityGradientStop>, so each is credited with the other's. No corpus directional feather has a CornerType."
+keys = [
+  "DirectionalFeatherSetting@CornerType",
+  "DirectionalFeatherSetting@NoiseAmount",
+  "GradientFeatherSetting@GradientAngle",
+  "GradientFeatherSetting@GradientEnd",
+  "GradientStop@Alpha",
+  "GradientStop@GradientStopMidpoint",
+  "GradientStop@Opacity",
+  "InnerGlowSetting@ChokeAmount",
+  "OpacityGradientStop@Alpha",
+  "OpacityGradientStop@GradientStopMidpoint",
+  "OpacityGradientStop@StopColor",
+]
+
+[[unseen]]
+reason = "`href` is a fallback for LinkResourceURI, and the frame walker's link read is credited to every placed-graphic element it handles. The census finds LinkResourceURI only on <Link>, and no ImportedPage."
+elements = ["ImportedPage"]
+keys = [
+  "EPS@LinkResourceURI",
+  "EPS@href",
+  "Image@href",
+  "Link@href",
+  "PDF@LinkResourceURI",
+  "PDF@href",
+]
+
+[[unseen]]
+reason = "Running headers and text variables: one reader serves every variable type and is credited with each type's attributes. No corpus document has a character-style running header or text around a variable."
+elements = ["MatchCharacterStylePreference"]
+keys = [
+  "CustomTextVariablePreference@TextAfter",
+  "CustomTextVariablePreference@TextBefore",
+  "MatchParagraphStylePreference@AppliedCharacterStyle",
+  "TextVariablePreference@AppliedCharacterStyle",
+  "TextVariablePreference@TextAfter",
+  "TextVariablePreference@TextBefore",
+]
+
+[[unseen]]
+reason = "Cross-reference and hyperlink fields no corpus document carries: its two cross-reference sources sit in stories without a format or destination of their own, and DestinationUniqueKey is read in the arm every destination kind shares."
+keys = [
+  "CrossReferenceSource@AppliedFormat",
+  "CrossReferenceSource@Destination",
+  "HyperlinkTextDestination@DestinationUniqueKey",
+]
+
+[[unseen]]
+reason = "Index markers and topics: one corpus document has an index, with no sort orders; Index and IndexEntry are spellings the marker reader also accepts."
+elements = ["Index", "IndexEntry"]
+keys = ["PageReference@SortOrder", "Topic@SortOrder"]
+
+[[unseen]]
+reason = "Articles (the export reading order): no corpus document has one."
+elements = ["Article"]
+
+[[unseen]]
+reason = "Buttons and multi-state objects: no corpus document has one. They are read as groups of their states, and only the active state is drawn."
+elements = ["Button", "MultiStateObject", "State"]
+
+[[unseen]]
+reason = "Condition sets in InDesign's element form (<VisibilityPair>); the corpus has one condition set, in the attribute form."
+elements = ["VisibilityPair"]

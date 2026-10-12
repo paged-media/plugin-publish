@@ -17,3 +17,4 @@ quote = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "0.8"
+sha2 = "0.10"
