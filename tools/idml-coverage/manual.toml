@@ -610,6 +610,13 @@ file = "crates/idml-import/src/styles.rs"
 name = "parse_stylesheet"
 parts = ["Resources/Styles", "Resources/Graphic"]
 
+# An object style's `<TextFramePreference>`, read in a pass of its own over
+# the styles part.
+[[part_entry]]
+file = "crates/idml-import/src/styles.rs"
+name = "read_object_style_text_frames"
+parts = ["Resources/Styles"]
+
 [[part_entry]]
 file = "crates/idml-import/src/styles.rs"
 name = "parse_numbering_lists_in"

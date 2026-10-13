@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 102718,
+      "covered": 107052,
       "total": 633952,
-      "value": 0.162028
+      "value": 0.168865
     },
     "impactImport": {
-      "covered": 22350,
+      "covered": 23204,
       "total": 54667,
-      "value": 0.408839
+      "value": 0.424461
     },
     "weightedExport": {
       "covered": 77992,
@@ -295,6 +295,16 @@
     "Resources/Styles|ObjectStyle@BasedOn|properties-child",
     "Resources/Styles|ObjectStyle@CornerOption|attr",
     "Resources/Styles|ObjectStyle@CornerRadius|attr",
+    "Resources/Styles|ObjectStyle@EnableAnchoredObjectOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableFill|attr",
+    "Resources/Styles|ObjectStyle@EnableFrameFittingOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableParagraphStyle|attr",
+    "Resources/Styles|ObjectStyle@EnableStrokeAndCornerOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableStroke|attr",
+    "Resources/Styles|ObjectStyle@EnableTextFrameAutoSizingOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableTextFrameBaselineOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableTextFrameGeneralOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableTextWrapAndOthers|attr",
     "Resources/Styles|ObjectStyle@FillColor|attr",
     "Resources/Styles|ObjectStyle@FillTint|attr",
     "Resources/Styles|ObjectStyle@Name|attr",
@@ -488,6 +498,12 @@
     "Resources/Styles|TableStyle@StartRowFillTint|attr",
     "Resources/Styles|TableStyle@TopBorderStrokeColor|attr",
     "Resources/Styles|TableStyle@TopBorderStrokeWeight|attr",
+    "Resources/Styles|TextFramePreference@AutoSizingType|attr",
+    "Resources/Styles|TextFramePreference@FirstBaselineOffset|attr",
+    "Resources/Styles|TextFramePreference@MinimumFirstBaselineOffset|attr",
+    "Resources/Styles|TextFramePreference@TextColumnCount|attr",
+    "Resources/Styles|TextFramePreference@TextColumnGutter|attr",
+    "Resources/Styles|TextFramePreference@VerticalJustification|attr",
     "Resources/Styles|WavyStrokeStyle@Name|attr",
     "Resources/Styles|WavyStrokeStyle@Self|attr",
     "Resources/Styles|WavyStrokeStyle@Wavelength|attr",

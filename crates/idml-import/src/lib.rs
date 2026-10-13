@@ -212,7 +212,11 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
         palette.color_groups.insert(g.self_id.clone(), g);
     }
     let mut styles = match archive.entry("Resources/Styles.xml") {
-        Some(raw) => parse_stylesheet(raw)?,
+        Some(raw) => {
+            let mut s = parse_stylesheet(raw)?;
+            styles::read_object_style_text_frames(raw, &mut s.object_styles)?;
+            s
+        }
         None => StyleSheet::default(),
     };
     // Custom stroke styles (dashed, dotted, striped, wavy) live in
