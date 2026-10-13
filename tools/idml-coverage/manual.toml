@@ -78,6 +78,29 @@ item = "parse_designmap"
 children = ["PageNumberStyle"]
 elements = ["Section"]
 
+# Nested, line and GREP styles: typed lists in the <Properties> of a style
+# and of a range, read whole by `style_lists::read_style_list`.
+
+[[properties_child]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_stylesheet"
+children = ["AllNestedStyles", "AllLineStyles", "AllGREPStyles"]
+elements = ["ParagraphStyle"]
+coarse_type = "list"
+
+[[properties_child]]
+file = "crates/idml-import/src/story.rs"
+item = "parse_story_with_provenance"
+children = ["AllNestedStyles", "AllLineStyles", "AllGREPStyles"]
+elements = ["ParagraphStyleRange"]
+coarse_type = "list"
+
+[[ignore]]
+file = "crates/idml-import/src/style_lists.rs"
+item = "read_records"
+literals = ["type"]
+reason = "the `type` of a list record's typed field (`enumeration` or `string`), not an attribute of the element"
+
 # Reads through a computed key.
 
 [[read]]
@@ -337,6 +360,22 @@ attributes = [
 elements = ["ParagraphStyleRange", "ParagraphStyle"]
 
 # Typed <Properties> children.
+
+# Nested, line and GREP styles: the typed lists `nested_styles` writes into
+# a style's (or a range's) <Properties>.
+[[export]]
+file = "crates/idml-export/src/nested_styles.rs"
+item = "write_nested_styles"
+attributes = ["AllNestedStyles"]
+elements = ["ParagraphStyle", "ParagraphStyleRange"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/nested_styles.rs"
+item = "write_style_lists"
+attributes = ["AllGREPStyles", "AllLineStyles"]
+elements = ["ParagraphStyle", "ParagraphStyleRange"]
+properties_child = true
 
 [[export]]
 file = "crates/idml-export/src/emit.rs"
@@ -820,6 +859,25 @@ keys = [
   "ParagraphStyleRange@TabList/ListItem/AlignmentCharacter",
   "ParagraphStyleRange@TabList/ListItem/Leader",
   "ParagraphStyleRange@TabList/ListItem/Position",
+]
+
+[[unseen]]
+reason = "InDesign writes these lists on a style with GREP or line styles, and on a range whose nested, GREP or line styles differ from its style's (asked of InDesign 20.0.1, 2026-10-12: a document built in its DOM and exported); no census document has one."
+keys = [
+  "ParagraphStyle@AllGREPStyles",
+  "ParagraphStyle@AllLineStyles",
+  "ParagraphStyleRange@AllGREPStyles",
+  "ParagraphStyleRange@AllLineStyles",
+  "ParagraphStyleRange@AllNestedStyles",
+]
+
+[[unseen]]
+reason = "InDesign writes them when a style or range sets historical forms or stylistic alternates (asked of InDesign 20.0.1, 2026-10-12: OTFHistorical=\"true\" OTFStylisticAlternate=\"true\" on a <ParagraphStyle>); no census document sets either."
+keys = [
+  "CharacterStyle@OTFHistorical",
+  "CharacterStyle@OTFStylisticAlternate",
+  "CharacterStyleRange@OTFHistorical",
+  "CharacterStyleRange@OTFStylisticAlternate",
 ]
 
 [[unseen]]

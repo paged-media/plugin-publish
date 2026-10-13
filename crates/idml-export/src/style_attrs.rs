@@ -43,6 +43,40 @@ fn push_bools(out: &mut Vec<(&'static str, String)>, attrs: &[(&'static str, Opt
     }
 }
 
+/// The discrete `OTF*` toggles, as attributes (InDesign spells them so on
+/// a `<ParagraphStyle>` as on a `<CharacterStyle>`).
+fn push_otf(out: &mut Vec<(&'static str, String)>, otf: &idml_import::OtfFeatures) {
+    push_bools(
+        out,
+        &[
+            ("OTFFraction", otf.fraction),
+            ("OTFOrdinal", otf.ordinal),
+            ("OTFSwash", otf.swash),
+            ("OTFDiscretionaryLigature", otf.discretionary_ligatures),
+            ("OTFSlashedZero", otf.slashed_zero),
+            ("OTFTitling", otf.titling),
+            ("OTFContextualAlternate", otf.contextual_alternates),
+            ("OTFStylisticAlternate", otf.stylistic_alternate),
+            ("OTFHistorical", otf.historical),
+        ],
+    );
+    push_strs(out, &[("OTFFigureStyle", &otf.figure_style)]);
+    if let Some(n) = otf.stylistic_sets {
+        out.push(("OTFStylisticSets", n.to_string()));
+    }
+}
+
+/// A boolean the model owns, keeping the source's spelling whenever it
+/// already says the model's value (or the model has none and the source
+/// spells something the parser could not read).
+fn preserving_bool_patch(raw: Option<&str>, v: Option<bool>) -> Patch {
+    match (raw.map(|r| r.parse::<bool>()), v) {
+        (Some(Ok(r)), Some(m)) if r == m => Patch::Keep,
+        (Some(Err(_)), None) => Patch::Keep,
+        _ => opt_bool_patch(v),
+    }
+}
+
 /// Every attribute a `<ParagraphStyle>` carries, from the model.
 pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str, String)> {
     let mut out: Vec<(&'static str, String)> = vec![("Self", s.self_id.clone())];
@@ -90,6 +124,20 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
             ("StrikeThru", s.strikethru),
             ("OverprintFill", s.overprint_fill),
             ("OverprintStroke", s.overprint_stroke),
+            ("Ligatures", s.ligatures_on),
+        ],
+    );
+    push_strs(&mut out, &[("KerningMethod", &s.kerning_method)]);
+    push_otf(&mut out, &s.otf);
+    // `true` on a style whose nested / line / GREP list is empty — one
+    // that cleared its parent's; the lists themselves are `<Properties>`
+    // children (see `nested_styles`).
+    push_bools(
+        &mut out,
+        &[
+            ("EmptyNestedStyles", s.empty_nested_styles),
+            ("EmptyLineStyles", s.empty_line_styles),
+            ("EmptyGrepStyles", s.empty_grep_styles),
         ],
     );
     // NOT here: `NumberingFormat`, `AppliedNumberingList`,
@@ -203,6 +251,7 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
         ],
     );
     push_f32s(&mut out, &[("KentenFontSize", s.kenten_font_size)]);
+    push_otf(&mut out, &s.otf);
     out
 }
 
@@ -221,8 +270,9 @@ fn swatch_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
 }
 
 /// The `<ParagraphStyle>` attributes the model owns; anything else
-/// (`Self`, the OTF flags, the border and shading families, a `BasedOn`
-/// or `AppliedFont` attribute another pass converts) passes through.
+/// (`Self`, the OTF flags and `Empty*Styles` — no setter writes them —,
+/// the border and shading families, a `BasedOn` or `AppliedFont`
+/// attribute another pass converts) passes through.
 pub(crate) fn paragraph_style_attr_patch(
     key: &[u8],
     raw: &[u8],
@@ -258,6 +308,9 @@ pub(crate) fn paragraph_style_attr_patch(
         b"StrikeThru" => Some(opt_bool_patch(s.strikethru)),
         b"OverprintFill" => Some(opt_bool_patch(s.overprint_fill)),
         b"OverprintStroke" => Some(opt_bool_patch(s.overprint_stroke)),
+        // A paragraph style's own setters write these two.
+        b"Ligatures" => Some(preserving_bool_patch(raw, s.ligatures_on)),
+        b"KerningMethod" => Some(opt_string_patch(&s.kerning_method)),
         b"BulletsAndNumberingListType" => Some(opt_string_patch(&s.bullets_list_type)),
         b"BulletsTextAfter" => Some(opt_string_patch(&s.bullets_text_after)),
         // Attribute spellings of what InDesign reads as children: an
