@@ -6495,6 +6495,16 @@ pub(crate) fn paragraph_attr_patch(
         // InDesign's spelling (`emit::paragraph_attrs`).
         b"DropcapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
         b"DropCapDetail" => Some(Patch::Remove),
+        // Spacing set on the range (the model owns it since it is read).
+        b"MinimumWordSpacing" => Some(preserving_f32_patch(raw, p.minimum_word_spacing)),
+        b"DesiredWordSpacing" => Some(preserving_f32_patch(raw, p.desired_word_spacing)),
+        b"MaximumWordSpacing" => Some(preserving_f32_patch(raw, p.maximum_word_spacing)),
+        b"MinimumLetterSpacing" => Some(preserving_f32_patch(raw, p.minimum_letter_spacing)),
+        b"DesiredLetterSpacing" => Some(preserving_f32_patch(raw, p.desired_letter_spacing)),
+        b"MaximumLetterSpacing" => Some(preserving_f32_patch(raw, p.maximum_letter_spacing)),
+        b"MinimumGlyphScaling" => Some(preserving_f32_patch(raw, p.minimum_glyph_scaling)),
+        b"DesiredGlyphScaling" => Some(preserving_f32_patch(raw, p.desired_glyph_scaling)),
+        b"MaximumGlyphScaling" => Some(preserving_f32_patch(raw, p.maximum_glyph_scaling)),
         b"Hyphenation" => Some(opt_bool_patch(p.hyphenation)),
         // The rest of InDesign's hyphenation panel. These used to fall
         // through to the pass-through arm; now that the importer reads

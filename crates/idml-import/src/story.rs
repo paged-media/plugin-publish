@@ -689,6 +689,27 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .or_else(|| attr(&e, b"DropCapDetail"))
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
+                            // Word and letter spacing and glyph scaling set on
+                            // the range itself, over the paragraph style's (a
+                            // local paragraph override, as InDesign writes it).
+                            minimum_word_spacing: attr(&e, b"MinimumWordSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            desired_word_spacing: attr(&e, b"DesiredWordSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            maximum_word_spacing: attr(&e, b"MaximumWordSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            minimum_letter_spacing: attr(&e, b"MinimumLetterSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            desired_letter_spacing: attr(&e, b"DesiredLetterSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            maximum_letter_spacing: attr(&e, b"MaximumLetterSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            minimum_glyph_scaling: attr(&e, b"MinimumGlyphScaling")
+                                .and_then(|s| s.parse().ok()),
+                            desired_glyph_scaling: attr(&e, b"DesiredGlyphScaling")
+                                .and_then(|s| s.parse().ok()),
+                            maximum_glyph_scaling: attr(&e, b"MaximumGlyphScaling")
+                                .and_then(|s| s.parse().ok()),
                             hyphenation: attr(&e, b"Hyphenation")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             hyphenation_zone: attr(&e, b"HyphenationZone")
