@@ -219,6 +219,20 @@ pub struct UnseenEntry {
     pub reason: String,
 }
 
+/// `[[seen]]`: a part InDesign writes these keys in that the census has
+/// not seen them in (the corpus's documents leave them at their defaults
+/// there). The reason names the InDesign export that shows them. A read in
+/// one of `parts` is then not misplaced; a key the census lacks entirely is
+/// an `[[unseen]]` matter, not this.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeenEntry {
+    /// `Element@Attribute` (attribute kind).
+    pub keys: Vec<String>,
+    pub parts: Vec<String>,
+    pub reason: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PartRow {
@@ -332,6 +346,7 @@ pub fn join(
     census_file: &str,
     rows: &[Row],
     unseen_entries: &[UnseenEntry],
+    seen_entries: &[SeenEntry],
     manual_file: &str,
 ) -> Result<Joined, String> {
     let (census, crows) = census_rows(census_text, census_file)?;
@@ -343,6 +358,22 @@ pub fn join(
             .entry((r.element.clone(), r.attribute.clone(), r.kind))
             .or_default()
             .insert(r.part.clone());
+    }
+    for s in seen_entries {
+        for k in &s.keys {
+            let (element, attribute) = k.split_once('@').ok_or_else(|| {
+                format!("{manual_file}: [[seen]] key {k} is not Element@Attribute")
+            })?;
+            let parts = census_parts
+                .get_mut(&(element.to_string(), attribute.to_string(), "attr"))
+                .ok_or_else(|| {
+                    format!(
+                        "{manual_file}: [[seen]] names {k}, which the census does not have \
+                         (an [[unseen]] entry justifies that)"
+                    )
+                })?;
+            parts.extend(s.parts.iter().cloned());
+        }
     }
     let coverage: BTreeMap<Key, &Row> = rows
         .iter()

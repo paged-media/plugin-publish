@@ -53,7 +53,8 @@ pub use paged_model::{
     BevelEmbossParams, ClippingPathSettings, ContourOptionType, DirectionalFeatherParams,
     FeatherParams, FrameEffects, FrameFittingOption, GradientFeatherParams, GradientFeatherStop,
     GraphicLine, InnerGlowParams, InnerShadowParams, OuterGlowParams, Oval, PathAnchor, Polygon,
-    Rectangle, SatinParams, TextFrame, TextPath, TextWrap, TextWrapMode,
+    Rectangle, SatinParams, TargetTransparency, TextFrame, TextPath, TextWrap, TextWrapMode,
+    TransparencyPreference,
 };
 
 // N5 — these pure model types now live in `paged-model`; re-exported here
@@ -98,6 +99,8 @@ struct GroupBuilder {
     /// to a Group don't map onto our model and are skipped.
     stroke_transparency_depth: u32,
     content_transparency_depth: u32,
+    /// R-10 — `<FillTransparencySetting>` depth, as above.
+    fill_transparency_depth: u32,
 }
 
 /// Open `<InsetSpacing>` capture — see `current_insets`. IDML writes
@@ -175,10 +178,13 @@ struct CurrentFrame {
     /// them only when the stroke is actually visible.
     stroke_transparency_depth: u32,
     /// Depth counter for nested `<ContentTransparencySetting>`
-    /// containers. When > 0, child `<DropShadowSetting>` blocks
-    /// describe content-only shadows that don't map onto our
-    /// single-shadow-per-frame model and are skipped.
+    /// containers: a text frame's TEXT target (R-10). A graphic frame's
+    /// picture is not this element but the `<Image>`'s own
+    /// `<TransparencySetting>` (see [`Tx::Picture`]).
     content_transparency_depth: u32,
+    /// R-10 — depth counter for nested `<FillTransparencySetting>`
+    /// containers: the fill target.
+    fill_transparency_depth: u32,
     /// W1.21: depth inside a nested `<Image>` (and `<EPSImage>` etc.).
     /// While > 0 the image's own `<PathGeometry>` is NOT the frame's
     /// outline, so geometry events must not pollute `anchors`
@@ -664,7 +670,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
     // `<Gradient>` swatches in graphic.rs — those live in a
     // different parser entirely, so the state here can stay
     // scoped to spread.rs.
-    let mut current_gradient_feather: Option<CurrentFrameKind> = None;
+    let mut current_gradient_feather: Option<(CurrentFrameKind, Tx)> = None;
     // Q-03: state for capturing inline `<Image><Properties><Contents>`
     // base64 CDATA. `Some(frame_kind)` between `<Contents>` start and
     // end while a frame is the active nested context; we append
@@ -1081,6 +1087,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         corner: read_corner_attrs(&e),
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
+                        fill_transparency_depth: 0,
                     });
                 }
                 b"Guide" => {
@@ -1246,6 +1253,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         in_text_wrap: false,
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
+                        fill_transparency_depth: 0,
                         in_image_depth: 0,
                         clip: None,
                         in_clipping_path: false,
@@ -1345,6 +1353,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         in_text_wrap: false,
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
+                        fill_transparency_depth: 0,
                         in_image_depth: 0,
                         clip: None,
                         in_clipping_path: false,
@@ -1439,6 +1448,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         in_text_wrap: false,
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
+                        fill_transparency_depth: 0,
                         in_image_depth: 0,
                         clip: None,
                         in_clipping_path: false,
@@ -1458,25 +1468,46 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         }
                     }
                 }
-                b"StrokeTransparencySetting" => {
-                    // Drop shadows under this wrapper describe a
-                    // shadow cast by the frame's stroke — captured
-                    // separately so the renderer can gate emission
-                    // on stroke visibility.
+                b"StrokeTransparencySetting"
+                | b"FillTransparencySetting"
+                | b"ContentTransparencySetting"
+                    if event_is_start =>
+                {
+                    // R-10: a page item's per-target transparency. While
+                    // one of these is open, a `<BlendingSetting>`, a
+                    // `<DropShadowSetting>` and the effect settings belong
+                    // to that TARGET, not to the object (see `Tx`). A
+                    // self-closed wrapper carries nothing and has no end
+                    // tag, so only a start tag opens one.
+                    let depth = |d: &mut (u32, u32, u32)| match e.name().as_ref() {
+                        b"StrokeTransparencySetting" => d.0 += 1,
+                        b"FillTransparencySetting" => d.1 += 1,
+                        _ => d.2 += 1,
+                    };
                     if let Some(cf) = current_frame.as_mut() {
-                        cf.stroke_transparency_depth += 1;
+                        let mut d = (
+                            cf.stroke_transparency_depth,
+                            cf.fill_transparency_depth,
+                            cf.content_transparency_depth,
+                        );
+                        depth(&mut d);
+                        (
+                            cf.stroke_transparency_depth,
+                            cf.fill_transparency_depth,
+                            cf.content_transparency_depth,
+                        ) = d;
                     } else if let Some(b) = group_builders.last_mut() {
-                        b.stroke_transparency_depth += 1;
-                    }
-                }
-                b"ContentTransparencySetting" => {
-                    // Drop shadows under this wrapper describe
-                    // content-only shadows that don't map onto our
-                    // single-shadow-per-frame model; skipped.
-                    if let Some(cf) = current_frame.as_mut() {
-                        cf.content_transparency_depth += 1;
-                    } else if let Some(b) = group_builders.last_mut() {
-                        b.content_transparency_depth += 1;
+                        let mut d = (
+                            b.stroke_transparency_depth,
+                            b.fill_transparency_depth,
+                            b.content_transparency_depth,
+                        );
+                        depth(&mut d);
+                        (
+                            b.stroke_transparency_depth,
+                            b.fill_transparency_depth,
+                            b.content_transparency_depth,
+                        ) = d;
                     }
                 }
                 b"DropShadowSetting" => {
@@ -1487,62 +1518,23 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         // serialised.
                         if setting.mode != "None" {
                             if let Some(cf) = current_frame.as_ref() {
-                                if cf.content_transparency_depth > 0 {
-                                    // Content-only shadow — skip.
-                                } else if cf.stroke_transparency_depth > 0 {
-                                    // Stroke-only shadow — captured for
-                                    // conditional emission by the
-                                    // renderer.
-                                    match cf.kind {
-                                        CurrentFrameKind::Text(i) => {
-                                            out.text_frames[i].stroke_drop_shadow = Some(setting);
-                                        }
-                                        CurrentFrameKind::Rect(i) => {
-                                            out.rectangles[i].stroke_drop_shadow = Some(setting);
-                                        }
-                                        CurrentFrameKind::Oval(i) => {
-                                            out.ovals[i].stroke_drop_shadow = Some(setting);
-                                        }
-                                        CurrentFrameKind::Line(_)
-                                        | CurrentFrameKind::Polygon(_) => {
-                                            // GraphicLine + Polygon keep
-                                            // one (object-level) shadow;
-                                            // a stroke-only one is not
-                                            // modelled for them.
-                                        }
-                                    }
-                                } else {
-                                    match cf.kind {
-                                        CurrentFrameKind::Text(i) => {
-                                            out.text_frames[i].drop_shadow = Some(setting);
-                                        }
-                                        CurrentFrameKind::Rect(i) => {
-                                            out.rectangles[i].drop_shadow = Some(setting);
-                                        }
-                                        CurrentFrameKind::Oval(i) => {
-                                            out.ovals[i].drop_shadow = Some(setting);
-                                        }
-                                        CurrentFrameKind::Polygon(i) => {
-                                            out.polygons[i].drop_shadow = Some(setting);
-                                        }
-                                        // A line has no fill: its
-                                        // object-level shadow is cast
-                                        // by the stroke.
-                                        CurrentFrameKind::Line(i) => {
-                                            out.graphic_lines[i].drop_shadow = Some(setting);
-                                        }
-                                    }
+                                // R-10: each target casts its own shadow —
+                                // the object's, the fill's, the stroke's,
+                                // the text's or the picture's (asked of
+                                // InDesign, `transparency-targets` 25–32).
+                                if let Some(slot) = target_shadow_mut(&mut out, cf.kind, tx_of(cf))
+                                {
+                                    *slot = Some(setting);
                                 }
                             } else if let Some(b) = group_builders.last_mut() {
                                 // No frame is open but a `<Group>`
                                 // is — route the shadow to the
                                 // innermost group's transparency
-                                // block. Stroke-/content-only
-                                // wrappers around a group don't
-                                // map onto our model and are
-                                // skipped.
+                                // block. A group has no fill, stroke
+                                // or content target of its own.
                                 if b.content_transparency_depth == 0
                                     && b.stroke_transparency_depth == 0
+                                    && b.fill_transparency_depth == 0
                                 {
                                     b.transparency.drop_shadow = Some(setting);
                                 }
@@ -1581,7 +1573,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // even though IDML still serialises the settings
                     // for round-trip preservation. Q-04: extended
                     // from Rectangle-only to all five shape kinds.
-                    if let Some(kind) = current_frame.as_ref().map(|cf| cf.kind) {
+                    if let Some((kind, tx)) = current_frame.as_ref().map(|cf| (cf.kind, tx_of(cf)))
+                    {
                         // A basic feather is switched on by `Mode="Standard"`
                         // (InDesign's spelling; default "None"), every other
                         // effect by `Applied="true"`. Our own older exports
@@ -1597,7 +1590,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                             // renderer doesn't accidentally emit it.
                             continue;
                         }
-                        let Some(bag_slot) = effects_slot_mut(&mut out, kind) else {
+                        // R-10: an effect under a target wrapper is that
+                        // target's, not the object's.
+                        let Some(bag_slot) = target_effects_mut(&mut out, kind, tx) else {
                             continue;
                         };
                         let bag = bag_slot.get_or_insert_with(Default::default);
@@ -1614,6 +1609,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     choke_pct: parse_f(&e, b"ChokeAmount"),
                                     blend_mode: attr(&e, b"BlendMode"),
                                     noise_pct: parse_f(&e, b"Noise"),
+                                    use_global_light: parse_bool(&e, b"UseGlobalLight"),
                                 });
                             }
                             b"OuterGlowSetting" => {
@@ -1624,6 +1620,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     spread_pct: parse_f(&e, b"Spread"),
                                     blend_mode: attr(&e, b"BlendMode"),
                                     noise_pct: parse_f(&e, b"Noise"),
+                                    technique: attr(&e, b"Technique"),
                                 });
                             }
                             b"InnerGlowSetting" => {
@@ -1637,6 +1634,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     blend_mode: attr(&e, b"BlendMode"),
                                     source: attr(&e, b"Source"),
                                     noise_pct: parse_f(&e, b"Noise"),
+                                    technique: attr(&e, b"Technique"),
                                 });
                             }
                             b"BevelAndEmbossSetting" => {
@@ -1653,6 +1651,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     direction: attr(&e, b"Direction"),
                                     technique: attr(&e, b"Technique"),
                                     soften: parse_f(&e, b"Soften"),
+                                    highlight_blend_mode: attr(&e, b"HighlightBlendMode"),
+                                    shadow_blend_mode: attr(&e, b"ShadowBlendMode"),
+                                    use_global_light: parse_bool(&e, b"UseGlobalLight"),
                                 });
                             }
                             b"SatinSetting" => {
@@ -1687,6 +1688,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                         .or_else(|| parse_f(&e, b"NoiseAmount")),
                                     choke_pct: parse_f(&e, b"ChokeAmount"),
                                     corner_type: attr(&e, b"CornerType"),
+                                    follow_shape_mode: attr(&e, b"FollowShapeMode"),
                                 });
                             }
                             b"GradientFeatherSetting" => {
@@ -1739,6 +1741,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     angle_deg: parse_f(&e, b"GradientAngle")
                                         .or_else(|| parse_f(&e, b"Angle")),
                                     stops: Vec::new(),
+                                    hilite_angle: parse_f(&e, b"HiliteAngle"),
+                                    hilite_length: parse_f(&e, b"HiliteLength"),
                                 });
                                 // Mark the current frame's gradient
                                 // feather as the open target so
@@ -1749,7 +1753,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                 // CurrentFrameKind (not just rect
                                 // index) so non-Rectangle shapes
                                 // can host gradient feathers too.
-                                current_gradient_feather = Some(kind);
+                                current_gradient_feather = Some((kind, tx));
                             }
                             _ => {}
                         }
@@ -1772,8 +1776,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // a separate parser file, so the routing here
                     // only fires when a gradient-feather block is
                     // actually open in the spread parser.
-                    if let Some(kind) = current_gradient_feather {
-                        if let Some(bag) = effects_slot_mut(&mut out, kind).and_then(|s| s.as_mut())
+                    if let Some((kind, tx)) = current_gradient_feather {
+                        if let Some(bag) =
+                            target_effects_mut(&mut out, kind, tx).and_then(|s| s.as_mut())
                         {
                             if let Some(gf) = bag.gradient_feather.as_mut() {
                                 let location_pct = parse_f(&e, b"Location").unwrap_or(0.0);
@@ -1799,65 +1804,71 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     }
                 }
                 b"BlendingSetting" => {
-                    // Nested under <TransparencySetting>; we don't
-                    // track the wrapper because no other element
-                    // shares this name. Opacity is 0..=100;
-                    // BlendMode is a string (Normal / Multiply /
-                    // Screen / etc).
+                    // Opacity is 0..=100; BlendMode is a string (Normal /
+                    // Multiply / Screen / …). R-10: the TARGET is the
+                    // wrapper it sits in — the object's
+                    // `<TransparencySetting>`, a `<Fill|Stroke|Content
+                    // TransparencySetting>`, or the placed picture's own
+                    // `<TransparencySetting>` inside `<Image>` (see `Tx`).
+                    // Every setting used to land on the object, the last
+                    // one read winning.
                     let opacity = attr(&e, b"Opacity").and_then(|s| s.parse::<f32>().ok());
                     let mode = attr(&e, b"BlendMode");
                     if let Some(cf) = current_frame.as_ref() {
-                        match cf.kind {
-                            CurrentFrameKind::Rect(i) => {
-                                if opacity.is_some() {
-                                    out.rectangles[i].opacity = opacity;
-                                }
-                                if mode.is_some() {
-                                    out.rectangles[i].blend_mode = mode;
+                        let (kind, tx) = (cf.kind, tx_of(cf));
+                        if tx == Tx::Object {
+                            macro_rules! object_blending {
+                                ($item:expr) => {{
+                                    let item = &mut $item;
+                                    if opacity.is_some() {
+                                        item.opacity = opacity;
+                                    }
+                                    if mode.is_some() {
+                                        item.blend_mode = mode;
+                                    }
+                                }};
+                            }
+                            match kind {
+                                CurrentFrameKind::Rect(i) => object_blending!(out.rectangles[i]),
+                                CurrentFrameKind::Text(i) => object_blending!(out.text_frames[i]),
+                                CurrentFrameKind::Oval(i) => object_blending!(out.ovals[i]),
+                                CurrentFrameKind::Polygon(i) => object_blending!(out.polygons[i]),
+                                CurrentFrameKind::Line(i) => {
+                                    object_blending!(out.graphic_lines[i])
                                 }
                             }
-                            CurrentFrameKind::Text(i) => {
-                                if opacity.is_some() {
-                                    out.text_frames[i].opacity = opacity;
-                                }
-                                if mode.is_some() {
-                                    out.text_frames[i].blend_mode = mode;
-                                }
+                        } else if let Some(slot) = target_slot_mut(&mut out, kind, tx) {
+                            let t = slot.get_or_insert_with(Default::default);
+                            if opacity.is_some() {
+                                t.opacity = opacity;
                             }
-                            CurrentFrameKind::Oval(i) => {
-                                if opacity.is_some() {
-                                    out.ovals[i].opacity = opacity;
-                                }
-                                if mode.is_some() {
-                                    out.ovals[i].blend_mode = mode;
-                                }
-                            }
-                            CurrentFrameKind::Polygon(i) => {
-                                if opacity.is_some() {
-                                    out.polygons[i].opacity = opacity;
-                                }
-                                if mode.is_some() {
-                                    out.polygons[i].blend_mode = mode;
-                                }
-                            }
-                            _ => {
-                                // GraphicLines don't yet surface
-                                // opacity / blend_mode;
-                                // ignore until they do.
+                            if mode.is_some() {
+                                t.blend_mode = mode;
                             }
                         }
                     } else if let Some(b) = group_builders.last_mut() {
-                        // No frame is open but a `<Group>` is —
-                        // route the BlendingSetting to the
-                        // innermost group's transparency block so
-                        // the renderer can bracket the group's
-                        // member range with a single opacity /
-                        // blend mode.
-                        if opacity.is_some() {
-                            b.transparency.opacity = opacity;
-                        }
-                        if mode.is_some() {
-                            b.transparency.blend_mode = mode;
+                        // No frame is open but a `<Group>` is — the
+                        // innermost group's own setting, which also
+                        // carries how its members composite: isolated
+                        // from what lies under the group, knocking each
+                        // other out (asked of InDesign,
+                        // `transparency-targets` 41–48).
+                        if b.content_transparency_depth == 0
+                            && b.stroke_transparency_depth == 0
+                            && b.fill_transparency_depth == 0
+                        {
+                            if opacity.is_some() {
+                                b.transparency.opacity = opacity;
+                            }
+                            if mode.is_some() {
+                                b.transparency.blend_mode = mode;
+                            }
+                            if let Some(v) = parse_bool(&e, b"IsolateBlending") {
+                                b.transparency.isolate_blending = v;
+                            }
+                            if let Some(v) = parse_bool(&e, b"KnockoutGroup") {
+                                b.transparency.knockout_group = v;
+                            }
                         }
                     }
                 }
@@ -2381,7 +2392,12 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                             self_id: attr(&e, b"Self"),
                             parent_story,
                             path_alignment: attr(&e, b"PathAlignment"),
-                            path_type_alignment: attr(&e, b"PathTypeAlignment"),
+                            // Which part of the type sits on the path. InDesign
+                            // 20.0.1 writes `TextAlignment` (`AscenderTextAlignment`
+                            // …); `PathTypeAlignment` is what older Paged builds
+                            // wrote, and reads too.
+                            path_type_alignment: attr(&e, b"TextAlignment")
+                                .or_else(|| attr(&e, b"PathTypeAlignment")),
                             path_effect: attr(&e, b"PathEffect"),
                             flip_path_effect: attr(&e, b"FlipPathEffect"),
                             start_bracket: attr(&e, b"StartBracket").and_then(|s| s.parse().ok()),
@@ -2481,6 +2497,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         in_text_wrap: false,
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
+                        fill_transparency_depth: 0,
                         in_image_depth: 0,
                         clip: None,
                         in_clipping_path: false,
@@ -2582,6 +2599,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         in_text_wrap: false,
                         stroke_transparency_depth: 0,
                         content_transparency_depth: 0,
+                        fill_transparency_depth: 0,
                         in_image_depth: 0,
                         clip: None,
                         in_clipping_path: false,
@@ -2706,6 +2724,13 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         }
                     }
                 }
+                b"FillTransparencySetting" => {
+                    if let Some(cf) = current_frame.as_mut() {
+                        cf.fill_transparency_depth = cf.fill_transparency_depth.saturating_sub(1);
+                    } else if let Some(b) = group_builders.last_mut() {
+                        b.fill_transparency_depth = b.fill_transparency_depth.saturating_sub(1);
+                    }
+                }
                 b"GradientFeatherSetting" => {
                     // Close the gradient-feather scope so any
                     // later `<GradientStop>` (e.g. inside a
@@ -2823,6 +2848,14 @@ fn parse_drop_shadow(e: &quick_xml::events::BytesStart) -> Option<DropShadowSett
             .and_then(|s| s.parse().ok())
             .unwrap_or(75.0),
         effect_color: attr(e, b"EffectColor"),
+        // R-11: each written only when it differs from InDesign's
+        // default, so `None` is that default.
+        blend_mode: attr(e, b"BlendMode"),
+        spread_pct: attr(e, b"Spread").and_then(|s| s.parse().ok()),
+        noise_pct: attr(e, b"Noise").and_then(|s| s.parse().ok()),
+        knocked_out: attr(e, b"KnockedOut").and_then(|s| s.parse().ok()),
+        honor_other_effects: attr(e, b"HonorOtherEffects").and_then(|s| s.parse().ok()),
+        use_global_light: attr(e, b"UseGlobalLight").and_then(|s| s.parse().ok()),
     })
 }
 
@@ -2872,6 +2905,141 @@ fn effects_slot_mut(out: &mut Spread, kind: CurrentFrameKind) -> Option<&mut Opt
         CurrentFrameKind::Line(i) => out.graphic_lines.get_mut(i).map(|f| &mut f.effects),
         CurrentFrameKind::Polygon(i) => out.polygons.get_mut(i).map(|f| &mut f.effects),
     }
+}
+
+/// R-10: which of a page item's transparency targets the open element
+/// belongs to, from the wrapper it sits in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tx {
+    /// The item's own `<TransparencySetting>`.
+    Object,
+    /// `<FillTransparencySetting>`.
+    Fill,
+    /// `<StrokeTransparencySetting>`.
+    Stroke,
+    /// `<ContentTransparencySetting>` — a text frame's text. InDesign
+    /// writes none on a graphic frame and ignores one there (asked of
+    /// InDesign 20.0.1, `transparency-targets` case 38).
+    Content,
+    /// The placed picture's own `<TransparencySetting>` inside `<Image>`
+    /// (or `<EPS>` / `<PDF>`): a graphic frame's content target.
+    Picture,
+}
+
+fn tx_of(cf: &CurrentFrame) -> Tx {
+    if cf.in_image_depth > 0 {
+        Tx::Picture
+    } else if cf.fill_transparency_depth > 0 {
+        Tx::Fill
+    } else if cf.stroke_transparency_depth > 0 {
+        Tx::Stroke
+    } else if cf.content_transparency_depth > 0 {
+        Tx::Content
+    } else {
+        Tx::Object
+    }
+}
+
+/// The per-target setting a non-object target fills, or `None` where the
+/// kind has no such target (a line's fill or content, a graphic frame's
+/// `<ContentTransparencySetting>`, a text frame's picture).
+fn target_slot_mut(
+    out: &mut Spread,
+    kind: CurrentFrameKind,
+    tx: Tx,
+) -> Option<&mut Option<TargetTransparency>> {
+    use CurrentFrameKind as K;
+    match (tx, kind) {
+        (Tx::Fill, K::Text(i)) => out.text_frames.get_mut(i).map(|f| &mut f.fill_transparency),
+        (Tx::Fill, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.fill_transparency),
+        (Tx::Fill, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.fill_transparency),
+        (Tx::Fill, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.fill_transparency),
+        (Tx::Stroke, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Rect(i)) => out
+            .rectangles
+            .get_mut(i)
+            .map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Line(i)) => out
+            .graphic_lines
+            .get_mut(i)
+            .map(|f| &mut f.stroke_transparency),
+        (Tx::Content, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.content_transparency),
+        (Tx::Picture, K::Rect(i)) => out
+            .rectangles
+            .get_mut(i)
+            .map(|f| &mut f.content_transparency),
+        (Tx::Picture, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.content_transparency),
+        (Tx::Picture, K::Polygon(i)) => {
+            out.polygons.get_mut(i).map(|f| &mut f.content_transparency)
+        }
+        _ => None,
+    }
+}
+
+/// The drop-shadow slot a target's `<DropShadowSetting>` fills.
+fn target_shadow_mut(
+    out: &mut Spread,
+    kind: CurrentFrameKind,
+    tx: Tx,
+) -> Option<&mut Option<DropShadowSetting>> {
+    use CurrentFrameKind as K;
+    match (tx, kind) {
+        (Tx::Object, K::Text(i)) => out.text_frames.get_mut(i).map(|f| &mut f.drop_shadow),
+        (Tx::Object, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.drop_shadow),
+        (Tx::Object, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.drop_shadow),
+        (Tx::Object, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.drop_shadow),
+        // A line has no fill: its object-level shadow is cast by the stroke.
+        (Tx::Object, K::Line(i)) => out.graphic_lines.get_mut(i).map(|f| &mut f.drop_shadow),
+        (Tx::Fill, K::Text(i)) => out.text_frames.get_mut(i).map(|f| &mut f.fill_drop_shadow),
+        (Tx::Fill, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.fill_drop_shadow),
+        (Tx::Fill, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.fill_drop_shadow),
+        (Tx::Fill, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.fill_drop_shadow),
+        // A stroke-only shadow — the renderer emits it only when the
+        // stroke is visible. Not modelled on a polygon or a line.
+        (Tx::Stroke, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.stroke_drop_shadow),
+        (Tx::Stroke, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.stroke_drop_shadow),
+        (Tx::Stroke, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.stroke_drop_shadow),
+        (Tx::Content, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.content_drop_shadow),
+        (Tx::Picture, K::Rect(i)) => out
+            .rectangles
+            .get_mut(i)
+            .map(|f| &mut f.content_drop_shadow),
+        (Tx::Picture, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.content_drop_shadow),
+        (Tx::Picture, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.content_drop_shadow),
+        _ => None,
+    }
+}
+
+/// The effects bag a target's effect settings fill: the object's own, or
+/// the target's.
+fn target_effects_mut(
+    out: &mut Spread,
+    kind: CurrentFrameKind,
+    tx: Tx,
+) -> Option<&mut Option<FrameEffects>> {
+    if tx == Tx::Object {
+        return effects_slot_mut(out, kind);
+    }
+    target_slot_mut(out, kind, tx).map(|t| &mut t.get_or_insert_with(Default::default).effects)
+}
+
+/// A boolean attribute, `None` when absent or unreadable.
+fn parse_bool(e: &quick_xml::events::BytesStart, name: &[u8]) -> Option<bool> {
+    attr(e, name).and_then(|s| s.parse().ok())
 }
 
 /// Q-03: stash decoded image bytes on the frame the just-closed
@@ -4462,7 +4630,7 @@ mod tests {
               </Properties>
               <TextPath Self="tp1" ParentStory="story_u1"
                         PathAlignment="CenterPathAlignment"
-                        PathTypeAlignment="CenterPathType"
+                        TextAlignment="CenterTextAlignment"
                         PathEffect="RainbowPathEffect"
                         FlipPathEffect="NotFlipped"
                         StartBracket="0" EndBracket="100"/>
@@ -4476,10 +4644,25 @@ mod tests {
         assert_eq!(tp.parent_story, "story_u1");
         assert_eq!(tp.self_id.as_deref(), Some("tp1"));
         assert_eq!(tp.path_alignment.as_deref(), Some("CenterPathAlignment"));
-        assert_eq!(tp.path_type_alignment.as_deref(), Some("CenterPathType"));
+        // InDesign's own attribute, as InDesign 20.0.1 exports it.
+        assert_eq!(
+            tp.path_type_alignment.as_deref(),
+            Some("CenterTextAlignment")
+        );
         assert_eq!(tp.path_effect.as_deref(), Some("RainbowPathEffect"));
         assert_eq!(tp.start_bracket, Some(0.0));
         assert_eq!(tp.end_bracket, Some(100.0));
+
+        // A file an older Paged wrote names it `PathTypeAlignment`.
+        let legacy = std::str::from_utf8(xml).unwrap().replace(
+            r#"TextAlignment="CenterTextAlignment""#,
+            r#"PathTypeAlignment="CenterPathType""#,
+        );
+        let s = parse_spread(legacy.as_bytes()).unwrap();
+        assert_eq!(
+            s.polygons[0].text_paths[0].path_type_alignment.as_deref(),
+            Some("CenterPathType")
+        );
     }
 
     #[test]

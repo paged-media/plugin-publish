@@ -1121,6 +1121,11 @@ struct NewItemPaint<'a> {
     /// path's round join, its dash and its rounded corners as miter,
     /// solid and square.
     style: NewItemStyle<'a>,
+    /// R-10 — the item's stroke, fill and (text frame) content targets,
+    /// written after the object's block in InDesign's order.
+    stroke_target: crate::effects::Target<'a>,
+    fill_target: crate::effects::Target<'a>,
+    content_target: crate::effects::Target<'a>,
 }
 
 /// C-82 — stroke style and corner attributes of an inserted item. All
@@ -1175,6 +1180,9 @@ impl Default for NewItemPaint<'_> {
             gradient: GradientGeom::default(),
             end_cap: None,
             style: NewItemStyle::default(),
+            stroke_target: Default::default(),
+            fill_target: Default::default(),
+            content_target: Default::default(),
         }
     }
 }
@@ -1286,13 +1294,30 @@ fn write_transparency_setting(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     paint: &NewItemPaint<'_>,
 ) -> Result<(), quick_xml::Error> {
-    crate::effects::write_transparency(
+    crate::effects::write_item_transparency(
         writer,
-        paint.opacity,
-        paint.blend_mode,
-        paint.drop_shadow,
-        paint.effects,
+        &crate::effects::ItemTransparency {
+            opacity: paint.opacity,
+            blend_mode: paint.blend_mode,
+            drop_shadow: paint.drop_shadow,
+            effects: paint.effects,
+            stroke: paint.stroke_target,
+            fill: paint.fill_target,
+            content: paint.content_target,
+            ..Default::default()
+        },
     )
+}
+
+/// R-10 — a target of a model item, for the writers.
+fn target<'a>(
+    setting: &'a Option<idml_import::TargetTransparency>,
+    drop_shadow: &'a Option<idml_import::DropShadowSetting>,
+) -> crate::effects::Target<'a> {
+    crate::effects::Target {
+        setting: setting.as_ref(),
+        drop_shadow: drop_shadow.as_ref(),
+    }
 }
 
 /// Build a start/empty tag's `BytesStart` from `(key, value)` pairs
@@ -1465,6 +1490,9 @@ fn write_new_text_frame(
         },
         end_cap: None,
         style: NewItemStyle::default(),
+        stroke_target: target(&f.stroke_transparency, &f.stroke_drop_shadow),
+        fill_target: target(&f.fill_transparency, &f.fill_drop_shadow),
+        content_target: target(&f.content_transparency, &f.content_drop_shadow),
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
     if let Some(a) = &f.stroke_alignment {
@@ -1921,9 +1949,19 @@ fn write_text_paths(
                 .unwrap_or_else(|| format!("{}tp{i}", crate::emit::sanitize_id(&tp.parent_story))),
         )];
         attrs.push(("ParentStory", crate::emit::sanitize_id(&tp.parent_story)));
+        // InDesign writes the glyph seat as `TextAlignment`, its values
+        // ending `TextAlignment`; a value an older Paged build read as
+        // `…PathType` is written in InDesign's spelling.
+        let text_alignment =
+            tp.path_type_alignment
+                .as_ref()
+                .map(|v| match v.strip_suffix("PathType") {
+                    Some(part) => format!("{part}TextAlignment"),
+                    None => v.clone(),
+                });
         for (k, v) in [
             ("PathAlignment", &tp.path_alignment),
-            ("PathTypeAlignment", &tp.path_type_alignment),
+            ("TextAlignment", &text_alignment),
             ("PathEffect", &tp.path_effect),
             ("FlipPathEffect", &tp.flip_path_effect),
         ] {
@@ -2174,6 +2212,11 @@ fn write_new_item(
                             end_join: rect.end_join.as_deref(),
                             miter_limit: rect.miter_limit,
                         },
+                        stroke_target: target(&rect.stroke_transparency, &rect.stroke_drop_shadow),
+                        fill_target: target(&rect.fill_transparency, &rect.fill_drop_shadow),
+                        // A picture's transparency is the `<Image>`'s own;
+                        // an inserted frame is written without one.
+                        content_target: Default::default(),
                     },
                     rect.bounds,
                     spread,
@@ -2215,6 +2258,9 @@ fn write_new_item(
                             stroke_alignment: o.stroke_alignment.as_deref(),
                             ..NewItemStyle::default()
                         },
+                        stroke_target: target(&o.stroke_transparency, &o.stroke_drop_shadow),
+                        fill_target: target(&o.fill_transparency, &o.fill_drop_shadow),
+                        content_target: Default::default(),
                     },
                     o.bounds,
                     spread,
@@ -2257,6 +2303,9 @@ fn write_new_item(
                             end_join: p.end_join.as_deref(),
                             miter_limit: p.miter_limit,
                         },
+                        stroke_target: target(&p.stroke_transparency, &None),
+                        fill_target: target(&p.fill_transparency, &p.fill_drop_shadow),
+                        content_target: Default::default(),
                     },
                     p.bounds,
                     &p.anchors,
@@ -2289,14 +2338,15 @@ fn write_new_item(
                     "GraphicLine",
                     id,
                     relative_to_parent(parent_accum, l.item_transform),
-                    // `paged_model::GraphicLine` carries no fill, tint,
-                    // opacity or blend-mode field at all — a line's
-                    // paint is stroke-only, so there is nothing to lose
-                    // here (cf. the C-20 arms core deliberately did not
-                    // add for this kind).
+                    // `paged_model::GraphicLine` carries no fill or tint —
+                    // a line's paint is stroke-only. Its object and
+                    // stroke transparency are R-10's.
                     &NewItemPaint {
                         stroke_color: &l.stroke_color,
                         stroke_weight: l.stroke_weight,
+                        opacity: l.opacity,
+                        blend_mode: l.blend_mode.as_deref(),
+                        stroke_target: target(&l.stroke_transparency, &None),
                         nonprinting: l.nonprinting,
                         visible: l.visible,
                         locked: l.locked,
@@ -2349,9 +2399,9 @@ fn write_new_item(
 /// `present` names the member ids the SOURCE already carries inside this
 /// group — used when an EXISTING `<Group>` gained members, so the close
 /// flush emits only the missing ones. It is `None` for a wholly new
-/// group (nothing of it is in the source yet). Group-level transparency
-/// (`<TransparencySetting>` on the `<Group>` itself) is not emitted: no
-/// operation authors it, so a scene-created group never carries one.
+/// group (nothing of it is in the source yet). The group's own
+/// `<TransparencySetting>` goes right after its start tag, where InDesign
+/// writes it.
 fn write_new_group(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     spread: &Spread,
@@ -2387,6 +2437,8 @@ fn write_new_group(
         attrs.push(("ItemLayer", layer.to_string()));
     }
     emit_start_with_attrs(writer, "Group", &attrs)?;
+    // R-10 — the group's own setting, with how its members composite.
+    write_group_transparency(writer, &group.transparency)?;
     let accum = compose_opt(ancestor_accum, group.item_transform);
     for &m in &group.members {
         let Some(id) = nested_ref_self_id(spread, m) else {
@@ -2399,6 +2451,29 @@ fn write_new_group(
     }
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Group")))?;
     Ok(())
+}
+
+/// A `<Group>`'s `<TransparencySetting>`: its opacity, blend mode and
+/// shadow, and whether its members are isolated from what lies under it
+/// and knock each other out.
+pub(crate) fn write_group_transparency(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    t: &idml_import::GroupTransparency,
+) -> Result<(), quick_xml::Error> {
+    crate::effects::write_item_transparency(writer, &group_item_transparency(t))
+}
+
+pub(crate) fn group_item_transparency(
+    t: &idml_import::GroupTransparency,
+) -> crate::effects::ItemTransparency<'_> {
+    crate::effects::ItemTransparency {
+        opacity: t.opacity,
+        blend_mode: t.blend_mode.as_deref(),
+        drop_shadow: t.drop_shadow.as_ref(),
+        isolate_blending: t.isolate_blending,
+        knockout_group: t.knockout_group,
+        ..Default::default()
+    }
 }
 
 /// B-18: emit a container's nested children (paste-into content)
@@ -6343,8 +6418,7 @@ pub(crate) fn span_column_patch(
 /// The `<ParagraphStyleRange>` attributes the model owns — every
 /// paragraph override InDesign reads from the range (the key set
 /// `emit::paragraph_attrs` writes). A key the model does not own passes
-/// through verbatim (`DropcapDetail` in InDesign's own lowercase-c
-/// spelling, …).
+/// through verbatim.
 pub(crate) fn paragraph_attr_patch(
     key: &[u8],
     raw: &[u8],
@@ -6365,7 +6439,11 @@ pub(crate) fn paragraph_attr_patch(
         b"SpaceAfter" => Some(preserving_f32_patch(raw, p.space_after)),
         b"DropCapCharacters" => Some(preserving_int_patch(raw, p.drop_cap_characters as i64)),
         b"DropCapLines" => Some(preserving_int_patch(raw, p.drop_cap_lines as i64)),
-        b"DropCapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
+        // InDesign spells it `DropcapDetail`. The camel-cased key is what
+        // older Paged builds wrote: dropped, and the value written again in
+        // InDesign's spelling (`emit::paragraph_attrs`).
+        b"DropcapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
+        b"DropCapDetail" => Some(Patch::Remove),
         b"Hyphenation" => Some(opt_bool_patch(p.hyphenation)),
         // The rest of InDesign's hyphenation panel. These used to fall
         // through to the pass-through arm; now that the importer reads
@@ -6705,6 +6783,34 @@ mod tests {
             !out.contains("SpaceAfter"),
             "a cleared override is dropped: {out}"
         );
+    }
+
+    #[test]
+    fn drop_cap_detail_keeps_indesigns_spelling() {
+        // InDesign writes `DropcapDetail` (lowercase c). An unedited save
+        // keeps it byte for byte; an edit rewrites it in place, never adding
+        // a second, camel-cased copy.
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropcapDetail="1"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(story.paragraphs[0].drop_cap_detail, 1);
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+        story.paragraphs[0].drop_cap_detail = 3;
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"DropcapDetail="3""#), "{out}");
+        assert!(!out.contains("DropCapDetail"), "no camel-cased copy: {out}");
+
+        // A file an older Paged wrote, camel-cased: read, and saved in
+        // InDesign's spelling.
+        let legacy = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropCapDetail="2"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let story = idml_import::parse_story(legacy).unwrap();
+        assert_eq!(story.paragraphs[0].drop_cap_detail, 2);
+        let out = String::from_utf8(rewrite_story(legacy, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"DropcapDetail="2""#), "{out}");
+        assert!(!out.contains("DropCapDetail"), "{out}");
     }
 
     #[test]

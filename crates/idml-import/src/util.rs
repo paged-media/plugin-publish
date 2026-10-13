@@ -168,6 +168,17 @@ pub fn parse_tint(raw: &str) -> Option<f32> {
 /// Parse an IDML tint percentage attribute by key. Absent ⇒ `None`
 /// (no override), the same answer the `-1` sentinel gives; see
 /// [`parse_tint`] for the whole rule.
+/// A flag InDesign writes as a number: `RubyFlag="1"` on the run that
+/// carries ruby (InDesign 20.0.1's own export). `true` / `false` read too,
+/// the spelling older Paged builds and hand-written files use.
+pub fn parse_flag(raw: &str) -> Option<bool> {
+    match raw.trim() {
+        "1" | "true" => Some(true),
+        "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
 pub(crate) fn parse_tint_attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<f32> {
     parse_tint(&attr(e, key)?)
 }
