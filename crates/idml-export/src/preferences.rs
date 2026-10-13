@@ -305,6 +305,112 @@ pub fn patch_document_preference(
     Ok(writer.into_inner().into_inner())
 }
 
+/// R-11 — the document's global light on `<TransparencyPreference
+/// GlobalLightAngle GlobalLightAltitude>`, where InDesign keeps it.
+/// Byte-identical when the part already says what the model says (an
+/// absent attribute is InDesign's 120° / 30° and reads as `None`); an
+/// existing element is patched attribute by attribute, and a part
+/// without one gains it only when the model sets a light.
+pub fn patch_transparency_preference(
+    original: &[u8],
+    pref: &paged_model::TransparencyPreference,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let wanted: [(&[u8], Option<f32>); 2] = [
+        (b"GlobalLightAngle", pref.global_light_angle),
+        (b"GlobalLightAltitude", pref.global_light_altitude),
+    ];
+    let read = |e: &BytesStart, name: &[u8]| -> Option<f32> {
+        e.attributes()
+            .flatten()
+            .find(|a| a.key.as_ref() == name)
+            .and_then(|a| std::str::from_utf8(&a.value).ok()?.parse::<f32>().ok())
+    };
+    let differs = |e: &BytesStart| {
+        wanted.iter().any(|(name, v)| match (read(e, name), v) {
+            (Some(have), Some(want)) => (have - want).abs() > 1e-4,
+            (None, None) => false,
+            _ => true,
+        })
+    };
+    // First pass: is there an element, and does it disagree?
+    let (present, needs) = {
+        let mut reader = Reader::from_reader(original);
+        reader.config_mut().trim_text(false);
+        let mut buf = Vec::new();
+        let mut found = (false, false);
+        loop {
+            match reader.read_event_into(&mut buf)? {
+                Event::Eof => break,
+                Event::Empty(e) | Event::Start(e)
+                    if e.name().as_ref() == b"TransparencyPreference" =>
+                {
+                    found = (true, differs(&e));
+                    break;
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+        found
+    };
+    let any_set = wanted.iter().any(|(_, v)| v.is_some());
+    if (present && !needs) || (!present && !any_set) {
+        return Ok(original.to_vec());
+    }
+    let rewrite = |e: &BytesStart| -> BytesStart<'static> {
+        let mut out = BytesStart::new(String::from_utf8_lossy(e.name().as_ref()).into_owned());
+        for a in e.attributes().flatten() {
+            if !wanted.iter().any(|(name, _)| a.key.as_ref() == *name) {
+                out.push_attribute((a.key.as_ref(), a.value.as_ref()));
+            }
+        }
+        for (name, v) in &wanted {
+            if let Some(v) = v {
+                out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+            }
+        }
+        out
+    };
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    let fresh = || {
+        let mut e = BytesStart::new("TransparencyPreference");
+        for (name, v) in &wanted {
+            if let Some(v) = v {
+                e.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+            }
+        }
+        e
+    };
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Empty(ref e) if e.name().as_ref() == b"TransparencyPreference" => {
+                writer.write_event(Event::Empty(rewrite(e)))?
+            }
+            Event::Start(ref e) if e.name().as_ref() == b"TransparencyPreference" => {
+                writer.write_event(Event::Start(rewrite(e)))?
+            }
+            Event::Empty(ref e) if !present && e.name().as_ref() == ROOT => {
+                writer.write_event(Event::Start(e.to_owned()))?;
+                writer.write_event(Event::Empty(fresh()))?;
+                writer.write_event(Event::End(BytesEnd::new("idPkg:Preferences")))?;
+            }
+            Event::End(ref e) if !present && e.name().as_ref() == ROOT => {
+                writer.write_event(Event::Empty(fresh()))?;
+                writer.write_event(Event::End(e.to_owned()))?;
+            }
+            other => writer.write_event(other)?,
+        }
+        buf.clear();
+    }
+    Ok(writer.into_inner().into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +505,42 @@ mod tests {
         assert_eq!(
             out,
             r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference UseOpticalSize="true"/><TextDefault FontStyle="Regular" PointSize="12"><Properties><AppliedFont type="string">Inter</AppliedFont><Leading type="enumeration">Auto</Leading></Properties></TextDefault></idPkg:Preferences>"#
+        );
+    }
+
+    #[test]
+    fn the_global_light_is_written_where_indesign_keeps_it() {
+        let light = paged_model::TransparencyPreference {
+            global_light_angle: Some(45.0),
+            global_light_altitude: Some(20.0),
+        };
+        // InDesign's own spelling, agreeing: untouched.
+        let same = r#"<idPkg:Preferences xmlns:idPkg="x"><TransparencyPreference BlendingSpace="CMYK" GlobalLightAngle="45" GlobalLightAltitude="20" /></idPkg:Preferences>"#;
+        assert_eq!(
+            patch_transparency_preference(same.as_bytes(), &light).unwrap(),
+            same.as_bytes()
+        );
+        // Disagreeing: patched in place, the other attributes kept.
+        let other = same.replace(r#"GlobalLightAngle="45""#, r#"GlobalLightAngle="120""#);
+        let out =
+            String::from_utf8(patch_transparency_preference(other.as_bytes(), &light).unwrap())
+                .unwrap();
+        assert!(
+            out.contains(r#"<TransparencyPreference BlendingSpace="CMYK" GlobalLightAngle="45" GlobalLightAltitude="20"/>"#),
+            "{out}"
+        );
+        // No element: added only when the model sets a light.
+        let none = r#"<idPkg:Preferences xmlns:idPkg="x"><TextPreference UseOpticalSize="false"/></idPkg:Preferences>"#;
+        assert_eq!(
+            patch_transparency_preference(none.as_bytes(), &Default::default()).unwrap(),
+            none.as_bytes()
+        );
+        let out =
+            String::from_utf8(patch_transparency_preference(none.as_bytes(), &light).unwrap())
+                .unwrap();
+        assert!(
+            out.contains(r#"<TransparencyPreference GlobalLightAngle="45" GlobalLightAltitude="20"/></idPkg:Preferences>"#),
+            "{out}"
         );
     }
 }
