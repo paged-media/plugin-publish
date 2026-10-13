@@ -8,25 +8,29 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 111498,
+      "covered": 112173,
       "total": 633952,
-      "value": 0.175878
+      "value": 0.176942
     },
     "impactImport": {
-      "covered": 25278,
+      "covered": 25288,
       "total": 54667,
-      "value": 0.4624
+      "value": 0.462583
     },
     "weightedExport": {
-      "covered": 84909,
+      "covered": 85584,
       "total": 633952,
-      "value": 0.133936
+      "value": 0.135001
     },
     "misplacedReads": 30,
-    "unseenReads": 295,
+    "unseenReads": 296,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
+    "MasterSpreads|BaselineFrameGridOption@BaselineFrameGridIncrement|attr",
+    "MasterSpreads|BaselineFrameGridOption@BaselineFrameGridRelativeOption|attr",
+    "MasterSpreads|BaselineFrameGridOption@StartingOffsetForBaselineFrameGrid|attr",
+    "MasterSpreads|BaselineFrameGridOption@UseCustomBaselineFrameGrid|attr",
     "MasterSpreads|BlendingSetting@Opacity|attr",
     "MasterSpreads|ClippingPathSettings@AppliedPathName|attr",
     "MasterSpreads|ClippingPathSettings@ClippingType|attr",
@@ -353,6 +357,8 @@
     "Resources/Styles|ParagraphStyle@FillTint|attr",
     "Resources/Styles|ParagraphStyle@FirstLineIndent|attr",
     "Resources/Styles|ParagraphStyle@FontStyle|attr",
+    "Resources/Styles|ParagraphStyle@GridAlignFirstLineOnly|attr",
+    "Resources/Styles|ParagraphStyle@GridAlignment|attr",
     "Resources/Styles|ParagraphStyle@HorizontalScale|attr",
     "Resources/Styles|ParagraphStyle@HyphenWeight|attr",
     "Resources/Styles|ParagraphStyle@HyphenateAcrossColumns|attr",
@@ -524,6 +530,10 @@
     "Resources/Styles|WavyStrokeStyle@Self|attr",
     "Resources/Styles|WavyStrokeStyle@Wavelength|attr",
     "Resources/Styles|WavyStrokeStyle@Width|attr",
+    "Spreads|BaselineFrameGridOption@BaselineFrameGridIncrement|attr",
+    "Spreads|BaselineFrameGridOption@BaselineFrameGridRelativeOption|attr",
+    "Spreads|BaselineFrameGridOption@StartingOffsetForBaselineFrameGrid|attr",
+    "Spreads|BaselineFrameGridOption@UseCustomBaselineFrameGrid|attr",
     "Spreads|BevelAndEmbossSetting@Altitude|attr",
     "Spreads|BevelAndEmbossSetting@Angle|attr",
     "Spreads|BevelAndEmbossSetting@Applied|attr",
@@ -927,6 +937,7 @@
     "Stories|ParagraphStyleRange@DropCapLines|attr",
     "Stories|ParagraphStyleRange@DropcapDetail|attr",
     "Stories|ParagraphStyleRange@FirstLineIndent|attr",
+    "Stories|ParagraphStyleRange@GridAlignment|attr",
     "Stories|ParagraphStyleRange@HyphenationZone|attr",
     "Stories|ParagraphStyleRange@Hyphenation|attr",
     "Stories|ParagraphStyleRange@Justification|attr",
@@ -1093,6 +1104,10 @@
     "designmap|idPkg:Story@src|attr"
   ],
   "coveredExport": [
+    "MasterSpreads|BaselineFrameGridOption@BaselineFrameGridIncrement|attr",
+    "MasterSpreads|BaselineFrameGridOption@BaselineFrameGridRelativeOption|attr",
+    "MasterSpreads|BaselineFrameGridOption@StartingOffsetForBaselineFrameGrid|attr",
+    "MasterSpreads|BaselineFrameGridOption@UseCustomBaselineFrameGrid|attr",
     "MasterSpreads|BlendingSetting@Opacity|attr",
     "MasterSpreads|ContourOption@ContourPathName|attr",
     "MasterSpreads|ContourOption@ContourType|attr",
@@ -1384,6 +1399,8 @@
     "Resources/Styles|ParagraphStyle@FillTint|attr",
     "Resources/Styles|ParagraphStyle@FirstLineIndent|attr",
     "Resources/Styles|ParagraphStyle@FontStyle|attr",
+    "Resources/Styles|ParagraphStyle@GridAlignFirstLineOnly|attr",
+    "Resources/Styles|ParagraphStyle@GridAlignment|attr",
     "Resources/Styles|ParagraphStyle@HorizontalScale|attr",
     "Resources/Styles|ParagraphStyle@HyphenationZone|attr",
     "Resources/Styles|ParagraphStyle@Hyphenation|attr",
@@ -1438,6 +1455,10 @@
     "Resources/Styles|ParagraphStyle@Tracking|attr",
     "Resources/Styles|ParagraphStyle@Underline|attr",
     "Resources/Styles|ParagraphStyle@VerticalScale|attr",
+    "Spreads|BaselineFrameGridOption@BaselineFrameGridIncrement|attr",
+    "Spreads|BaselineFrameGridOption@BaselineFrameGridRelativeOption|attr",
+    "Spreads|BaselineFrameGridOption@StartingOffsetForBaselineFrameGrid|attr",
+    "Spreads|BaselineFrameGridOption@UseCustomBaselineFrameGrid|attr",
     "Spreads|BevelAndEmbossSetting@Altitude|attr",
     "Spreads|BevelAndEmbossSetting@Angle|attr",
     "Spreads|BevelAndEmbossSetting@Applied|attr",
@@ -1797,6 +1818,7 @@
     "Stories|ParagraphStyleRange@DropCapLines|attr",
     "Stories|ParagraphStyleRange@DropcapDetail|attr",
     "Stories|ParagraphStyleRange@FirstLineIndent|attr",
+    "Stories|ParagraphStyleRange@GridAlignment|attr",
     "Stories|ParagraphStyleRange@HyphenationZone|attr",
     "Stories|ParagraphStyleRange@Hyphenation|attr",
     "Stories|ParagraphStyleRange@Justification|attr",

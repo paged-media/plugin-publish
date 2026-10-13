@@ -1305,3 +1305,7 @@ keys = [
   "InnerShadowSetting@UseGlobalLight",
   "OuterGlowSetting@Technique",
 ]
+
+[[unseen]]
+reason = "InDesign writes it on a <ParagraphStyleRange> whose paragraph aligns only its first line to the baseline grid by itself rather than through its style (asked of InDesign 20.0.1, 2026-10-14: a paragraph given gridAlignFirstLineOnly in its DOM exports GridAlignFirstLineOnly=\"true\" GridAlignment=\"AlignBaseline\" on its range); the census documents set it only on styles."
+keys = ["ParagraphStyleRange@GridAlignFirstLineOnly"]
