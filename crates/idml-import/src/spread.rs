@@ -626,6 +626,9 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
     // effective spread-space transform is the composition of
     // those group transforms with its own ItemTransform.
     let mut group_transforms: Vec<Option<[f32; 6]>> = Vec::new();
+    // Depth inside an inactive `<State>` of a `<Button>` or
+    // `<MultiStateObject>`: everything below it is skipped.
+    let mut inactive_state_depth: u32 = 0;
     // Stack of `<Group>` builders parallel to `group_transforms`.
     // Each entry accumulates the group's members + transparency
     // block until the closing tag fires, at which point the
@@ -1013,6 +1016,28 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
         // `in_image_depth` against the matching `</Image>` End — a
         // self-closed image has no End, so it must not increment.
         let event_is_start = matches!(raw_event, Event::Start(_));
+        // Interactive objects show ONE state: InDesign lays out and draws
+        // the active state of a button or a multi-state object and no
+        // other (asked of InDesign 20.0.1: each `<State>` carries
+        // `Active="true|false"`; drawing every state stacked the inactive
+        // ones on top). Inactive states are skipped whole.
+        if inactive_state_depth > 0 {
+            match &raw_event {
+                Event::Start(_) => inactive_state_depth += 1,
+                Event::End(_) => inactive_state_depth -= 1,
+                Event::Eof => break,
+                _ => {}
+            }
+            buf.clear();
+            continue;
+        }
+        if let Event::Start(ref e) = raw_event {
+            if e.name().as_ref() == b"State" && attr(e, b"Active").as_deref() == Some("false") {
+                inactive_state_depth = 1;
+                buf.clear();
+                continue;
+            }
+        }
         if let Event::Start(ref e) | Event::Empty(ref e) = raw_event {
             crate::util::record_item_name(e, &mut item_names);
         }
@@ -1028,7 +1053,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         spread_show_master_items = Some(v);
                     }
                 }
-                b"Group" => {
+                // A button or a multi-state object is a group of its
+                // states: its `ItemTransform` places them (left out, every
+                // state landed in spread coordinates as if untransformed).
+                b"Group" | b"Button" | b"MultiStateObject" => {
                     // B-18 residual: a <Group> pasted into a container
                     // (opening while a page item is still current) is
                     // NOT lifted into `nested_children` — it keeps the
@@ -2577,7 +2605,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
             },
             Event::End(e) => match e.name().as_ref() {
                 b"Page" => open_page = None,
-                b"Group" if !group_transforms.is_empty() => {
+                b"Group" | b"Button" | b"MultiStateObject" if !group_transforms.is_empty() => {
                     group_transforms.pop();
                     if let Some(builder) = group_builders.pop() {
                         // Every field is named today; the update is there
@@ -2994,6 +3022,58 @@ fn effective_item_transform(
 
 #[cfg(test)]
 mod tests {
+    fn rect(self_id: &str, fill: &str) -> String {
+        format!(
+            r#"<Rectangle Self="{self_id}" ItemTransform="1 0 0 1 0 0" FillColor="{fill}"><Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray><PathPointType Anchor="95 95" LeftDirection="95 95" RightDirection="95 95"/><PathPointType Anchor="95 155" LeftDirection="95 155" RightDirection="95 155"/><PathPointType Anchor="255 155" LeftDirection="255 155" RightDirection="255 155"/><PathPointType Anchor="255 95" LeftDirection="255 95" RightDirection="255 95"/></PathPointArray></GeometryPathType></PathGeometry></Properties></Rectangle>"#
+        )
+    }
+
+    /// InDesign 20.0.1's shape of a two-state button and a two-state
+    /// multi-state object (exported through its DOM): each `<State>` holds
+    /// a group, one state is `Active="true"`, and the container's own
+    /// `ItemTransform` places them. Only the active states are read, and
+    /// they carry the container's transform.
+    #[test]
+    fn a_button_and_a_multi_state_object_show_their_active_state_where_indesign_puts_it() {
+        let xml = format!(
+            r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Spread Self="s" PageCount="1" ItemTransform="1 0 0 1 0 0">
+<Page Self="p" GeometricBounds="0 0 841.89 595.28" ItemTransform="1 0 0 1 -297.64 -420.94"/>
+<Button Self="ue0" ItemTransform="1 0 0 1 5 -415.944881889">
+<State Self="ue0i0" Active="true"><Group Self="ue2" ItemTransform="1 0 0 1 0 0">{up}</Group></State>
+<State Self="ue0i1" Active="false"><Group Self="ue3" ItemTransform="1 0 0 1 0 0">{over}</Group></State>
+</Button>
+<MultiStateObject Self="ueb" ItemTransform="1 0 0 1 5 -415.944881889">
+<State Self="uebi9" Active="true"><Group Self="ued" ItemTransform="1 0 0 1 0 0">{one}</Group></State>
+<State Self="uebia" Active="false"><Group Self="uee" ItemTransform="1 0 0 1 0 0">{two}</Group></State>
+</MultiStateObject>
+</Spread></idPkg:Spread>"#,
+            up = rect("udf", "Color/R"),
+            over = rect("ue7", "Color/B"),
+            one = rect("ue9", "Color/G"),
+            two = rect("uea", "Color/Black"),
+        );
+        let s = parse_spread(xml.as_bytes()).unwrap();
+        let ids: Vec<&str> = s
+            .rectangles
+            .iter()
+            .filter_map(|r| r.self_id.as_deref())
+            .collect();
+        assert_eq!(ids, ["udf", "ue9"], "only the active states");
+        let red = s
+            .rectangles
+            .iter()
+            .find(|r| r.self_id.as_deref() == Some("udf"))
+            .unwrap();
+        let t = red
+            .item_transform
+            .expect("the button's transform reaches its state");
+        assert!(
+            (t[4] - 5.0).abs() < 1e-3 && (t[5] + 415.945).abs() < 1e-2,
+            "{t:?}"
+        );
+    }
+
     use super::*;
 
     /// The `f32` you get from parsing a corpus spelling.
