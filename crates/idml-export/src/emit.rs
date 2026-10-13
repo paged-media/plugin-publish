@@ -641,12 +641,21 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if let Some(j) = p.justification {
         out.push(("Justification", j.as_idml().to_string()));
     }
-    let f32_attrs: [(&'static str, Option<f32>); 5] = [
+    let f32_attrs: [(&'static str, Option<f32>); 14] = [
         ("FirstLineIndent", p.first_line_indent),
         ("LeftIndent", p.left_indent),
         ("RightIndent", p.right_indent),
         ("SpaceBefore", p.space_before),
         ("SpaceAfter", p.space_after),
+        ("MinimumWordSpacing", p.minimum_word_spacing),
+        ("DesiredWordSpacing", p.desired_word_spacing),
+        ("MaximumWordSpacing", p.maximum_word_spacing),
+        ("MinimumLetterSpacing", p.minimum_letter_spacing),
+        ("DesiredLetterSpacing", p.desired_letter_spacing),
+        ("MaximumLetterSpacing", p.maximum_letter_spacing),
+        ("MinimumGlyphScaling", p.minimum_glyph_scaling),
+        ("DesiredGlyphScaling", p.desired_glyph_scaling),
+        ("MaximumGlyphScaling", p.maximum_glyph_scaling),
     ];
     for (k, v) in f32_attrs {
         if let Some(v) = v {
@@ -1104,6 +1113,17 @@ pub(crate) fn assign_instance_ids(part: Vec<u8>, story_id: &str) -> Vec<u8> {
 /// items all arrived through ops). Groups on a minted spread are not
 /// serialised (the group-insert lane is a separate, documented defer).
 /// `layer` is the `ItemLayer` new guides bind to, when known.
+/// The `ShowMasterItems` a spread carries. InDesign reads it on
+/// `<Spread>` / `<MasterSpread>` only and ignores it on `<Page>` (core
+/// tools/indesign-export/master-items-probe); the model keeps it per page,
+/// so a spread hides its master items when any of its pages does.
+fn spread_show_master_items(spread: &Spread) -> bool {
+    !spread
+        .pages
+        .iter()
+        .any(|p| p.show_master_items == Some(false))
+}
+
 pub(crate) fn spread_part(
     spread: &Spread,
     dom_version: &str,
@@ -1128,6 +1148,10 @@ pub(crate) fn spread_part(
         "ItemTransform",
         rewrite::format_matrix(&spread.item_transform.unwrap_or(IDENTITY)),
     ));
+    attrs.push((
+        "ShowMasterItems",
+        spread_show_master_items(spread).to_string(),
+    ));
     spread_like_part(spread, dom_version, layer, "Spread", &attrs)
 }
 
@@ -1150,7 +1174,10 @@ pub(crate) fn master_spread_part(
         ("NamePrefix", prefix.to_string()),
         ("BaseName", name),
         ("PageCount", spread.pages.len().to_string()),
-        ("ShowMasterItems", "true".to_string()),
+        (
+            "ShowMasterItems",
+            spread_show_master_items(spread).to_string(),
+        ),
         (
             "ItemTransform",
             rewrite::format_matrix(&spread.item_transform.unwrap_or(IDENTITY)),
@@ -1211,9 +1238,8 @@ fn spread_like_part(
         if !p.override_list.is_empty() {
             pa.push(("OverrideList", p.override_list.join(" ")));
         }
-        if let Some(b) = p.show_master_items {
-            pa.push(("ShowMasterItems", b.to_string()));
-        }
+        // No `ShowMasterItems` here: InDesign reads it on the spread only
+        // (`spread_show_master_items`).
         let guides_here: Vec<(usize, &idml_import::RulerGuide)> = spread
             .guides
             .iter()
