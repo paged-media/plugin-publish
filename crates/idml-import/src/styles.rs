@@ -1180,9 +1180,12 @@ fn parse_object_style(e: &quick_xml::events::BytesStart) -> Option<ObjectStyleDe
             anchored_object_options: flag(e, b"EnableAnchoredObjectOptions"),
             frame_fitting_options: flag(e, b"EnableFrameFittingOptions"),
         },
-        // Read from its `<TextFramePreference>` child by
+        // Read from its `<TextFramePreference>`, `<TextWrapPreference>`
+        // and `<AnchoredObjectSetting>` children by
         // `read_object_style_text_frames`.
         text_frame: None,
+        text_wrap: None,
+        anchored: None,
     })
 }
 
@@ -1208,10 +1211,13 @@ pub fn read_object_style_text_frames(
     // is open, and the `<InsetSpacing>` list items read so far.
     let mut style: Option<String> = None;
     let mut in_tfp = false;
+    let mut in_twp = false;
     let mut insets: Option<Vec<f32>> = None;
     let mut in_item = false;
     loop {
-        match reader.read_event_into(&mut buf)? {
+        let event = reader.read_event_into(&mut buf)?;
+        let started = matches!(event, Event::Start(_));
+        match event {
             Event::Eof => break,
             Event::Start(e) if e.name().as_ref() == b"ObjectStyle" => {
                 style = attr(&e, b"Self");
@@ -1242,6 +1248,62 @@ pub fn read_object_style_text_frames(
                 in_tfp = true;
             }
             Event::End(e) if e.name().as_ref() == b"TextFramePreference" => in_tfp = false,
+            // The style's own text wrap and anchored-object options: an item
+            // of the style that states none takes them, with the category
+            // on (asked of InDesign 20.0.1, ADR 143).
+            Event::Start(e) | Event::Empty(e)
+                if style.is_some() && e.name().as_ref() == b"TextWrapPreference" =>
+            {
+                let wrap = paged_model::TextWrap {
+                    mode: attr(&e, b"TextWrapMode")
+                        .as_deref()
+                        .map(paged_model::TextWrapMode::from_idml)
+                        .unwrap_or(paged_model::TextWrapMode::None),
+                    offsets: [0.0; 4],
+                    invert: attr(&e, b"Inverse")
+                        .or_else(|| attr(&e, b"Inverted"))
+                        .and_then(|s| s.parse::<bool>().ok()),
+                    contour_type: None,
+                    include_inside_edges: None,
+                };
+                if let Some(s) = style.as_deref().and_then(|id| styles.get_mut(id)) {
+                    s.text_wrap = Some(wrap);
+                }
+                in_twp = started;
+            }
+            Event::End(e) if e.name().as_ref() == b"TextWrapPreference" => in_twp = false,
+            Event::Start(e) | Event::Empty(e) if in_twp && e.name().as_ref() == b"TextWrapOffset" => {
+                let side = |k: &[u8]| attr(&e, k).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                let offsets = [side(b"Top"), side(b"Left"), side(b"Bottom"), side(b"Right")];
+                if let Some(w) = style
+                    .as_deref()
+                    .and_then(|id| styles.get_mut(id))
+                    .and_then(|s| s.text_wrap.as_mut())
+                {
+                    w.offsets = offsets;
+                }
+            }
+            Event::Start(e) | Event::Empty(e) if in_twp && e.name().as_ref() == b"ContourOption" => {
+                if let Some(w) = style
+                    .as_deref()
+                    .and_then(|id| styles.get_mut(id))
+                    .and_then(|s| s.text_wrap.as_mut())
+                {
+                    w.contour_type = attr(&e, b"ContourType")
+                        .as_deref()
+                        .map(paged_model::ContourOptionType::from_idml);
+                    w.include_inside_edges =
+                        attr(&e, b"IncludeInsideEdges").and_then(|s| s.parse::<bool>().ok());
+                }
+            }
+            Event::Start(e) | Event::Empty(e)
+                if style.is_some() && e.name().as_ref() == b"AnchoredObjectSetting" =>
+            {
+                let setting = crate::story::parse_anchored_object_setting(&e);
+                if let Some(s) = style.as_deref().and_then(|id| styles.get_mut(id)) {
+                    s.anchored = Some(setting);
+                }
+            }
             Event::Start(e) if in_tfp && e.name().as_ref() == b"InsetSpacing" => {
                 insets = Some(Vec::new());
             }
@@ -2878,5 +2940,35 @@ mod object_style_text_frame_tests {
         );
         let plain = &sheet.object_styles["ObjectStyle/Plain"];
         assert!(plain.text_frame.is_none() && plain.enable.is_unset());
+    }
+
+    /// An object style's own text wrap and anchored-object options, as
+    /// InDesign 20.0.1 writes them (ADR 143): the wrap's offsets a
+    /// `<TextWrapOffset>` child, the anchoring every attribute.
+    #[test]
+    fn an_object_styles_wrap_and_anchoring_read_in_indesigns_spelling() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootObjectStyleGroup>
+<ObjectStyle Self="ObjectStyle/W" Name="W" EnableTextWrapAndOthers="true" EnableAnchoredObjectOptions="true">
+<TextWrapPreference Inverse="false" ApplyToMasterPageOnly="false" TextWrapSide="BothSides" TextWrapMode="BoundingBoxTextWrap">
+<TextWrapOffset Top="4" Left="4" Bottom="4" Right="12"/>
+<ContourOption ContourType="SameAsClipping" IncludeInsideEdges="false" ContourPathName="$ID/"/>
+</TextWrapPreference>
+<AnchoredObjectSetting AnchoredPosition="Anchored" SpineRelative="false" LockPosition="false" PinPosition="true" AnchorPoint="TopRightAnchor" HorizontalAlignment="RightAlign" HorizontalReferencePoint="TextFrame" VerticalAlignment="BottomAlign" VerticalReferencePoint="LineBaseline" AnchorXoffset="0" AnchorYoffset="6" AnchorSpaceAbove="0"/>
+</ObjectStyle>
+</RootObjectStyleGroup></idPkg:Styles>"#;
+        let mut sheet = parse_stylesheet(xml).expect("styles");
+        read_object_style_text_frames(xml, &mut sheet.object_styles).expect("frames");
+        let w = &sheet.object_styles["ObjectStyle/W"];
+        let wrap = w.own_text_wrap().expect("the style's wrap");
+        assert_eq!(wrap.mode, paged_model::TextWrapMode::BoundingBoxTextWrap);
+        assert_eq!(wrap.offsets, [4.0, 4.0, 4.0, 12.0]);
+        assert_eq!(
+            wrap.contour_type,
+            Some(paged_model::ContourOptionType::SameAsClipping)
+        );
+        let a = w.own_anchored().expect("the style's anchoring");
+        assert_eq!(a.anchored_position.as_deref(), Some("Anchored"));
+        assert_eq!(a.anchor_point.as_deref(), Some("TopRightAnchor"));
+        assert_eq!((a.anchor_x_offset, a.anchor_y_offset), (0.0, 6.0));
     }
 }
