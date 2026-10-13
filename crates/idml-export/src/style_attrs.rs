@@ -12,10 +12,12 @@
 
 use idml_import::styles::{CharacterStyleDef, ParagraphStyleDef};
 
-use crate::emit::{paragraph_rule_attrs, span_column_attrs, RULE_ABOVE, RULE_BELOW};
+use crate::emit::{
+    grid_alignment_attrs, paragraph_rule_attrs, span_column_attrs, RULE_ABOVE, RULE_BELOW,
+};
 use crate::rewrite::{
-    composer_patch, format_f32, numbering_list_patch, opt_bool_patch, opt_i32_patch,
-    opt_string_patch, opt_u32_patch, paragraph_rule_patch, preserving_f32_patch,
+    composer_patch, format_f32, grid_alignment_patch, numbering_list_patch, opt_bool_patch,
+    opt_i32_patch, opt_string_patch, opt_u32_patch, paragraph_rule_patch, preserving_f32_patch,
     preserving_tint_patch, span_column_patch, Patch,
 };
 
@@ -198,6 +200,7 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
         ],
     );
     span_column_attrs(&mut out, &s.span_columns);
+    grid_alignment_attrs(&mut out, s.grid_alignment, s.grid_align_first_line_only);
     paragraph_rule_attrs(&mut out, &RULE_ABOVE, &s.rule_above);
     paragraph_rule_attrs(&mut out, &RULE_BELOW, &s.rule_below);
     out
@@ -354,6 +357,9 @@ pub(crate) fn paragraph_style_attr_patch(
         b"MojikumiTable" => Some(opt_string_patch(&s.mojikumi_table)),
         b"MojikumiSet" => Some(opt_string_patch(&s.mojikumi_set)),
         _ => span_column_patch(key, raw, &s.span_columns)
+            .or_else(|| {
+                grid_alignment_patch(key, raw, s.grid_alignment, s.grid_align_first_line_only)
+            })
             .or_else(|| paragraph_rule_patch(key, raw, &RULE_ABOVE, &s.rule_above))
             .or_else(|| paragraph_rule_patch(key, raw, &RULE_BELOW, &s.rule_below)),
     }

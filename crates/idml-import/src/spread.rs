@@ -2163,6 +2163,27 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         }
                     }
                 }
+                b"BaselineFrameGridOption" => {
+                    // The frame's own baseline grid: InDesign writes it on
+                    // every text frame, a sibling of `<TextFramePreference>`.
+                    if let Some(CurrentFrameKind::Text(i)) =
+                        current_frame.as_ref().map(|cf| cf.kind)
+                    {
+                        out.text_frames[i].baseline_frame_grid =
+                            Some(paged_model::BaselineFrameGrid {
+                                use_custom: attr(&e, b"UseCustomBaselineFrameGrid")
+                                    .and_then(|s| s.parse().ok()),
+                                starting_offset: attr(&e, b"StartingOffsetForBaselineFrameGrid")
+                                    .and_then(|s| s.parse().ok()),
+                                relative_option: attr(&e, b"BaselineFrameGridRelativeOption")
+                                    .and_then(|s| {
+                                        paged_model::BaselineFrameGridRelativeOption::from_idml(&s)
+                                    }),
+                                increment: attr(&e, b"BaselineFrameGridIncrement")
+                                    .and_then(|s| s.parse().ok()),
+                            });
+                    }
+                }
                 b"InsetSpacing" => {
                     // The typed child InDesign actually writes. Only
                     // `<TextFramePreference>` carries one in a spread,
@@ -3799,6 +3820,50 @@ mod tests {
         );
         assert_eq!(f.minimum_first_baseline_offset, Some(14.0));
         assert_eq!(f.inset_spacing, Some([6.0, 8.0, 10.0, 12.0]));
+    }
+
+    /// A frame's own baseline grid, in InDesign's spelling: a
+    /// `<BaselineFrameGridOption>` sibling of `<TextFramePreference>`,
+    /// with a typed `<Properties>` child the reader passes over. A frame
+    /// without one has none.
+    #[test]
+    fn parses_baseline_frame_grid_option() {
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="frameA" ParentStory="u1" GeometricBounds="0 0 200 300">
+              <TextFramePreference TextColumnCount="1"/>
+              <BaselineFrameGridOption UseCustomBaselineFrameGrid="true"
+                  StartingOffsetForBaselineFrameGrid="5" BaselineFrameGridRelativeOption="TopOfFrame"
+                  BaselineFrameGridIncrement="13">
+                <Properties>
+                  <BaselineFrameGridColor type="enumeration">LightBlue</BaselineFrameGridColor>
+                </Properties>
+              </BaselineFrameGridOption>
+            </TextFrame>
+            <TextFrame Self="frameB" ParentStory="u2" GeometricBounds="0 0 200 300">
+              <TextFramePreference TextColumnCount="1"/>
+            </TextFrame>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        let grid = s.text_frames[0].baseline_frame_grid.expect("frame grid");
+        assert_eq!(grid.use_custom, Some(true));
+        assert_eq!(grid.starting_offset, Some(5.0));
+        assert_eq!(
+            grid.relative_option,
+            Some(paged_model::BaselineFrameGridRelativeOption::TopOfFrame)
+        );
+        assert_eq!(grid.increment, Some(13.0));
+        assert_eq!(
+            grid.custom(),
+            Some((
+                paged_model::BaselineFrameGridRelativeOption::TopOfFrame,
+                5.0,
+                13.0
+            ))
+        );
+        assert_eq!(s.text_frames[1].baseline_frame_grid, None);
     }
 
     /// InDesign's own spelling: the insets are a typed `<InsetSpacing>`

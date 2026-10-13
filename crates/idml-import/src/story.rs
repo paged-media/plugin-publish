@@ -756,6 +756,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 outside_gutter: attr(&e, b"SplitColumnOutsideGutter")
                                     .and_then(|s| s.parse().ok()),
                             },
+                            // Align to baseline grid, over the style's.
+                            grid_alignment: attr(&e, b"GridAlignment")
+                                .and_then(|s| paged_model::GridAlignment::from_idml(&s)),
+                            grid_align_first_line_only: attr(&e, b"GridAlignFirstLineOnly")
+                                .and_then(|s| s.parse::<bool>().ok()),
                             // ADR 028 — which lines KeepLinesTogether keeps.
                             keep_all_lines_together: attr(&e, b"KeepAllLinesTogether")
                                 .and_then(|s| s.parse::<bool>().ok()),
@@ -2013,8 +2018,19 @@ fn anchored_extend_path_bounds(
     }
 }
 
-fn parse_anchored_object_setting(e: &quick_xml::events::BytesStart) -> AnchoredObjectSetting {
+pub(crate) fn parse_anchored_object_setting(
+    e: &quick_xml::events::BytesStart,
+) -> AnchoredObjectSetting {
+    // InDesign writes on an object only the options it overrides of its
+    // object style (ADR 143), so which plain values it stated matters.
+    let stated = paged_model::AnchoredStated {
+        spine_relative: attr(e, b"SpineRelative").is_some(),
+        anchor_x_offset: attr(e, b"AnchorXoffset").is_some(),
+        anchor_y_offset: attr(e, b"AnchorYoffset").is_some(),
+        lock_position: attr(e, b"LockPosition").is_some(),
+    };
     AnchoredObjectSetting {
+        stated: Some(stated),
         anchored_position: attr(e, b"AnchoredPosition"),
         spine_relative: attr(e, b"SpineRelative")
             .and_then(|s| s.parse::<bool>().ok())
@@ -3538,6 +3554,31 @@ mod tests {
     }
 
     #[test]
+    fn paragraph_style_range_parses_grid_alignment() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange GridAlignment="AlignBaseline" GridAlignFirstLineOnly="true">
+            <CharacterStyleRange><Content>aligned</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+          <ParagraphStyleRange GridAlignment="None">
+            <CharacterStyleRange><Content>free</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+          <ParagraphStyleRange>
+            <CharacterStyleRange><Content>from the style</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let p = &s.paragraphs;
+        assert_eq!(
+            p[0].grid_alignment,
+            Some(paged_model::GridAlignment::AlignBaseline)
+        );
+        assert_eq!(p[0].grid_align_first_line_only, Some(true));
+        assert_eq!(p[1].grid_alignment, Some(paged_model::GridAlignment::None));
+        assert_eq!(p[1].grid_align_first_line_only, None);
+        assert_eq!(p[2].grid_alignment, None);
+    }
+
+    #[test]
     fn w02_paragraph_attrs_default_to_none_when_absent() {
         let xml = br#"<Story Self="u1">
           <ParagraphStyleRange>
@@ -3908,5 +3949,27 @@ mod tests {
         assert_eq!(top.ordinal, Some(true), "unset field inherits");
         assert_eq!(top.figure_style.as_deref(), Some("Lining"));
         assert_eq!(top.stylistic_sets, Some(2));
+    }
+
+    /// InDesign writes on an anchored object only what it overrides of its
+    /// object style (ADR 143); which plain values it stated is recorded.
+    #[test]
+    fn an_anchored_setting_records_what_it_stated() {
+        let xml = br#"<AnchoredObjectSetting AnchorXoffset="-20"/>"#;
+        let mut reader = quick_xml::Reader::from_reader(&xml[..]);
+        let mut buf = Vec::new();
+        let e = loop {
+            match reader.read_event_into(&mut buf).unwrap() {
+                quick_xml::events::Event::Empty(e) => break e.into_owned(),
+                quick_xml::events::Event::Eof => panic!("no element"),
+                _ => {}
+            }
+        };
+        let s = parse_anchored_object_setting(&e);
+        assert_eq!(s.anchor_x_offset, -20.0);
+        let stated = s.stated.expect("recorded");
+        assert!(stated.anchor_x_offset);
+        assert!(!stated.anchor_y_offset && !stated.spine_relative && !stated.lock_position);
+        assert_eq!(s.anchored_position, None);
     }
 }
