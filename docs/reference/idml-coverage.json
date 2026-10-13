@@ -16,15 +16,15 @@
     "documents": 305
   },
   "counts": {
-    "rows": 1302,
+    "rows": 1303,
     "elements": 120,
     "attributes": 623,
-    "imported": 1182,
+    "imported": 1183,
     "exported": 856,
     "importedAndExported": 736,
-    "importOnly": 446,
+    "importOnly": 447,
     "exportOnly": 120,
-    "propertiesChild": 47,
+    "propertiesChild": 48,
     "importerReadSites": 878,
     "exporterWriteSites": 828,
     "unresolved": 0,
@@ -34,14 +34,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 107052,
+      "covered": 107323,
       "total": 633952,
-      "value": 0.168865
+      "value": 0.169292
     },
     "impactImport": {
-      "covered": 23204,
+      "covered": 23475,
       "total": 54667,
-      "value": 0.424461
+      "value": 0.429418
     },
     "weightedExport": {
       "covered": 77992,
@@ -27283,6 +27283,24 @@
     },
     {
       "element": "TextFramePreference",
+      "attribute": "InsetSpacing",
+      "kind": "properties-child",
+      "importerField": null,
+      "coarseType": "list",
+      "imported": true,
+      "exported": false,
+      "importParts": [
+        "Resources/Styles"
+      ],
+      "exportParts": [],
+      "source": {
+        "file": "crates/idml-import/src/styles.rs",
+        "line": 1123
+      },
+      "exportSource": null
+    },
+    {
+      "element": "TextFramePreference",
       "attribute": "MinimumFirstBaselineOffset",
       "kind": "attr",
       "importerField": "TextFrameOptions.minimum_first_baseline_offset",
@@ -34757,11 +34775,11 @@
     {"part":"Spreads","element":"TextFramePreference","attribute":"IgnoreWrap","kind":"attr","docCount":29,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Stories","element":"TextFramePreference","attribute":"IgnoreWrap","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Spreads","element":"TextFramePreference","attribute":"InsetSpacing","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"MasterSpreads","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":41,"nonModalDocs":41,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":271,"nonModalDocs":271,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Spreads","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":88,"nonModalDocs":88,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Stories","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":2,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"MasterSpreads","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":41,"nonModalDocs":41,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Resources/Preferences","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Resources/Styles","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":271,"nonModalDocs":271,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Spreads","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":88,"nonModalDocs":88,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Stories","element":"TextFramePreference","attribute":"InsetSpacing","kind":"properties-child","docCount":2,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":true},
     {"part":"MasterSpreads","element":"TextFramePreference","attribute":"MinimumFirstBaselineOffset","kind":"attr","docCount":4,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"TextFramePreference","attribute":"MinimumFirstBaselineOffset","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
     {"part":"Resources/Styles","element":"TextFramePreference","attribute":"MinimumFirstBaselineOffset","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},

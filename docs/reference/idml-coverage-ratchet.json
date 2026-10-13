@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 107052,
+      "covered": 107323,
       "total": 633952,
-      "value": 0.168865
+      "value": 0.169292
     },
     "impactImport": {
-      "covered": 23204,
+      "covered": 23475,
       "total": 54667,
-      "value": 0.424461
+      "value": 0.429418
     },
     "weightedExport": {
       "covered": 77992,
@@ -500,6 +500,7 @@
     "Resources/Styles|TableStyle@TopBorderStrokeWeight|attr",
     "Resources/Styles|TextFramePreference@AutoSizingType|attr",
     "Resources/Styles|TextFramePreference@FirstBaselineOffset|attr",
+    "Resources/Styles|TextFramePreference@InsetSpacing|properties-child",
     "Resources/Styles|TextFramePreference@MinimumFirstBaselineOffset|attr",
     "Resources/Styles|TextFramePreference@TextColumnCount|attr",
     "Resources/Styles|TextFramePreference@TextColumnGutter|attr",
