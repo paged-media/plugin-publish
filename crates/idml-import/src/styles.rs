@@ -216,6 +216,27 @@ enum CurrentProperty {
     BulletsTextAfter,
 }
 
+/// One field of a `<TabList>` record (`<ListItem type="record">`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TabField {
+    Alignment,
+    AlignmentCharacter,
+    Leader,
+    Position,
+}
+
+impl TabField {
+    fn of(name: &[u8]) -> Option<Self> {
+        match name {
+            b"Alignment" => Some(Self::Alignment),
+            b"AlignmentCharacter" => Some(Self::AlignmentCharacter),
+            b"Leader" => Some(Self::Leader),
+            b"Position" => Some(Self::Position),
+            _ => None,
+        }
+    }
+}
+
 pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
@@ -242,6 +263,14 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
     let mut current_stroke_style: Option<String> = None;
     let mut current_style: Option<CurrentStyle> = None;
     let mut pending_property: Option<CurrentProperty> = None;
+    // A paragraph style's `<TabList type="list">`, as InDesign spells it:
+    // one `<ListItem type="record">` per stop, its fields as typed child
+    // elements (the story reader's record form). Open while inside the
+    // list; the record being read, whether it named a position, and the
+    // field whose text comes next.
+    let mut in_tab_list = false;
+    let mut pending_tab: Option<(TabStop, bool)> = None;
+    let mut tab_field: Option<TabField> = None;
     // The engine's older `<NestedStyle>` children, per paragraph style.
     // InDesign never reads them; they apply only to a style that spells
     // no `<AllNestedStyles>` list (resolved after the walk).
@@ -391,8 +420,51 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"BulletsTextAfter" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
                     pending_property = Some(CurrentProperty::BulletsTextAfter);
                 }
+                b"TabList" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
+                    in_tab_list = true;
+                }
+                b"ListItem" if in_tab_list => {
+                    pending_tab = Some((
+                        TabStop {
+                            position: 0.0,
+                            alignment: None,
+                            alignment_character: None,
+                            leader: None,
+                        },
+                        false,
+                    ));
+                    tab_field = None;
+                }
+                name if pending_tab.is_some() => {
+                    tab_field = TabField::of(name);
+                }
                 _ => {}
             },
+            Event::Text(t) if tab_field.is_some() => {
+                let text = t
+                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                    .map(|c| c.trim().to_string())
+                    .unwrap_or_default();
+                if let (Some(field), Some((stop, has_position))) =
+                    (tab_field.take(), pending_tab.as_mut())
+                {
+                    match field {
+                        TabField::Position => {
+                            if let Ok(v) = text.parse::<f32>() {
+                                stop.position = v;
+                                *has_position = true;
+                            }
+                        }
+                        // An empty field (`<Leader type="string"></Leader>`)
+                        // has no text event at all, so it stays `None` —
+                        // the story reader's reading too.
+                        _ if text.is_empty() => {}
+                        TabField::Alignment => stop.alignment = Some(text),
+                        TabField::AlignmentCharacter => stop.alignment_character = Some(text),
+                        TabField::Leader => stop.leader = Some(text),
+                    }
+                }
+            }
             Event::Text(t) if pending_property.is_some() => {
                 let text = t
                     .xml_content(quick_xml::XmlVersion::Implicit1_0)
@@ -638,9 +710,33 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 }
                 b"ParagraphStyle" => {
                     current_paragraph_style = None;
+                    in_tab_list = false;
+                    pending_tab = None;
+                    tab_field = None;
                     if matches!(current_style, Some(CurrentStyle::Paragraph)) {
                         current_style = None;
                     }
+                }
+                b"ListItem" if in_tab_list => {
+                    // A record without a position is no stop (the story
+                    // reader's rule).
+                    if let (Some((stop, true)), Some(id)) =
+                        (pending_tab.take(), current_paragraph_style.as_deref())
+                    {
+                        if let Some(p) = out.paragraph_styles.get_mut(id) {
+                            p.tab_list.push(stop);
+                        }
+                    }
+                    tab_field = None;
+                }
+                b"TabList" if in_tab_list => {
+                    in_tab_list = false;
+                    pending_tab = None;
+                    tab_field = None;
+                }
+                _ if pending_tab.is_some() => {
+                    // A field closed; an empty one never saw its text.
+                    tab_field = None;
                 }
                 b"CharacterStyle" => {
                     current_character_style = None;
@@ -1744,6 +1840,66 @@ mod tests {
             Some("CharacterStyle/Digits")
         );
         assert_eq!(p.numbering_format.as_deref(), Some("1, 2, 3, 4..."));
+    }
+
+    /// InDesign spells a paragraph STYLE's tab stops the way it spells a
+    /// range's: `<Properties><TabList type="list">` of `<ListItem
+    /// type="record">` children. The style reader only knew the
+    /// generator's `<TabStop Position=…/>`, so every InDesign-authored
+    /// style lost its stops — the renderer never set them, and a save
+    /// dropped the `<TabList>` from an untouched `Resources/Styles.xml`
+    /// (the exporter settles the child against a model that had none).
+    /// The style is the one that lost it: `the-picture.idml`'s
+    /// "docx direct format 9".
+    #[test]
+    fn parses_a_style_tab_list_as_indesign_spells_it() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+		<ParagraphStyle Self="ParagraphStyle/docx direct format 9" Name="docx direct format 9" NextStyle="ParagraphStyle/docx direct format 9">
+			<Properties>
+				<BasedOn type="object">ParagraphStyle/docx defaults</BasedOn>
+				<PreviewColor type="enumeration">Nothing</PreviewColor>
+				<TabList type="list">
+					<ListItem type="record">
+						<Alignment type="enumeration">RightAlign</Alignment>
+						<AlignmentCharacter type="string">.</AlignmentCharacter>
+						<Leader type="string">.</Leader>
+						<Position type="unit">216</Position>
+					</ListItem>
+					<ListItem type="record">
+						<Alignment type="enumeration">LeftAlign</Alignment>
+						<AlignmentCharacter type="string">.</AlignmentCharacter>
+						<Leader type="string"></Leader>
+						<Position type="unit">300.5</Position>
+					</ListItem>
+				</TabList>
+			</Properties>
+		</ParagraphStyle>
+		<ParagraphStyle Self="ParagraphStyle/Plain" Name="Plain"><Properties><TabList type="list"/></Properties></ParagraphStyle>
+		</RootParagraphStyleGroup></idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let p = &s.paragraph_styles["ParagraphStyle/docx direct format 9"];
+        assert_eq!(
+            p.tab_list,
+            vec![
+                TabStop {
+                    position: 216.0,
+                    alignment: Some("RightAlign".into()),
+                    alignment_character: Some(".".into()),
+                    leader: Some(".".into()),
+                },
+                TabStop {
+                    position: 300.5,
+                    alignment: Some("LeftAlign".into()),
+                    alignment_character: Some(".".into()),
+                    leader: None,
+                },
+            ]
+        );
+        // The rest of the block still reads.
+        assert_eq!(p.based_on.as_deref(), Some("ParagraphStyle/docx defaults"));
+        assert!(s.paragraph_styles["ParagraphStyle/Plain"]
+            .tab_list
+            .is_empty());
     }
 
     #[test]

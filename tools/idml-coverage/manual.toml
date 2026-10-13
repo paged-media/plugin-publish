@@ -928,6 +928,7 @@ keys = [
   "CharacterStyle@BasedOn",
   "CharacterStyle@Leading",
   "CharacterStyleRange@Leading",
+  "FootnoteOption@FootnoteNumberingStyle",
   "GridPreference@BaselineColor",
   "ParagraphStyle@BulletsCharacterStyle",
   "ParagraphStyle@KinsokuSet",
