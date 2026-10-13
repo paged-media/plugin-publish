@@ -78,6 +78,15 @@ item = "parse_designmap"
 children = ["PageNumberStyle"]
 elements = ["Section"]
 
+# An object style's text-frame insets: a typed list in the <Properties> of
+# its <TextFramePreference>.
+[[properties_child]]
+file = "crates/idml-import/src/styles.rs"
+item = "read_object_style_text_frames"
+children = ["InsetSpacing"]
+elements = ["TextFramePreference"]
+coarse_type = "list"
+
 # Nested, line and GREP styles: typed lists in the <Properties> of a style
 # and of a range, read whole by `style_lists::read_style_list`.
 
@@ -609,6 +618,13 @@ parts = ["designmap"]
 file = "crates/idml-import/src/styles.rs"
 name = "parse_stylesheet"
 parts = ["Resources/Styles", "Resources/Graphic"]
+
+# An object style's `<TextFramePreference>`, read in a pass of its own over
+# the styles part.
+[[part_entry]]
+file = "crates/idml-import/src/styles.rs"
+name = "read_object_style_text_frames"
+parts = ["Resources/Styles"]
 
 [[part_entry]]
 file = "crates/idml-import/src/styles.rs"

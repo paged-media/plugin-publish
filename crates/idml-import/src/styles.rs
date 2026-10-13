@@ -51,6 +51,10 @@ pub use paged_model::{
 };
 
 pub use paged_model::StyleSheet;
+use paged_model::{
+    AutoSizingType, FirstBaselineOffset, ObjectStyleCategories, TextFrameOptions,
+    VerticalJustification,
+};
 
 /// Parse a [`ParagraphRule`] from the `<prefix>*` attrs. `prefix` is either
 /// `"RuleAbove"` or `"RuleBelow"` to match IDML's two attribute families.
@@ -1156,7 +1160,119 @@ fn parse_object_style(e: &quick_xml::events::BytesStart) -> Option<ObjectStyleDe
         stroke_weight,
         corner_radius: attr(e, b"CornerRadius").and_then(|s| s.parse().ok()),
         corner_option: attr(e, b"CornerOption"),
+        enable: ObjectStyleCategories {
+            fill: flag(e, b"EnableFill"),
+            stroke: flag(e, b"EnableStroke"),
+            stroke_and_corner_options: flag(e, b"EnableStrokeAndCornerOptions"),
+            paragraph_style: flag(e, b"EnableParagraphStyle"),
+            text_frame_general_options: flag(e, b"EnableTextFrameGeneralOptions"),
+            text_frame_baseline_options: flag(e, b"EnableTextFrameBaselineOptions"),
+            text_frame_auto_sizing_options: flag(e, b"EnableTextFrameAutoSizingOptions"),
+            text_wrap_and_others: flag(e, b"EnableTextWrapAndOthers"),
+            anchored_object_options: flag(e, b"EnableAnchoredObjectOptions"),
+            frame_fitting_options: flag(e, b"EnableFrameFittingOptions"),
+        },
+        // Read from its `<TextFramePreference>` child by
+        // `read_object_style_text_frames`.
+        text_frame: None,
     })
+}
+
+fn flag(e: &quick_xml::events::BytesStart, name: &[u8]) -> Option<bool> {
+    attr(e, name).and_then(|v| v.parse().ok())
+}
+
+/// The `<TextFramePreference>` of each `<ObjectStyle>` in a styles part:
+/// vertical justification, insets (InDesign's typed `<InsetSpacing>`
+/// list, or the attribute), columns, first baseline and auto-sizing.
+/// InDesign leaves the options a frame takes from its object style off
+/// the frame (asked of InDesign 20.0.1: a frame of a style with
+/// `VerticalJustification="CenterAlign"` is written without it), so the
+/// style is where they are.
+pub fn read_object_style_text_frames(
+    xml: &[u8],
+    styles: &mut std::collections::BTreeMap<String, ObjectStyleDef>,
+) -> Result<(), ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+    // The `<ObjectStyle>` being read, whether its `<TextFramePreference>`
+    // is open, and the `<InsetSpacing>` list items read so far.
+    let mut style: Option<String> = None;
+    let mut in_tfp = false;
+    let mut insets: Option<Vec<f32>> = None;
+    let mut in_item = false;
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(e) if e.name().as_ref() == b"ObjectStyle" => {
+                style = attr(&e, b"Self");
+            }
+            Event::End(e) if e.name().as_ref() == b"ObjectStyle" => style = None,
+            Event::Start(e) | Event::Empty(e)
+                if style.is_some() && e.name().as_ref() == b"TextFramePreference" =>
+            {
+                let o = TextFrameOptions {
+                    vertical_justification: attr(&e, b"VerticalJustification")
+                        .as_deref()
+                        .and_then(VerticalJustification::from_idml),
+                    inset_spacing: attr(&e, b"InsetSpacing").and_then(|s| four(&s)),
+                    column_count: attr(&e, b"TextColumnCount").and_then(|s| s.parse().ok()),
+                    column_gutter: attr(&e, b"TextColumnGutter").and_then(|s| s.parse().ok()),
+                    first_baseline_offset: attr(&e, b"FirstBaselineOffset")
+                        .as_deref()
+                        .and_then(FirstBaselineOffset::from_idml),
+                    minimum_first_baseline_offset: attr(&e, b"MinimumFirstBaselineOffset")
+                        .and_then(|s| s.parse().ok()),
+                    auto_sizing: attr(&e, b"AutoSizingType")
+                        .as_deref()
+                        .and_then(AutoSizingType::from_idml),
+                };
+                if let Some(s) = style.as_deref().and_then(|id| styles.get_mut(id)) {
+                    s.text_frame = Some(o);
+                }
+                in_tfp = true;
+            }
+            Event::End(e) if e.name().as_ref() == b"TextFramePreference" => in_tfp = false,
+            Event::Start(e) if in_tfp && e.name().as_ref() == b"InsetSpacing" => {
+                insets = Some(Vec::new());
+            }
+            Event::Start(e) if insets.is_some() && e.name().as_ref() == b"ListItem" => {
+                in_item = true;
+            }
+            Event::End(e) if e.name().as_ref() == b"ListItem" => in_item = false,
+            Event::Text(t) if in_item => {
+                let v = t
+                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                    .unwrap_or_default();
+                if let (Some(list), Ok(n)) = (insets.as_mut(), v.trim().parse::<f32>()) {
+                    list.push(n);
+                }
+            }
+            Event::End(e) if e.name().as_ref() == b"InsetSpacing" => {
+                let list = insets.take().unwrap_or_default();
+                if let ([a, b, c, d], Some(s)) = (
+                    list.as_slice(),
+                    style.as_deref().and_then(|id| styles.get_mut(id)),
+                ) {
+                    if let Some(tf) = s.text_frame.as_mut() {
+                        tf.inset_spacing = Some([*a, *b, *c, *d]);
+                    }
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(())
+}
+
+fn four(s: &str) -> Option<[f32; 4]> {
+    let v: Vec<f32> = s
+        .split_whitespace()
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    (v.len() == 4).then(|| [v[0], v[1], v[2], v[3]])
 }
 
 fn parse_toc_style(e: &quick_xml::events::BytesStart) -> Option<TOCStyleDef> {
@@ -2715,5 +2831,44 @@ mod tests {
         assert_eq!(child.otf.historical, Some(true));
         assert_eq!(child.ligatures_on, Some(false));
         assert_eq!(child.kerning_method.as_deref(), Some("$ID/Optical"));
+    }
+}
+
+#[cfg(test)]
+mod object_style_text_frame_tests {
+    use super::*;
+
+    /// InDesign 20.0.1's own spelling of an object style's text-frame
+    /// options: the flags on the style, the options on its
+    /// `<TextFramePreference>`, the insets a typed `<InsetSpacing>` list.
+    #[test]
+    fn an_object_styles_text_frame_options_read_in_indesigns_spelling() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootObjectStyleGroup>
+<ObjectStyle Self="ObjectStyle/Boxed" Name="Boxed" EnableTextFrameGeneralOptions="true" EnableTextFrameBaselineOptions="false">
+<Properties><BasedOn type="object">ObjectStyle/$ID/[None]</BasedOn></Properties>
+<TextFramePreference TextColumnCount="2" TextColumnGutter="12" FirstBaselineOffset="CapHeight" VerticalJustification="CenterAlign">
+<Properties><InsetSpacing type="list"><ListItem type="unit">12</ListItem><ListItem type="unit">6</ListItem><ListItem type="unit">12</ListItem><ListItem type="unit">6</ListItem></InsetSpacing></Properties>
+</TextFramePreference>
+</ObjectStyle>
+<ObjectStyle Self="ObjectStyle/Plain" Name="Plain"/>
+</RootObjectStyleGroup></idPkg:Styles>"#;
+        let mut sheet = parse_stylesheet(xml).expect("styles");
+        read_object_style_text_frames(xml, &mut sheet.object_styles).expect("frames");
+        let boxed = &sheet.object_styles["ObjectStyle/Boxed"];
+        assert_eq!(boxed.enable.text_frame_general_options, Some(true));
+        assert_eq!(boxed.enable.text_frame_baseline_options, Some(false));
+        let tf = boxed.text_frame.as_ref().expect("options");
+        assert_eq!(
+            tf.vertical_justification,
+            Some(VerticalJustification::Center)
+        );
+        assert_eq!(tf.inset_spacing, Some([12.0, 6.0, 12.0, 6.0]));
+        assert_eq!((tf.column_count, tf.column_gutter), (Some(2), Some(12.0)));
+        assert_eq!(
+            tf.first_baseline_offset,
+            Some(FirstBaselineOffset::CapHeight)
+        );
+        let plain = &sheet.object_styles["ObjectStyle/Plain"];
+        assert!(plain.text_frame.is_none() && plain.enable.is_unset());
     }
 }
