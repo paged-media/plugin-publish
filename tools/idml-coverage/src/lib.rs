@@ -67,6 +67,8 @@ struct Manual {
     part_entry: Vec<PartEntry>,
     #[serde(default)]
     unseen: Vec<parts::UnseenEntry>,
+    #[serde(default)]
+    seen: Vec<parts::SeenEntry>,
 }
 
 /// The package part(s) a function reads or writes; its callees inherit them.
@@ -1018,7 +1020,14 @@ pub fn analyse(root: &Path) -> Result<Analysis, String> {
 
     let census_text =
         std::fs::read_to_string(root.join(CENSUS)).map_err(|e| format!("{CENSUS}: {e}"))?;
-    let joined = parts::join(&census_text, CENSUS, &rows, &manual.unseen, MANUAL)?;
+    let joined = parts::join(
+        &census_text,
+        CENSUS,
+        &rows,
+        &manual.unseen,
+        &manual.seen,
+        MANUAL,
+    )?;
 
     let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
     let counts = Counts {

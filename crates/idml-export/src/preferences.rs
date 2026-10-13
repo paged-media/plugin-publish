@@ -522,10 +522,9 @@ mod tests {
         );
         // Disagreeing: patched in place, the other attributes kept.
         let other = same.replace(r#"GlobalLightAngle="45""#, r#"GlobalLightAngle="120""#);
-        let out = String::from_utf8(
-            patch_transparency_preference(other.as_bytes(), &light).unwrap(),
-        )
-        .unwrap();
+        let out =
+            String::from_utf8(patch_transparency_preference(other.as_bytes(), &light).unwrap())
+                .unwrap();
         assert!(
             out.contains(r#"<TransparencyPreference BlendingSpace="CMYK" GlobalLightAngle="45" GlobalLightAltitude="20"/>"#),
             "{out}"

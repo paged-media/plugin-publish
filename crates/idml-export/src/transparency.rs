@@ -138,38 +138,77 @@ fn owners_of(spread: &Spread) -> HashMap<String, Owner> {
         }
     };
     for t in &spread.text_frames {
-        let mut o = Owner::frame(HostKind::Text, t.opacity, &t.blend_mode, &t.drop_shadow, &t.effects);
+        let mut o = Owner::frame(
+            HostKind::Text,
+            t.opacity,
+            &t.blend_mode,
+            &t.drop_shadow,
+            &t.effects,
+        );
         o.stroke = (t.stroke_transparency.clone(), t.stroke_drop_shadow.clone());
         o.fill = (t.fill_transparency.clone(), t.fill_drop_shadow.clone());
-        o.content = (t.content_transparency.clone(), t.content_drop_shadow.clone());
+        o.content = (
+            t.content_transparency.clone(),
+            t.content_drop_shadow.clone(),
+        );
         add(t.self_id.as_deref(), o);
     }
     for r in &spread.rectangles {
-        let mut o =
-            Owner::frame(HostKind::Graphic, r.opacity, &r.blend_mode, &r.drop_shadow, &r.effects);
+        let mut o = Owner::frame(
+            HostKind::Graphic,
+            r.opacity,
+            &r.blend_mode,
+            &r.drop_shadow,
+            &r.effects,
+        );
         o.stroke = (r.stroke_transparency.clone(), r.stroke_drop_shadow.clone());
         o.fill = (r.fill_transparency.clone(), r.fill_drop_shadow.clone());
-        o.content = (r.content_transparency.clone(), r.content_drop_shadow.clone());
+        o.content = (
+            r.content_transparency.clone(),
+            r.content_drop_shadow.clone(),
+        );
         add(r.self_id.as_deref(), o);
     }
     for v in &spread.ovals {
-        let mut o =
-            Owner::frame(HostKind::Graphic, v.opacity, &v.blend_mode, &v.drop_shadow, &v.effects);
+        let mut o = Owner::frame(
+            HostKind::Graphic,
+            v.opacity,
+            &v.blend_mode,
+            &v.drop_shadow,
+            &v.effects,
+        );
         o.stroke = (v.stroke_transparency.clone(), v.stroke_drop_shadow.clone());
         o.fill = (v.fill_transparency.clone(), v.fill_drop_shadow.clone());
-        o.content = (v.content_transparency.clone(), v.content_drop_shadow.clone());
+        o.content = (
+            v.content_transparency.clone(),
+            v.content_drop_shadow.clone(),
+        );
         add(v.self_id.as_deref(), o);
     }
     for p in &spread.polygons {
-        let mut o =
-            Owner::frame(HostKind::Graphic, p.opacity, &p.blend_mode, &p.drop_shadow, &p.effects);
+        let mut o = Owner::frame(
+            HostKind::Graphic,
+            p.opacity,
+            &p.blend_mode,
+            &p.drop_shadow,
+            &p.effects,
+        );
         o.stroke = (p.stroke_transparency.clone(), None);
         o.fill = (p.fill_transparency.clone(), p.fill_drop_shadow.clone());
-        o.content = (p.content_transparency.clone(), p.content_drop_shadow.clone());
+        o.content = (
+            p.content_transparency.clone(),
+            p.content_drop_shadow.clone(),
+        );
         add(p.self_id.as_deref(), o);
     }
     for l in &spread.graphic_lines {
-        let mut o = Owner::frame(HostKind::Line, l.opacity, &l.blend_mode, &l.drop_shadow, &l.effects);
+        let mut o = Owner::frame(
+            HostKind::Line,
+            l.opacity,
+            &l.blend_mode,
+            &l.drop_shadow,
+            &l.effects,
+        );
         o.stroke = (l.stroke_transparency.clone(), None);
         add(l.self_id.as_deref(), o);
     }

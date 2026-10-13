@@ -1522,7 +1522,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                 // the object's, the fill's, the stroke's,
                                 // the text's or the picture's (asked of
                                 // InDesign, `transparency-targets` 25–32).
-                                if let Some(slot) = target_shadow_mut(&mut out, cf.kind, tx_of(cf)) {
+                                if let Some(slot) = target_shadow_mut(&mut out, cf.kind, tx_of(cf))
+                                {
                                     *slot = Some(setting);
                                 }
                             } else if let Some(b) = group_builders.last_mut() {
@@ -1572,7 +1573,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     // even though IDML still serialises the settings
                     // for round-trip preservation. Q-04: extended
                     // from Rectangle-only to all five shape kinds.
-                    if let Some((kind, tx)) = current_frame.as_ref().map(|cf| (cf.kind, tx_of(cf))) {
+                    if let Some((kind, tx)) = current_frame.as_ref().map(|cf| (cf.kind, tx_of(cf)))
+                    {
                         // A basic feather is switched on by `Mode="Standard"`
                         // (InDesign's spelling; default "None"), every other
                         // effect by `Applied="true"`. Our own older exports
@@ -2947,19 +2949,28 @@ fn target_slot_mut(
         (Tx::Fill, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.fill_transparency),
         (Tx::Fill, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.fill_transparency),
         (Tx::Fill, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.fill_transparency),
-        (Tx::Stroke, K::Text(i)) => out.text_frames.get_mut(i).map(|f| &mut f.stroke_transparency),
-        (Tx::Stroke, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Rect(i)) => out
+            .rectangles
+            .get_mut(i)
+            .map(|f| &mut f.stroke_transparency),
         (Tx::Stroke, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.stroke_transparency),
-        (Tx::Stroke, K::Polygon(i)) => {
-            out.polygons.get_mut(i).map(|f| &mut f.stroke_transparency)
-        }
-        (Tx::Stroke, K::Line(i)) => {
-            out.graphic_lines.get_mut(i).map(|f| &mut f.stroke_transparency)
-        }
-        (Tx::Content, K::Text(i)) => {
-            out.text_frames.get_mut(i).map(|f| &mut f.content_transparency)
-        }
-        (Tx::Picture, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.content_transparency),
+        (Tx::Stroke, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.stroke_transparency),
+        (Tx::Stroke, K::Line(i)) => out
+            .graphic_lines
+            .get_mut(i)
+            .map(|f| &mut f.stroke_transparency),
+        (Tx::Content, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.content_transparency),
+        (Tx::Picture, K::Rect(i)) => out
+            .rectangles
+            .get_mut(i)
+            .map(|f| &mut f.content_transparency),
         (Tx::Picture, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.content_transparency),
         (Tx::Picture, K::Polygon(i)) => {
             out.polygons.get_mut(i).map(|f| &mut f.content_transparency)
@@ -2988,17 +2999,22 @@ fn target_shadow_mut(
         (Tx::Fill, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.fill_drop_shadow),
         // A stroke-only shadow — the renderer emits it only when the
         // stroke is visible. Not modelled on a polygon or a line.
-        (Tx::Stroke, K::Text(i)) => out.text_frames.get_mut(i).map(|f| &mut f.stroke_drop_shadow),
+        (Tx::Stroke, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.stroke_drop_shadow),
         (Tx::Stroke, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.stroke_drop_shadow),
         (Tx::Stroke, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.stroke_drop_shadow),
-        (Tx::Content, K::Text(i)) => {
-            out.text_frames.get_mut(i).map(|f| &mut f.content_drop_shadow)
-        }
-        (Tx::Picture, K::Rect(i)) => out.rectangles.get_mut(i).map(|f| &mut f.content_drop_shadow),
+        (Tx::Content, K::Text(i)) => out
+            .text_frames
+            .get_mut(i)
+            .map(|f| &mut f.content_drop_shadow),
+        (Tx::Picture, K::Rect(i)) => out
+            .rectangles
+            .get_mut(i)
+            .map(|f| &mut f.content_drop_shadow),
         (Tx::Picture, K::Oval(i)) => out.ovals.get_mut(i).map(|f| &mut f.content_drop_shadow),
-        (Tx::Picture, K::Polygon(i)) => {
-            out.polygons.get_mut(i).map(|f| &mut f.content_drop_shadow)
-        }
+        (Tx::Picture, K::Polygon(i)) => out.polygons.get_mut(i).map(|f| &mut f.content_drop_shadow),
         _ => None,
     }
 }

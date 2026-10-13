@@ -67,12 +67,21 @@ fn every_target_is_read_apart() {
     let s = &doc.spreads[0].spread;
     let r = &s.rectangles[0];
     // The object keeps its own setting — not the picture's, read last.
-    assert_eq!((r.opacity, r.blend_mode.as_deref()), (Some(50.0), Some("Multiply")));
-    assert_eq!(target(&r.stroke_transparency), (Some(30.0), Some("Multiply")));
+    assert_eq!(
+        (r.opacity, r.blend_mode.as_deref()),
+        (Some(50.0), Some("Multiply"))
+    );
+    assert_eq!(
+        target(&r.stroke_transparency),
+        (Some(30.0), Some("Multiply"))
+    );
     assert_eq!(target(&r.fill_transparency), (Some(40.0), Some("Screen")));
     // A graphic frame's content is its picture's own setting; the
     // frame's `<ContentTransparencySetting>` is ignored, as InDesign does.
-    assert_eq!(target(&r.content_transparency), (Some(30.0), Some("Multiply")));
+    assert_eq!(
+        target(&r.content_transparency),
+        (Some(30.0), Some("Multiply"))
+    );
     assert!(r.stroke_drop_shadow.is_some(), "stroke target's shadow");
     let fill_shadow = r.fill_drop_shadow.as_ref().expect("fill target's shadow");
     assert_eq!((fill_shadow.x_offset, fill_shadow.size), (11.0, 5.0));
@@ -91,9 +100,15 @@ fn every_target_is_read_apart() {
     );
 
     let t = &s.text_frames[0];
-    assert_eq!(t.opacity, None, "a text frame's targets leave its object alone");
+    assert_eq!(
+        t.opacity, None,
+        "a text frame's targets leave its object alone"
+    );
     assert_eq!(target(&t.fill_transparency), (Some(70.0), None));
-    assert_eq!(target(&t.content_transparency), (Some(60.0), Some("Multiply")));
+    assert_eq!(
+        target(&t.content_transparency),
+        (Some(60.0), Some("Multiply"))
+    );
     assert!(t.content_drop_shadow.is_some(), "the text's own shadow");
     let fx = t.effects.as_ref().expect("text frame effects");
     let bevel = fx.bevel.as_ref().expect("bevel");
@@ -112,14 +127,20 @@ fn every_target_is_read_apart() {
     );
 
     let l = &s.graphic_lines[0];
-    assert_eq!((l.opacity, l.blend_mode.as_deref()), (Some(50.0), Some("Multiply")));
+    assert_eq!(
+        (l.opacity, l.blend_mode.as_deref()),
+        (Some(50.0), Some("Multiply"))
+    );
     assert_eq!(target(&l.stroke_transparency), (Some(40.0), None));
     let gf = l
         .effects
         .as_ref()
         .and_then(|e| e.gradient_feather.as_ref())
         .expect("gradient feather");
-    assert_eq!((gf.hilite_angle, gf.hilite_length), (Some(10.0), Some(56.7)));
+    assert_eq!(
+        (gf.hilite_angle, gf.hilite_length),
+        (Some(10.0), Some(56.7))
+    );
 
     let g = &s.groups[0];
     assert!(g.transparency.isolate_blending && g.transparency.knockout_group);
@@ -171,21 +192,42 @@ fn changed_targets_flags_and_light_are_written_back() {
     let s = &re.spreads[0].spread;
     let r = &s.rectangles[0];
     assert_eq!(target(&r.fill_transparency), (Some(25.0), Some("Screen")));
-    assert_eq!(target(&r.stroke_transparency), (Some(30.0), Some("Multiply")));
-    assert_eq!(target(&r.content_transparency), (Some(30.0), Some("Screen")));
-    assert_eq!((r.opacity, r.blend_mode.as_deref()), (Some(50.0), Some("Multiply")));
+    assert_eq!(
+        target(&r.stroke_transparency),
+        (Some(30.0), Some("Multiply"))
+    );
+    assert_eq!(
+        target(&r.content_transparency),
+        (Some(30.0), Some("Screen"))
+    );
+    assert_eq!(
+        (r.opacity, r.blend_mode.as_deref()),
+        (Some(50.0), Some("Multiply"))
+    );
     let ds = r.drop_shadow.as_ref().unwrap();
     assert_eq!((ds.spread_pct, ds.noise_pct), (Some(10.0), Some(20.0)));
     assert_eq!(ds.blend_mode.as_deref(), Some("Screen"));
     assert_eq!(ds.use_global_light, Some(true));
     assert!(r.fill_drop_shadow.is_some() && r.stroke_drop_shadow.is_some());
-    assert_eq!(target(&s.text_frames[0].stroke_transparency), (Some(80.0), None));
-    assert_eq!(target(&s.text_frames[0].content_transparency), (Some(60.0), Some("Multiply")));
+    assert_eq!(
+        target(&s.text_frames[0].stroke_transparency),
+        (Some(80.0), None)
+    );
+    assert_eq!(
+        target(&s.text_frames[0].content_transparency),
+        (Some(60.0), Some("Multiply"))
+    );
     assert_eq!(s.graphic_lines[0].opacity, Some(75.0));
-    assert_eq!(target(&s.graphic_lines[0].stroke_transparency), (Some(40.0), None));
+    assert_eq!(
+        target(&s.graphic_lines[0].stroke_transparency),
+        (Some(40.0), None)
+    );
     let g = &s.groups[0];
     assert!(g.transparency.isolate_blending && !g.transparency.knockout_group);
-    assert_eq!(re.designmap.transparency_preference.global_light_angle, Some(60.0));
+    assert_eq!(
+        re.designmap.transparency_preference.global_light_angle,
+        Some(60.0)
+    );
 
     // The rectangle's own `IsolateBlending` (which the model keeps for
     // groups only) survives its rewritten block.

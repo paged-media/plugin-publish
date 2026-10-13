@@ -68,7 +68,6 @@ impl ItemTransparency<'_> {
         ) || self.isolate_blending
             || self.knockout_group
     }
-
 }
 
 /// Whether there is anything to write at all.

@@ -1226,3 +1226,23 @@ elements = ["Button", "MultiStateObject", "State"]
 [[unseen]]
 reason = "Condition sets in InDesign's element form (<VisibilityPair>); the corpus has one condition set, in the attribute form."
 elements = ["VisibilityPair"]
+
+[[seen]]
+reason = "InDesign 20.0.1 writes these on a page item's <TransparencySetting> / <FillTransparencySetting> / <StrokeTransparencySetting> / <ContentTransparencySetting> whenever they differ from the default (core's effects-attrs and transparency-targets fixtures, exported by InDesign from documents built through its DOM). The census corpus leaves them at their defaults on page items, so it has seen them only in Preferences.xml's object defaults."
+parts = ["Spreads", "MasterSpreads"]
+keys = [
+  "BevelAndEmbossSetting@HighlightBlendMode",
+  "BevelAndEmbossSetting@ShadowBlendMode",
+  "BevelAndEmbossSetting@UseGlobalLight",
+  "BlendingSetting@IsolateBlending",
+  "BlendingSetting@KnockoutGroup",
+  "DirectionalFeatherSetting@FollowShapeMode",
+  "DropShadowSetting@HonorOtherEffects",
+  "DropShadowSetting@KnockedOut",
+  "DropShadowSetting@Noise",
+  "DropShadowSetting@Spread",
+  "DropShadowSetting@UseGlobalLight",
+  "InnerGlowSetting@Technique",
+  "InnerShadowSetting@UseGlobalLight",
+  "OuterGlowSetting@Technique",
+]
