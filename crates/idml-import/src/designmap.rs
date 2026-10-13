@@ -484,6 +484,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
             }
         }
     }
+    read_footnote_option_properties(xml, &mut out.footnote_options)?;
     Ok(out)
 }
 
@@ -525,6 +526,11 @@ fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
             separator_text: attr(e, b"SeparatorText"),
             spacer: f(b"Spacer"),
             space_between: f(b"SpaceBetween"),
+            start_at: attr(e, b"StartAt").and_then(|s| s.trim().parse().ok()),
+            // InDesign writes the style as a typed `<Properties>` child
+            // (see `read_footnote_option_properties`); an attribute is
+            // read too.
+            numbering_style: attr(e, b"FootnoteNumberingStyle"),
         };
     }
     // W2.5 — `<GridPreference>` baseline-grid + document-
@@ -556,6 +562,57 @@ pub fn parse_preferences_part(xml: &[u8], out: &mut DesignMap) -> Result<(), Par
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) | Event::Empty(e) => read_preference(&e, out),
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    read_footnote_option_properties(xml, &mut out.footnote_options)?;
+    Ok(())
+}
+
+/// The typed `<Properties>` children of a `<FootnoteOption>`: InDesign
+/// writes its enumerations there, not as attributes —
+///
+/// ```xml
+/// <FootnoteOption StartAt="1" …>
+///   <Properties>
+///     <FootnoteNumberingStyle type="enumeration">Arabic</FootnoteNumberingStyle>
+/// ```
+///
+/// (InDesign 20.0.1's own export). Read after the element's attributes;
+/// a child wins over an attribute of the same name.
+fn read_footnote_option_properties(
+    xml: &[u8],
+    options: &mut FootnoteOptions,
+) -> Result<(), ParseError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut in_option = false;
+    let mut field: Option<Vec<u8>> = None;
+    let mut text = String::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) if e.name().as_ref() == b"FootnoteOption" => in_option = true,
+            Event::End(e) if e.name().as_ref() == b"FootnoteOption" => in_option = false,
+            Event::Start(e) if in_option && e.name().as_ref() == b"FootnoteNumberingStyle" => {
+                field = Some(e.name().as_ref().to_vec());
+                text.clear();
+            }
+            Event::Text(t) if field.is_some() => {
+                text.push_str(
+                    &t.xml_content(quick_xml::XmlVersion::Implicit1_0)
+                        .unwrap_or_default(),
+                );
+            }
+            Event::End(_) if field.is_some() => {
+                let value = text.trim();
+                if !value.is_empty() {
+                    options.numbering_style = Some(value.to_string());
+                }
+                field = None;
+            }
             Event::Eof => break,
             _ => {}
         }
