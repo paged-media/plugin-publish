@@ -76,6 +76,8 @@ pub(crate) fn parse_otf_features(e: &quick_xml::events::BytesStart) -> OtfFeatur
         contextual_alternates: b(b"OTFContextualAlternate"),
         figure_style: attr(e, b"OTFFigureStyle"),
         stylistic_sets: attr(e, b"OTFStylisticSets").and_then(|s| s.parse::<i32>().ok()),
+        stylistic_alternate: b(b"OTFStylisticAlternate"),
+        historical: b(b"OTFHistorical"),
     }
 }
 
@@ -676,7 +678,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             drop_cap_lines: attr(&e, b"DropCapLines")
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
-                            drop_cap_detail: attr(&e, b"DropCapDetail")
+                            // InDesign spells it with a lowercase c
+                            // (`DropcapDetail`, every corpus file); the
+                            // camel-cased form is what Paged wrote before.
+                            drop_cap_detail: attr(&e, b"DropcapDetail")
+                                .or_else(|| attr(&e, b"DropCapDetail"))
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
                             hyphenation: attr(&e, b"Hyphenation")
@@ -994,6 +1000,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         });
                         current_run = Some(CharacterRun {
                             character_style: attr(&e, b"AppliedCharacterStyle"),
+                            nested_character_style: None,
                             font: attr(&e, b"AppliedFont"),
                             font_style: attr(&e, b"FontStyle"),
                             point_size: attr(&e, b"PointSize").and_then(|s| s.parse().ok()),
@@ -1011,7 +1018,8 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             strikethru: attr(&e, b"StrikeThru")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             leading: attr(&e, b"Leading").and_then(|s| s.parse::<f32>().ok()),
-                            ruby_flag: attr(&e, b"RubyFlag").and_then(|s| s.parse::<bool>().ok()),
+                            ruby_flag: attr(&e, b"RubyFlag")
+                                .and_then(|s| crate::util::parse_flag(&s)),
                             ruby_type: attr(&e, b"RubyType"),
                             ruby_string: attr(&e, b"RubyString"),
                             kenten_kind: attr(&e, b"KentenKind"),
@@ -1058,6 +1066,22 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     }
                     b"Content" => {
                         in_content = true;
+                    }
+                    // A paragraph's own nested / line / GREP styles:
+                    // typed lists in the range's `<Properties>`, as on a
+                    // style (see [`crate::style_lists`]).
+                    b"AllNestedStyles" | b"AllLineStyles" | b"AllGREPStyles"
+                        if properties_kind == 2 =>
+                    {
+                        let name = name.to_vec();
+                        let list = crate::style_lists::read_style_list(&mut reader, &name)?;
+                        if let Some(p) = current_paragraph.as_mut() {
+                            match list {
+                                crate::style_lists::StyleList::Nested(l) => p.nested_styles = l,
+                                crate::style_lists::StyleList::Line(l) => p.line_styles = l,
+                                crate::style_lists::StyleList::Grep(l) => p.grep_styles = l,
+                            }
+                        }
                     }
                     b"Properties" => {
                         // Disambiguate by which container is currently
@@ -2811,18 +2835,24 @@ mod tests {
     #[test]
     fn parses_drop_cap_attributes_on_paragraph_style_range() {
         let xml = br#"<Story>
-          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropCapDetail="0">
+          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropcapDetail="3">
             <CharacterStyleRange><Content>The quick brown fox</Content></CharacterStyleRange>
           </ParagraphStyleRange>
           <ParagraphStyleRange>
             <CharacterStyleRange><Content>No drop cap here.</Content></CharacterStyleRange>
           </ParagraphStyleRange>
+          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="2" DropCapDetail="2">
+            <CharacterStyleRange><Content>Written by an older Paged.</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
         </Story>"#;
         let s = parse_story(xml).unwrap();
-        assert_eq!(s.paragraphs.len(), 2);
+        assert_eq!(s.paragraphs.len(), 3);
         assert_eq!(s.paragraphs[0].drop_cap_characters, 1);
         assert_eq!(s.paragraphs[0].drop_cap_lines, 3);
-        assert_eq!(s.paragraphs[0].drop_cap_detail, 0);
+        // InDesign's spelling, lowercase c.
+        assert_eq!(s.paragraphs[0].drop_cap_detail, 3);
+        // The camel-cased spelling older Paged builds wrote still reads.
+        assert_eq!(s.paragraphs[2].drop_cap_detail, 2);
         // No drop cap on the second paragraph — fields default to 0.
         assert_eq!(s.paragraphs[1].drop_cap_characters, 0);
         assert_eq!(s.paragraphs[1].drop_cap_lines, 0);
@@ -3465,8 +3495,8 @@ mod tests {
         let xml = br#"<Story Self="u1">
           <ParagraphStyleRange>
             <CharacterStyleRange
-                RubyFlag="true"
-                RubyType="PerCharacter"
+                RubyFlag="1"
+                RubyType="PerCharacterRuby"
                 RubyString="furigana"
                 KentenKind="SesameDot"
                 KentenCharacter=""
@@ -3477,8 +3507,9 @@ mod tests {
         </Story>"#;
         let s = parse_story(xml).unwrap();
         let r = &s.paragraphs[0].runs[0];
+        // InDesign writes the flag as a number and the type with its suffix.
         assert_eq!(r.ruby_flag, Some(true));
-        assert_eq!(r.ruby_type.as_deref(), Some("PerCharacter"));
+        assert_eq!(r.ruby_type.as_deref(), Some("PerCharacterRuby"));
         assert_eq!(r.ruby_string.as_deref(), Some("furigana"));
         assert_eq!(r.kenten_kind.as_deref(), Some("SesameDot"));
         assert_eq!(r.kenten_font_size, Some(50.0));
@@ -3744,6 +3775,53 @@ mod tests {
         assert_eq!(otf.stylistic_sets, Some(5));
         // A run with no OTF attributes leaves every field unset.
         assert_eq!(s.paragraphs[0].runs[1].otf, OtfFeatures::default());
+    }
+
+    #[test]
+    fn parses_historical_and_stylistic_alternates_on_runs() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+            <CharacterStyleRange OTFHistorical="true" OTFStylisticAlternate="true">
+              <Content>Justice</Content>
+            </CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let otf = &s.paragraphs[0].runs[0].otf;
+        assert_eq!(otf.historical, Some(true));
+        assert_eq!(otf.stylistic_alternate, Some(true));
+    }
+
+    /// A paragraph's own nested-style list, as InDesign 20.0.1 wrote it on
+    /// a `<ParagraphStyleRange>` (2026-10-12: a local nested style added to
+    /// a paragraph in its DOM), followed by the range's runs.
+    #[test]
+    fn a_range_reads_its_own_nested_styles() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+            <Properties>
+              <AllNestedStyles type="list">
+                <ListItem type="record">
+                  <AppliedCharacterStyle type="object">CharacterStyle/NestRed</AppliedCharacterStyle>
+                  <Delimiter type="enumeration">AnyWord</Delimiter>
+                  <Repetition type="long">3</Repetition>
+                  <Inclusive type="boolean">true</Inclusive>
+                </ListItem>
+              </AllNestedStyles>
+            </Properties>
+            <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+              <Content>Local one two three four</Content>
+            </CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let p = &s.paragraphs[0];
+        assert_eq!(p.nested_styles.len(), 1);
+        assert_eq!(p.nested_styles[0].delimiter, crate::NestedDelimiter::Words);
+        assert_eq!(p.nested_styles[0].repetition, 3);
+        // The list's records are not tab stops.
+        assert!(p.tab_list.is_empty());
+        assert_eq!(p.runs[0].text, "Local one two three four");
     }
 
     #[test]

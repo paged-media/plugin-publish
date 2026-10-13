@@ -33,6 +33,7 @@ pub mod designmap;
 pub mod graphic;
 pub mod spread;
 pub mod story;
+pub mod style_lists;
 pub mod styles;
 mod util;
 
@@ -53,7 +54,8 @@ pub use spread::{
     GradientFeatherParams, GradientFeatherStop, GraphicLine, Group, GroupTransparency,
     GuideOrientation, ImageMetadata, InnerGlowParams, InnerShadowParams, MarginPreference,
     OuterGlowParams, Oval, Page, PathAnchor, Polygon, Rectangle, RulerGuide, SatinParams, Spread,
-    SpreadProvenance, TextFrame, TextPath, TextWrap, TextWrapMode, VerticalJustification,
+    SpreadProvenance, TargetTransparency, TextFrame, TextPath, TextWrap, TextWrapMode,
+    TransparencyPreference, VerticalJustification,
 };
 pub use story::{
     parse_story, parse_story_with_provenance, story_text_anchors, AnchoredFrame, AnchoredFrameKind,
@@ -65,12 +67,12 @@ pub use story::{
 };
 pub use styles::{
     parse_conditions, parse_stylesheet, CellStyleDef, CharacterStyleDef, ConditionDef,
-    ConditionSetDef, NestedDelimiter, NestedStyle, ObjectStyleDef, ParagraphBorder, ParagraphRule,
-    ParagraphShading, ParagraphStyleDef, ResolvedCell, ResolvedCharacter, ResolvedObject,
-    ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef, StrokeStyleKind, StyleSheet,
-    TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
+    ConditionSetDef, GrepStyle, LineStyle, NestedDelimiter, NestedStyle, ObjectStyleDef,
+    ParagraphBorder, ParagraphRule, ParagraphShading, ParagraphStyleDef, ResolvedCell,
+    ResolvedCharacter, ResolvedObject, ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef,
+    StrokeStyleKind, StyleSheet, TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
 };
-pub use util::{decode_aid_escapes, parse_tint};
+pub use util::{decode_aid_escapes, parse_flag, parse_tint};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {

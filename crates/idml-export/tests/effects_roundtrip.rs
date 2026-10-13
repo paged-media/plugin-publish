@@ -61,6 +61,7 @@ fn an_inserted_frame_carries_its_effects_and_reads_them_back() {
         size: 6.0,
         opacity_pct: 75.0,
         effect_color: Some("Color/Black".into()),
+        ..Default::default()
     });
     r.effects = Some(FrameEffects {
         inner_shadow: Some(InnerShadowParams {
@@ -74,6 +75,7 @@ fn an_inserted_frame_carries_its_effects_and_reads_them_back() {
             choke_pct: Some(10.0),
             blend_mode: Some("Multiply".into()),
             noise_pct: Some(0.0),
+            ..Default::default()
         }),
         outer_glow: Some(OuterGlowParams {
             size: Some(9.0),
@@ -82,6 +84,7 @@ fn an_inserted_frame_carries_its_effects_and_reads_them_back() {
             spread_pct: Some(20.0),
             blend_mode: Some("Screen".into()),
             noise_pct: Some(0.0),
+            ..Default::default()
         }),
         feather: Some(FeatherParams {
             width: Some(7.0),
@@ -146,6 +149,7 @@ fn effect_enumerators_and_attribute_names_are_indesigns() {
             blend_mode: Some("Screen".into()),
             source: Some("EdgeGlow".into()),
             noise_pct: Some(0.0),
+            ..Default::default()
         }),
         bevel: Some(idml_import::BevelEmbossParams {
             depth_pct: Some(120.0),
@@ -160,6 +164,7 @@ fn effect_enumerators_and_attribute_names_are_indesigns() {
             direction: Some("Up".into()),
             technique: Some("Smooth".into()),
             soften: Some(2.0),
+            ..Default::default()
         }),
         satin: Some(idml_import::SatinParams {
             size: Some(11.0),
@@ -179,6 +184,7 @@ fn effect_enumerators_and_attribute_names_are_indesigns() {
             noise_pct: Some(0.0),
             choke_pct: Some(0.0),
             corner_type: None,
+            ..Default::default()
         }),
         gradient_feather: Some(idml_import::GradientFeatherParams {
             gradient_type: Some("Linear".into()),
@@ -186,6 +192,7 @@ fn effect_enumerators_and_attribute_names_are_indesigns() {
             end_point: Some((30.0, 40.0)),
             angle_deg: Some(0.0),
             stops: Vec::new(),
+            ..Default::default()
         }),
         ..Default::default()
     });

@@ -88,6 +88,7 @@ pub mod guides;
 pub mod images;
 mod masters;
 mod navigation;
+pub mod nested_styles;
 mod page_labels;
 mod paged;
 mod paragraph_props;
@@ -834,6 +835,15 @@ pub(crate) fn write_package(
                 entry: PREFERENCES_SRC.to_string(),
                 source,
             })?;
+        // R-11 — the document's global light.
+        let new = preferences::patch_transparency_preference(
+            &new,
+            &doc.designmap.transparency_preference,
+        )
+        .map_err(|source| WriteError::Rewrite {
+            entry: PREFERENCES_SRC.to_string(),
+            source,
+        })?;
         if new != orig.as_slice() {
             patched.insert(PREFERENCES_SRC.to_string(), new);
         }
@@ -971,6 +981,14 @@ pub(crate) fn write_package(
         let new = based_on::patch_based_on(&new).map_err(|source| WriteError::Rewrite {
             entry: STYLES_SRC.to_string(),
             source,
+        })?;
+        // … and a nested style is InDesign's `<AllNestedStyles>` list,
+        // not the engine's older `<NestedStyle>` (see [`nested_styles`]).
+        let new = nested_styles::patch_legacy_nested_styles(&new).map_err(|source| {
+            WriteError::Rewrite {
+                entry: STYLES_SRC.to_string(),
+                source,
+            }
         })?;
         // … and a paragraph style's tab stops, bullet and numbering are
         // typed children too (see [`paragraph_props`]).

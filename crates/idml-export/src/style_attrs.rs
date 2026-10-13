@@ -43,6 +43,40 @@ fn push_bools(out: &mut Vec<(&'static str, String)>, attrs: &[(&'static str, Opt
     }
 }
 
+/// The discrete `OTF*` toggles, as attributes (InDesign spells them so on
+/// a `<ParagraphStyle>` as on a `<CharacterStyle>`).
+fn push_otf(out: &mut Vec<(&'static str, String)>, otf: &idml_import::OtfFeatures) {
+    push_bools(
+        out,
+        &[
+            ("OTFFraction", otf.fraction),
+            ("OTFOrdinal", otf.ordinal),
+            ("OTFSwash", otf.swash),
+            ("OTFDiscretionaryLigature", otf.discretionary_ligatures),
+            ("OTFSlashedZero", otf.slashed_zero),
+            ("OTFTitling", otf.titling),
+            ("OTFContextualAlternate", otf.contextual_alternates),
+            ("OTFStylisticAlternate", otf.stylistic_alternate),
+            ("OTFHistorical", otf.historical),
+        ],
+    );
+    push_strs(out, &[("OTFFigureStyle", &otf.figure_style)]);
+    if let Some(n) = otf.stylistic_sets {
+        out.push(("OTFStylisticSets", n.to_string()));
+    }
+}
+
+/// A boolean the model owns, keeping the source's spelling whenever it
+/// already says the model's value (or the model has none and the source
+/// spells something the parser could not read).
+fn preserving_bool_patch(raw: Option<&str>, v: Option<bool>) -> Patch {
+    match (raw.map(|r| r.parse::<bool>()), v) {
+        (Some(Ok(r)), Some(m)) if r == m => Patch::Keep,
+        (Some(Err(_)), None) => Patch::Keep,
+        _ => opt_bool_patch(v),
+    }
+}
+
 /// Every attribute a `<ParagraphStyle>` carries, from the model.
 pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str, String)> {
     let mut out: Vec<(&'static str, String)> = vec![("Self", s.self_id.clone())];
@@ -90,6 +124,20 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
             ("StrikeThru", s.strikethru),
             ("OverprintFill", s.overprint_fill),
             ("OverprintStroke", s.overprint_stroke),
+            ("Ligatures", s.ligatures_on),
+        ],
+    );
+    push_strs(&mut out, &[("KerningMethod", &s.kerning_method)]);
+    push_otf(&mut out, &s.otf);
+    // `true` on a style whose nested / line / GREP list is empty — one
+    // that cleared its parent's; the lists themselves are `<Properties>`
+    // children (see `nested_styles`).
+    push_bools(
+        &mut out,
+        &[
+            ("EmptyNestedStyles", s.empty_nested_styles),
+            ("EmptyLineStyles", s.empty_line_styles),
+            ("EmptyGrepStyles", s.empty_grep_styles),
         ],
     );
     // NOT here: `NumberingFormat`, `AppliedNumberingList`,
@@ -137,7 +185,8 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
         out.push(("DropCapLines", n.to_string()));
     }
     if let Some(n) = s.drop_cap_detail {
-        out.push(("DropCapDetail", n.to_string()));
+        // InDesign's spelling, lowercase c.
+        out.push(("DropcapDetail", n.to_string()));
     }
     push_strs(
         &mut out,
@@ -188,10 +237,13 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
             ("StrikeThru", s.strikethru),
             ("OverprintFill", s.overprint_fill),
             ("OverprintStroke", s.overprint_stroke),
-            ("RubyFlag", s.ruby_flag),
             ("Ligatures", s.ligatures_on),
         ],
     );
+    // InDesign writes the ruby flag as a number (`RubyFlag="1"`).
+    if let Some(f) = s.ruby_flag {
+        out.push(("RubyFlag", if f { "1" } else { "0" }.to_string()));
+    }
     push_strs(
         &mut out,
         &[
@@ -203,6 +255,7 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
         ],
     );
     push_f32s(&mut out, &[("KentenFontSize", s.kenten_font_size)]);
+    push_otf(&mut out, &s.otf);
     out
 }
 
@@ -221,8 +274,9 @@ fn swatch_patch(raw: Option<&str>, v: &Option<String>) -> Patch {
 }
 
 /// The `<ParagraphStyle>` attributes the model owns; anything else
-/// (`Self`, the OTF flags, the border and shading families, a `BasedOn`
-/// or `AppliedFont` attribute another pass converts) passes through.
+/// (`Self`, the OTF flags and `Empty*Styles` — no setter writes them —,
+/// the border and shading families, a `BasedOn` or `AppliedFont`
+/// attribute another pass converts) passes through.
 pub(crate) fn paragraph_style_attr_patch(
     key: &[u8],
     raw: &[u8],
@@ -258,6 +312,9 @@ pub(crate) fn paragraph_style_attr_patch(
         b"StrikeThru" => Some(opt_bool_patch(s.strikethru)),
         b"OverprintFill" => Some(opt_bool_patch(s.overprint_fill)),
         b"OverprintStroke" => Some(opt_bool_patch(s.overprint_stroke)),
+        // A paragraph style's own setters write these two.
+        b"Ligatures" => Some(preserving_bool_patch(raw, s.ligatures_on)),
+        b"KerningMethod" => Some(opt_string_patch(&s.kerning_method)),
         b"BulletsAndNumberingListType" => Some(opt_string_patch(&s.bullets_list_type)),
         b"BulletsTextAfter" => Some(opt_string_patch(&s.bullets_text_after)),
         // Attribute spellings of what InDesign reads as children: an
@@ -288,7 +345,10 @@ pub(crate) fn paragraph_style_attr_patch(
         b"MaximumGlyphScaling" => Some(preserving_f32_patch(raw, s.maximum_glyph_scaling)),
         b"DropCapCharacters" => Some(opt_u32_patch(raw, s.drop_cap_characters)),
         b"DropCapLines" => Some(opt_u32_patch(raw, s.drop_cap_lines)),
-        b"DropCapDetail" => Some(opt_i32_patch(raw, s.drop_cap_detail)),
+        b"DropcapDetail" => Some(opt_i32_patch(raw, s.drop_cap_detail)),
+        // The spelling older Paged builds wrote: the value is written again
+        // in InDesign's spelling above, so the old key goes.
+        b"DropCapDetail" => Some(Patch::Remove),
         b"KinsokuSet" => Some(opt_string_patch(&s.kinsoku_set)),
         b"KinsokuType" => Some(opt_string_patch(&s.kinsoku_type)),
         b"MojikumiTable" => Some(opt_string_patch(&s.mojikumi_table)),
@@ -325,7 +385,13 @@ pub(crate) fn character_style_attr_patch(
         b"StrikeThru" => Some(opt_bool_patch(s.strikethru)),
         b"OverprintFill" => Some(opt_bool_patch(s.overprint_fill)),
         b"OverprintStroke" => Some(opt_bool_patch(s.overprint_stroke)),
-        b"RubyFlag" => Some(opt_bool_patch(s.ruby_flag)),
+        // A source spelling of the same value (`1` or `true`) keeps its
+        // bytes; a change is written as InDesign writes it.
+        b"RubyFlag" => Some(match s.ruby_flag {
+            Some(f) if raw.and_then(idml_import::parse_flag) == Some(f) => Patch::Keep,
+            Some(f) => Patch::Set(if f { "1" } else { "0" }.to_string()),
+            None => Patch::Remove,
+        }),
         b"Ligatures" => Some(opt_bool_patch(s.ligatures_on)),
         b"RubyType" => Some(opt_string_patch(&s.ruby_type)),
         b"RubyString" => Some(opt_string_patch(&s.ruby_string)),
@@ -334,5 +400,58 @@ pub(crate) fn character_style_attr_patch(
         b"KerningMethod" => Some(opt_string_patch(&s.kerning_method)),
         b"KentenFontSize" => Some(preserving_f32_patch(raw, s.kenten_font_size)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ruby_flag_is_written_as_indesign_writes_it() {
+        // InDesign 20.0.1 writes `RubyFlag="1"`.
+        let on = CharacterStyleDef {
+            ruby_flag: Some(true),
+            ..Default::default()
+        };
+        assert!(character_style_attrs(&on).contains(&("RubyFlag", "1".to_string())));
+        // A source spelling of the same value keeps its bytes…
+        for raw in [&b"1"[..], b"true"] {
+            assert!(matches!(
+                character_style_attr_patch(b"RubyFlag", raw, &on),
+                Some(Patch::Keep)
+            ));
+        }
+        // …and a change is written InDesign's way.
+        let off = CharacterStyleDef {
+            ruby_flag: Some(false),
+            ..Default::default()
+        };
+        assert!(matches!(
+            character_style_attr_patch(b"RubyFlag", b"1", &off),
+            Some(Patch::Set(ref v)) if v == "0"
+        ));
+    }
+
+    #[test]
+    fn drop_cap_detail_is_written_in_indesigns_spelling() {
+        let s = ParagraphStyleDef {
+            drop_cap_detail: Some(2),
+            ..Default::default()
+        };
+        assert!(paragraph_style_attrs(&s).contains(&("DropcapDetail", "2".to_string())));
+        assert!(!paragraph_style_attrs(&s)
+            .iter()
+            .any(|(k, _)| *k == "DropCapDetail"));
+        // The camel-cased key older Paged builds wrote is dropped on save;
+        // the value goes out again in InDesign's spelling.
+        assert!(matches!(
+            paragraph_style_attr_patch(b"DropCapDetail", b"2", &s),
+            Some(Patch::Remove)
+        ));
+        assert!(matches!(
+            paragraph_style_attr_patch(b"DropcapDetail", b"2", &s),
+            Some(Patch::Keep)
+        ));
     }
 }
