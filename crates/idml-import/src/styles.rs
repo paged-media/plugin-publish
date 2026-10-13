@@ -864,6 +864,13 @@ pub fn parse_conditions(xml: &[u8]) -> Result<ConditionTables, ParseError> {
                             (current_set.as_deref(), attr(e, b"Condition"))
                         {
                             if let Some(set) = sets.get_mut(id) {
+                                // The visibility the set recorded for the
+                                // condition: applying the set restores it.
+                                if attr(e, b"Visibility").as_deref() == Some("false")
+                                    && !set.hidden.contains(&member)
+                                {
+                                    set.hidden.push(member.clone());
+                                }
                                 if !set.conditions.contains(&member) {
                                     set.conditions.push(member);
                                 }
@@ -1022,6 +1029,7 @@ fn parse_condition_set(e: &quick_xml::events::BytesStart) -> Option<ConditionSet
         self_id,
         name: attr(e, b"Name"),
         conditions,
+        hidden: Vec::new(),
     })
 }
 
