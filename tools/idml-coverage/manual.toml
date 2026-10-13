@@ -756,6 +756,29 @@ file = "crates/idml-export/src/preferences.rs"
 name = "patch_document_preference"
 parts = ["Resources/Preferences", "designmap"]
 
+# The element a package without one gains for its bleed (InDesign's part
+# only); its bleed and slug names sit in a table the element literal does
+# not reach.
+[[part_entry]]
+file = "crates/idml-export/src/preferences.rs"
+name = "insert_document_preference"
+parts = ["Resources/Preferences"]
+
+[[export]]
+file = "crates/idml-export/src/preferences.rs"
+item = "insert_document_preference"
+attributes = [
+  "DocumentBleedTopOffset",
+  "DocumentBleedBottomOffset",
+  "DocumentBleedInsideOrLeftOffset",
+  "DocumentBleedOutsideOrRightOffset",
+  "SlugTopOffset",
+  "SlugBottomOffset",
+  "SlugInsideOrLeftOffset",
+  "SlugRightOrOutsideOffset",
+]
+elements = ["DocumentPreference"]
+
 # The gradient-geometry helpers are reached by method call and the corner
 # keys as a const, which the call graph does not follow; they patch page
 # items in both kinds of spread.

@@ -16,17 +16,17 @@
     "documents": 305
   },
   "counts": {
-    "rows": 1275,
+    "rows": 1280,
     "elements": 119,
-    "attributes": 603,
+    "attributes": 608,
     "imported": 1153,
-    "exported": 839,
-    "importedAndExported": 717,
-    "importOnly": 436,
-    "exportOnly": 122,
+    "exported": 852,
+    "importedAndExported": 725,
+    "importOnly": 428,
+    "exportOnly": 127,
     "propertiesChild": 47,
     "importerReadSites": 841,
-    "exporterWriteSites": 813,
+    "exporterWriteSites": 826,
     "unresolved": 0,
     "partRows": 4150,
     "misplaced": 30,
@@ -44,9 +44,9 @@
       "value": 0.408711
     },
     "weightedExport": {
-      "covered": 77443,
+      "covered": 80966,
       "total": 633952,
-      "value": 0.122159
+      "value": 0.127716
     },
     "misplacedReads": 30,
     "unseenReads": 288,
@@ -6038,17 +6038,22 @@
       "importerField": "DocumentPreference.bleed_bottom",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 499
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 260
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6057,17 +6062,22 @@
       "importerField": "DocumentPreference.bleed_inside_or_left",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 500
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 261
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6076,17 +6086,22 @@
       "importerField": "DocumentPreference.bleed_outside_or_right",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 501
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 263
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6095,17 +6110,129 @@
       "importerField": "DocumentPreference.bleed_top",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 498
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 259
+      }
+    },
+    {
+      "element": "DocumentPreference",
+      "attribute": "DocumentBleedUniformSize",
+      "kind": "attr",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences",
+        "designmap"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 218
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 218
+      }
+    },
+    {
+      "element": "DocumentPreference",
+      "attribute": "DocumentSlugUniformSize",
+      "kind": "attr",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences",
+        "designmap"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 227
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 227
+      }
+    },
+    {
+      "element": "DocumentPreference",
+      "attribute": "FacingPages",
+      "kind": "attr",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 281
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 281
+      }
+    },
+    {
+      "element": "DocumentPreference",
+      "attribute": "PageHeight",
+      "kind": "attr",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 279
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 279
+      }
+    },
+    {
+      "element": "DocumentPreference",
+      "attribute": "PageWidth",
+      "kind": "attr",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 280
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 280
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6114,17 +6241,22 @@
       "importerField": "DocumentPreference.slug_bottom",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 503
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 267
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6133,17 +6265,22 @@
       "importerField": "DocumentPreference.slug_inside_or_left",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 504
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 268
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6152,17 +6289,22 @@
       "importerField": "DocumentPreference.slug_right_or_outside",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 505
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 269
+      }
     },
     {
       "element": "DocumentPreference",
@@ -6171,17 +6313,22 @@
       "importerField": "DocumentPreference.slug_top",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 502
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/preferences.rs",
+        "line": 266
+      }
     },
     {
       "element": "DottedStrokeStyle",
@@ -30818,26 +30965,26 @@
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"ColumnGuideColor","kind":"properties-child","docCount":271,"nonModalDocs":1,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"ColumnGuideLocked","kind":"attr","docCount":271,"nonModalDocs":1,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"CreatePrimaryTextFrame","kind":"attr","docCount":270,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedBottomOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedInsideOrLeftOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedOutsideOrRightOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedTopOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedUniformSize","kind":"attr","docCount":271,"nonModalDocs":10,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentSlugUniformSize","kind":"attr","docCount":271,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"FacingPages","kind":"attr","docCount":271,"nonModalDocs":11,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedBottomOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedInsideOrLeftOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedOutsideOrRightOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedTopOffset","kind":"attr","docCount":271,"nonModalDocs":87,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentBleedUniformSize","kind":"attr","docCount":271,"nonModalDocs":10,"imported":false,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"DocumentSlugUniformSize","kind":"attr","docCount":271,"nonModalDocs":2,"imported":false,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"FacingPages","kind":"attr","docCount":271,"nonModalDocs":11,"imported":false,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"Intent","kind":"attr","docCount":270,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"MarginGuideColor","kind":"properties-child","docCount":271,"nonModalDocs":1,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"MasterTextFrame","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"OverprintBlack","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PageBinding","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PageHeight","kind":"attr","docCount":271,"nonModalDocs":206,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PageWidth","kind":"attr","docCount":271,"nonModalDocs":212,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PageHeight","kind":"attr","docCount":271,"nonModalDocs":206,"imported":false,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PageWidth","kind":"attr","docCount":271,"nonModalDocs":212,"imported":false,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PagesPerDocument","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"PreserveLayoutWhenShuffling","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugBottomOffset","kind":"attr","docCount":271,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugInsideOrLeftOffset","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugRightOrOutsideOffset","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugTopOffset","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugBottomOffset","kind":"attr","docCount":271,"nonModalDocs":1,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugInsideOrLeftOffset","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugRightOrOutsideOffset","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SlugTopOffset","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SnippetImportUsesOriginalLocation","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"DocumentPreference","attribute":"SpreadHiddenVisibility","kind":"attr","docCount":33,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"designmap","element":"DocumentUser","attribute":"Self","kind":"attr","docCount":271,"nonModalDocs":16,"imported":false,"exported":false,"readElsewhere":false},
