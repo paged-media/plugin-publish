@@ -5434,7 +5434,7 @@ mod tests {
             br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
           <Spread Self="s">
             <Rectangle Self="rect1" GeometricBounds="0 0 100 200">
-              <TextWrapPreference TextWrapMode="ContourTextWrap" Inverse="false">
+              <TextWrapPreference TextWrapMode="Contour" Inverse="false">
                 <ContourOption ContourType="DetectEdges" IncludeInsideEdges="true"/>
               </TextWrapPreference>
             </Rectangle>
@@ -5445,6 +5445,23 @@ mod tests {
         assert_eq!(tw.mode, TextWrapMode::ContourTextWrap);
         assert_eq!(tw.contour_type, Some(ContourOptionType::DetectEdges));
         assert_eq!(tw.include_inside_edges, Some(true));
+    }
+
+    #[test]
+    fn legacy_contour_text_wrap_spelling_still_reads_as_contour() {
+        // The engine's earlier saves wrote `ContourTextWrap`; InDesign
+        // writes (and only reads) `Contour`. Both read as a contour wrap.
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="rect1" GeometricBounds="0 0 100 200">
+              <TextWrapPreference TextWrapMode="ContourTextWrap" Inverse="false"/>
+            </Rectangle>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        let tw = s.rectangles[0].text_wrap.expect("text_wrap parsed");
+        assert_eq!(tw.mode, TextWrapMode::ContourTextWrap);
     }
 
     #[test]

@@ -50,7 +50,9 @@ fn mode_idml(mode: TextWrapMode) -> Option<&'static str> {
     Some(match mode {
         TextWrapMode::None => "None",
         TextWrapMode::BoundingBoxTextWrap => "BoundingBoxTextWrap",
-        TextWrapMode::ContourTextWrap => "ContourTextWrap",
+        // InDesign's enumeration value is `Contour`; it reads the
+        // `ContourTextWrap` the engine once wrote as no wrap at all.
+        TextWrapMode::ContourTextWrap => "Contour",
         TextWrapMode::JumpObjectTextWrap => "JumpObjectTextWrap",
         TextWrapMode::NextColumnTextWrap => "NextColumnTextWrap",
         TextWrapMode::Other => return None,
@@ -162,7 +164,33 @@ fn write_text_wrap(
 /// block when it has one, else first inside the element (a self-closing
 /// host opens up around it). Byte-identical when nothing is missing.
 pub fn rewrite_text_wrap(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick_xml::Error> {
-    rewrite_with(original, &wraps_of(spread))
+    let out = rewrite_with(original, &wraps_of(spread))?;
+    Ok(respell_contour(out))
+}
+
+/// The engine's own earlier saves spelled a contour wrap
+/// `TextWrapMode="ContourTextWrap"`, which InDesign opens as no wrap
+/// (asked of InDesign 20.0.1: the item reads `TextWrapModes.NONE` and
+/// its re-save writes `None`). Such a block is the source's word in
+/// every other respect, so only the value is corrected.
+fn respell_contour(bytes: Vec<u8>) -> Vec<u8> {
+    const OLD: &[u8] = br#"TextWrapMode="ContourTextWrap""#;
+    const NEW: &[u8] = br#"TextWrapMode="Contour""#;
+    if !bytes.windows(OLD.len()).any(|w| w == OLD) {
+        return bytes;
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(OLD) {
+            out.extend_from_slice(NEW);
+            i += OLD.len();
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn rewrite_with(
@@ -369,11 +397,27 @@ mod tests {
         );
         let src = r#"<Spread Self="s1"><Rectangle Self="p1"/></Spread>"#;
         let out = String::from_utf8(rewrite_with(src.as_bytes(), &wraps).unwrap()).unwrap();
-        assert!(out.contains(r#"<Rectangle Self="p1"><TextWrapPreference Inverse="false" ApplyToMasterPageOnly="false" TextWrapSide="BothSides" TextWrapMode="ContourTextWrap"><Properties><TextWrapOffset Top="8" Left="8" Bottom="8" Right="8"/></Properties><ContourOption ContourType="SameAsClipping" IncludeInsideEdges="true" ContourPathName="$ID/"/></TextWrapPreference></Rectangle>"#), "{out}");
-        let spelled = r#"<Spread Self="s1"><Rectangle Self="p1"><Properties/><TextWrapPreference Inverse="false" TextWrapMode="ContourTextWrap"><Properties><TextWrapOffset Top="8" Left="8" Bottom="8" Right="8"/></Properties></TextWrapPreference></Rectangle></Spread>"#;
+        assert!(out.contains(r#"<Rectangle Self="p1"><TextWrapPreference Inverse="false" ApplyToMasterPageOnly="false" TextWrapSide="BothSides" TextWrapMode="Contour"><Properties><TextWrapOffset Top="8" Left="8" Bottom="8" Right="8"/></Properties><ContourOption ContourType="SameAsClipping" IncludeInsideEdges="true" ContourPathName="$ID/"/></TextWrapPreference></Rectangle>"#), "{out}");
+        let spelled = r#"<Spread Self="s1"><Rectangle Self="p1"><Properties/><TextWrapPreference Inverse="false" TextWrapMode="Contour"><Properties><TextWrapOffset Top="8" Left="8" Bottom="8" Right="8"/></Properties></TextWrapPreference></Rectangle></Spread>"#;
         assert_eq!(
             rewrite_with(spelled.as_bytes(), &wraps).unwrap(),
             spelled.as_bytes()
+        );
+    }
+
+    #[test]
+    fn the_engines_old_contour_spelling_is_saved_as_indesigns() {
+        let old = br#"<Spread Self="s1"><Rectangle Self="p1"><TextWrapPreference Inverse="false" TextWrapMode="ContourTextWrap"/></Rectangle></Spread>"#;
+        let spread = Spread::default();
+        let out = rewrite_text_wrap(old, &spread).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"<Spread Self="s1"><Rectangle Self="p1"><TextWrapPreference Inverse="false" TextWrapMode="Contour"/></Rectangle></Spread>"#
+        );
+        let indesign = br#"<Spread Self="s1"><Rectangle Self="p1"><TextWrapPreference Inverse="false" TextWrapMode="Contour"/></Rectangle></Spread>"#;
+        assert_eq!(
+            rewrite_text_wrap(indesign, &spread).unwrap(),
+            indesign.to_vec()
         );
     }
 
