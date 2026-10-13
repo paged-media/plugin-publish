@@ -1272,7 +1272,9 @@ pub fn read_object_style_text_frames(
                 in_twp = started;
             }
             Event::End(e) if e.name().as_ref() == b"TextWrapPreference" => in_twp = false,
-            Event::Start(e) | Event::Empty(e) if in_twp && e.name().as_ref() == b"TextWrapOffset" => {
+            Event::Start(e) | Event::Empty(e)
+                if in_twp && e.name().as_ref() == b"TextWrapOffset" =>
+            {
                 let side = |k: &[u8]| attr(&e, k).and_then(|s| s.parse().ok()).unwrap_or(0.0);
                 let offsets = [side(b"Top"), side(b"Left"), side(b"Bottom"), side(b"Right")];
                 if let Some(w) = style
@@ -1283,7 +1285,9 @@ pub fn read_object_style_text_frames(
                     w.offsets = offsets;
                 }
             }
-            Event::Start(e) | Event::Empty(e) if in_twp && e.name().as_ref() == b"ContourOption" => {
+            Event::Start(e) | Event::Empty(e)
+                if in_twp && e.name().as_ref() == b"ContourOption" =>
+            {
                 if let Some(w) = style
                     .as_deref()
                     .and_then(|id| styles.get_mut(id))

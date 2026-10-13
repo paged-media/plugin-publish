@@ -3972,5 +3972,4 @@ mod tests {
         assert!(!stated.anchor_y_offset && !stated.spine_relative && !stated.lock_position);
         assert_eq!(s.anchored_position, None);
     }
-
 }
