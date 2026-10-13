@@ -120,3 +120,76 @@ fn indesigns_own_package_round_trips_every_entry_byte_identically() {
     let out = write_idml(&doc, &source).expect("write");
     pkg::assert_same_entries(&source, &out);
 }
+
+/// The inks, the page setup and the story's table-of-contents style, as
+/// InDesign 20.0.1 spells them: four process `<Ink>`s in Graphic.xml,
+/// page size / facing pages / binding on `<DocumentPreference>`, and
+/// `AppliedTOCStyle="n"` (none) on an ordinary `<Story>`.
+#[test]
+fn the_importer_reads_indesigns_inks_page_setup_and_story_toc_style() {
+    let doc = pkg::open(&fixture());
+    let inks: Vec<(&str, Option<f32>, Option<i32>)> = doc
+        .palette
+        .inks
+        .iter()
+        .map(|i| (i.self_id.as_str(), i.angle, i.trap_order))
+        .collect();
+    assert_eq!(
+        inks,
+        [
+            ("Ink/$ID/Process Cyan", Some(75.0), Some(1)),
+            ("Ink/$ID/Process Magenta", Some(15.0), Some(2)),
+            ("Ink/$ID/Process Yellow", Some(0.0), Some(3)),
+            ("Ink/$ID/Process Black", Some(45.0), Some(4)),
+        ]
+    );
+    let black = &doc.palette.inks[3];
+    assert_eq!(black.name.as_deref(), Some("$ID/Process Black"));
+    assert_eq!(black.frequency, Some(70.0));
+    assert_eq!(black.neutral_density, Some(1.7));
+    assert_eq!(black.convert_to_process, Some(false));
+    assert_eq!(black.print_ink, Some(true));
+    assert_eq!(black.ink_type.as_deref(), Some("Normal"));
+    assert_eq!(black.alias_ink_name, None);
+
+    let p = &doc.designmap.document_preference;
+    assert!((p.page_width.unwrap() - 595.2756).abs() < 1e-3, "{p:?}");
+    assert!((p.page_height.unwrap() - 841.8898).abs() < 1e-3);
+    assert_eq!(p.facing_pages, Some(true));
+    assert_eq!(p.page_binding.as_deref(), Some("LeftToRight"));
+
+    assert_eq!(doc.stories.len(), 1);
+    assert_eq!(doc.stories[0].story.applied_toc_style, None);
+}
+
+/// An edit of the story's text rewrites its part and nothing else: the
+/// `<Story>` tag (its `AppliedTOCStyle="n"` included), the inks and the
+/// document preference stay InDesign's bytes.
+#[test]
+fn a_story_edit_in_indesigns_package_keeps_the_story_tag_inks_and_preferences() {
+    let source = fixture();
+    let mut doc = pkg::open(&source);
+    let run = doc.stories[0]
+        .story
+        .paragraphs
+        .iter_mut()
+        .flat_map(|p| p.runs.iter_mut())
+        .find(|r| !r.text.trim().is_empty())
+        .expect("a run with text");
+    run.text.push_str(" (edited)");
+    let out = write_idml(&doc, &source).expect("write");
+    let story = pkg::entry(&out, "Stories/Story_ue5.xml").expect("story part");
+    assert_ne!(
+        Some(story.clone()),
+        pkg::entry(&source, "Stories/Story_ue5.xml"),
+        "the part was rewritten"
+    );
+    assert!(story.contains(" (edited)"), "{story}");
+    assert!(
+        story.contains(r#"<Story Self="ue5" UserText="true" IsEndnoteStory="false" AppliedTOCStyle="n" TrackChanges="false" StoryTitle="$ID/" AppliedNamedGrid="n">"#),
+        "{story}"
+    );
+    for part in ["Resources/Graphic.xml", "Resources/Preferences.xml"] {
+        assert_eq!(pkg::entry(&out, part), pkg::entry(&source, part), "{part}");
+    }
+}

@@ -262,6 +262,12 @@ file = "crates/idml-export/src/resources.rs"
 name = "write_gradient"
 elements = ["Gradient"]
 
+# The page setup `patch_document_preference` writes onto the element.
+[[fn]]
+file = "crates/idml-export/src/preferences.rs"
+name = "page_setup"
+elements = ["DocumentPreference"]
+
 [[fn]]
 file = "crates/idml-export/src/rewrite.rs"
 name = "write_text_paths"
@@ -1129,6 +1135,10 @@ keys = ["Group@ParentStory", "Rectangle@ParentStory"]
 [[unseen]]
 reason = "InDesign writes AppliedTOCStyle on <Story>; the TextFrame spelling is the engine's older one, and no corpus frame has it."
 keys = ["TextFrame@AppliedTOCStyle"]
+
+[[unseen]]
+reason = "Ink Manager's ink alias: written only on a spot ink aliased to another ink, and every corpus ink is a process ink."
+keys = ["Ink@AliasInkName"]
 
 [[unseen]]
 reason = "A fallback for InDesign's `Inverse`, which is read first."

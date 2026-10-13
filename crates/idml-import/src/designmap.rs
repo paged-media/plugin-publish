@@ -504,6 +504,10 @@ fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
             slug_bottom: f(b"SlugBottomOffset"),
             slug_inside_or_left: f(b"SlugInsideOrLeftOffset"),
             slug_right_or_outside: f(b"SlugRightOrOutsideOffset"),
+            page_width: attr(e, b"PageWidth").and_then(|s| s.parse::<f32>().ok()),
+            page_height: attr(e, b"PageHeight").and_then(|s| s.parse::<f32>().ok()),
+            facing_pages: attr(e, b"FacingPages").and_then(|s| s.parse::<bool>().ok()),
+            page_binding: attr(e, b"PageBinding"),
         };
     }
     // W1.8 — `<FootnoteOption>` document-level footnote
@@ -1035,6 +1039,42 @@ mod document_preference_tests {
             dm.grid_preference.baseline_division,
             Some(12.0),
             "kept from the design map"
+        );
+    }
+
+    /// The page setup InDesign writes on the same element: page size,
+    /// facing pages and binding (sample.idml's spelling).
+    #[test]
+    fn reads_page_size_facing_pages_and_binding() {
+        let mut dm = DesignMap::default();
+        parse_preferences_part(
+            br#"<idPkg:Preferences xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+<DocumentPreference PageHeight="841.889763778" PageWidth="595.275590551" PagesPerDocument="1" FacingPages="false" DocumentBleedTopOffset="0" PageBinding="RightToLeft" ColumnDirection="Horizontal">
+<Properties><ColumnGuideColor type="enumeration">Violet</ColumnGuideColor></Properties>
+</DocumentPreference>
+</idPkg:Preferences>"#,
+            &mut dm,
+        )
+        .unwrap();
+        let p = &dm.document_preference;
+        assert!((p.page_width.unwrap() - 595.275_6).abs() < 1e-3, "{p:?}");
+        assert!((p.page_height.unwrap() - 841.889_8).abs() < 1e-3);
+        assert_eq!(p.facing_pages, Some(false));
+        assert_eq!(p.page_binding.as_deref(), Some("RightToLeft"));
+        // Absent attributes stay absent.
+        let dm = parse_designmap(
+            br#"<Document><DocumentPreference DocumentBleedTopOffset="3"/></Document>"#,
+        )
+        .unwrap();
+        let p = &dm.document_preference;
+        assert_eq!(
+            (
+                p.page_width,
+                p.page_height,
+                p.facing_pages,
+                p.page_binding.as_deref()
+            ),
+            (None, None, None, None)
         );
     }
 
