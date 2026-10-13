@@ -8,9 +8,9 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 107873,
+      "covered": 107884,
       "total": 633952,
-      "value": 0.17016
+      "value": 0.170177
     },
     "impactImport": {
       "covered": 23485,
@@ -18,12 +18,12 @@
       "value": 0.429601
     },
     "weightedExport": {
-      "covered": 81793,
+      "covered": 82108,
       "total": 633952,
-      "value": 0.129021
+      "value": 0.129518
     },
     "misplacedReads": 30,
-    "unseenReads": 290,
+    "unseenReads": 294,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -909,6 +909,7 @@
     "Stories|ParagraphStyleRange@AppliedParagraphStyle|attr",
     "Stories|ParagraphStyleRange@BulletsAndNumberingListType|attr",
     "Stories|ParagraphStyleRange@Composer|attr",
+    "Stories|ParagraphStyleRange@DesiredLetterSpacing|attr",
     "Stories|ParagraphStyleRange@DropCapCharacters|attr",
     "Stories|ParagraphStyleRange@DropCapLines|attr",
     "Stories|ParagraphStyleRange@DropcapDetail|attr",
@@ -919,6 +920,10 @@
     "Stories|ParagraphStyleRange@KeepWithNext|attr",
     "Stories|ParagraphStyleRange@KinsokuType|attr",
     "Stories|ParagraphStyleRange@LeftIndent|attr",
+    "Stories|ParagraphStyleRange@MaximumGlyphScaling|attr",
+    "Stories|ParagraphStyleRange@MaximumLetterSpacing|attr",
+    "Stories|ParagraphStyleRange@MinimumGlyphScaling|attr",
+    "Stories|ParagraphStyleRange@MinimumLetterSpacing|attr",
     "Stories|ParagraphStyleRange@RightIndent|attr",
     "Stories|ParagraphStyleRange@RuleAboveColor|attr",
     "Stories|ParagraphStyleRange@RuleAboveLineWeight|attr",
@@ -1573,7 +1578,6 @@
     "Spreads|Page@Name|attr",
     "Spreads|Page@OverrideList|attr",
     "Spreads|Page@Self|attr",
-    "Spreads|Page@ShowMasterItems|attr",
     "Spreads|PathPointType@Anchor|attr",
     "Spreads|PathPointType@LeftDirection|attr",
     "Spreads|PathPointType@RightDirection|attr",
@@ -1652,6 +1656,7 @@
     "Spreads|Spread@ItemTransform|attr",
     "Spreads|Spread@PageCount|attr",
     "Spreads|Spread@Self|attr",
+    "Spreads|Spread@ShowMasterItems|attr",
     "Spreads|TextFrame@AppliedObjectStyle|attr",
     "Spreads|TextFrame@BottomLeftCornerOption|attr",
     "Spreads|TextFrame@BottomLeftCornerRadius|attr",
@@ -1763,6 +1768,7 @@
     "Stories|ParagraphStyleRange@AppliedParagraphStyle|attr",
     "Stories|ParagraphStyleRange@BulletsAndNumberingListType|attr",
     "Stories|ParagraphStyleRange@Composer|attr",
+    "Stories|ParagraphStyleRange@DesiredLetterSpacing|attr",
     "Stories|ParagraphStyleRange@DropCapCharacters|attr",
     "Stories|ParagraphStyleRange@DropCapLines|attr",
     "Stories|ParagraphStyleRange@DropcapDetail|attr",
@@ -1772,6 +1778,10 @@
     "Stories|ParagraphStyleRange@Justification|attr",
     "Stories|ParagraphStyleRange@KeepWithNext|attr",
     "Stories|ParagraphStyleRange@LeftIndent|attr",
+    "Stories|ParagraphStyleRange@MaximumGlyphScaling|attr",
+    "Stories|ParagraphStyleRange@MaximumLetterSpacing|attr",
+    "Stories|ParagraphStyleRange@MinimumGlyphScaling|attr",
+    "Stories|ParagraphStyleRange@MinimumLetterSpacing|attr",
     "Stories|ParagraphStyleRange@RightIndent|attr",
     "Stories|ParagraphStyleRange@SpaceAfter|attr",
     "Stories|ParagraphStyleRange@SpaceBefore|attr",
