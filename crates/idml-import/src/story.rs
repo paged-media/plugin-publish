@@ -1018,7 +1018,8 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             strikethru: attr(&e, b"StrikeThru")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             leading: attr(&e, b"Leading").and_then(|s| s.parse::<f32>().ok()),
-                            ruby_flag: attr(&e, b"RubyFlag").and_then(|s| s.parse::<bool>().ok()),
+                            ruby_flag: attr(&e, b"RubyFlag")
+                                .and_then(|s| crate::util::parse_flag(&s)),
                             ruby_type: attr(&e, b"RubyType"),
                             ruby_string: attr(&e, b"RubyString"),
                             kenten_kind: attr(&e, b"KentenKind"),
@@ -3494,8 +3495,8 @@ mod tests {
         let xml = br#"<Story Self="u1">
           <ParagraphStyleRange>
             <CharacterStyleRange
-                RubyFlag="true"
-                RubyType="PerCharacter"
+                RubyFlag="1"
+                RubyType="PerCharacterRuby"
                 RubyString="furigana"
                 KentenKind="SesameDot"
                 KentenCharacter=""
@@ -3506,8 +3507,9 @@ mod tests {
         </Story>"#;
         let s = parse_story(xml).unwrap();
         let r = &s.paragraphs[0].runs[0];
+        // InDesign writes the flag as a number and the type with its suffix.
         assert_eq!(r.ruby_flag, Some(true));
-        assert_eq!(r.ruby_type.as_deref(), Some("PerCharacter"));
+        assert_eq!(r.ruby_type.as_deref(), Some("PerCharacterRuby"));
         assert_eq!(r.ruby_string.as_deref(), Some("furigana"));
         assert_eq!(r.kenten_kind.as_deref(), Some("SesameDot"));
         assert_eq!(r.kenten_font_size, Some(50.0));

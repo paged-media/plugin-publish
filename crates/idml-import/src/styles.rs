@@ -828,7 +828,7 @@ fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterS
         strikethru: attr(e, b"StrikeThru").and_then(|s| s.parse().ok()),
         overprint_fill: attr(e, b"OverprintFill").and_then(|s| s.parse().ok()),
         overprint_stroke: attr(e, b"OverprintStroke").and_then(|s| s.parse().ok()),
-        ruby_flag: attr(e, b"RubyFlag").and_then(|s| s.parse().ok()),
+        ruby_flag: attr(e, b"RubyFlag").and_then(|s| crate::util::parse_flag(&s)),
         ruby_type: attr(e, b"RubyType"),
         ruby_string: attr(e, b"RubyString"),
         kenten_kind: attr(e, b"KentenKind"),
