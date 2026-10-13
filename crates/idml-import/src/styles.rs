@@ -43,11 +43,11 @@ use crate::story::{Justification, TabStop};
 use crate::util::{attr, parse_tint_attr};
 use crate::ParseError;
 pub use paged_model::{
-    CellStyleDef, CharacterStyleDef, ConditionDef, ConditionSetDef, NestedDelimiter, NestedStyle,
-    NumberingListDef, ObjectStyleDef, ParagraphBorder, ParagraphRule, ParagraphShading,
-    ParagraphStyleDef, ResolvedCell, ResolvedCharacter, ResolvedObject, ResolvedParagraph,
-    ResolvedTable, StripeDef, StrokeStyleDef, StrokeStyleKind, TOCStyleDef, TOCStyleEntryDef,
-    TableStyleDef,
+    CellStyleDef, CharacterStyleDef, ConditionDef, ConditionSetDef, GrepStyle, LineStyle,
+    NestedDelimiter, NestedStyle, NumberingListDef, ObjectStyleDef, ParagraphBorder, ParagraphRule,
+    ParagraphShading, ParagraphStyleDef, ResolvedCell, ResolvedCharacter, ResolvedObject,
+    ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef, StrokeStyleKind, TOCStyleDef,
+    TOCStyleEntryDef, TableStyleDef,
 };
 
 pub use paged_model::StyleSheet;
@@ -242,6 +242,13 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
     let mut current_stroke_style: Option<String> = None;
     let mut current_style: Option<CurrentStyle> = None;
     let mut pending_property: Option<CurrentProperty> = None;
+    // The engine's older `<NestedStyle>` children, per paragraph style.
+    // InDesign never reads them; they apply only to a style that spells
+    // no `<AllNestedStyles>` list (resolved after the walk).
+    let mut legacy_nested: std::collections::BTreeMap<String, Vec<NestedStyle>> =
+        std::collections::BTreeMap::new();
+    // Paragraph styles that spelled `<AllNestedStyles>` (even empty).
+    let mut spelled_nested: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) => match e.name().as_ref() {
@@ -315,6 +322,27 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                     {
                         if let Some(t) = out.toc_styles.get_mut(id) {
                             t.entries.push(entry);
+                        }
+                    }
+                }
+                // Nested, line and GREP styles: typed lists in the
+                // style's `<Properties>` (see [`crate::style_lists`]).
+                b"AllNestedStyles" | b"AllLineStyles" | b"AllGREPStyles"
+                    if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
+                {
+                    let name = e.name().as_ref().to_vec();
+                    let list = crate::style_lists::read_style_list(&mut reader, &name)?;
+                    if let Some(p) = current_paragraph_style
+                        .as_deref()
+                        .and_then(|id| out.paragraph_styles.get_mut(id))
+                    {
+                        match list {
+                            crate::style_lists::StyleList::Nested(l) => {
+                                spelled_nested.insert(p.self_id.clone());
+                                p.nested_styles = l;
+                            }
+                            crate::style_lists::StyleList::Line(l) => p.line_styles = l,
+                            crate::style_lists::StyleList::Grep(l) => p.grep_styles = l,
                         }
                     }
                 }
@@ -556,12 +584,11 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                     }
                 }
                 b"NestedStyle" => {
-                    if let (Some(id), Some(ns)) =
-                        (current_paragraph_style.as_deref(), parse_nested_style(&e))
-                    {
-                        if let Some(p) = out.paragraph_styles.get_mut(id) {
-                            p.nested_styles.push(ns);
-                        }
+                    if let (Some(id), Some(ns)) = (
+                        current_paragraph_style.as_deref(),
+                        parse_legacy_nested_style(&e),
+                    ) {
+                        legacy_nested.entry(id.to_string()).or_default().push(ns);
                     }
                 }
                 b"DashedStrokeStyle"
@@ -661,6 +688,15 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
             _ => {}
         }
         buf.clear();
+    }
+    // The legacy spelling stands in only where InDesign's is absent.
+    for (id, list) in legacy_nested {
+        if spelled_nested.contains(&id) {
+            continue;
+        }
+        if let Some(p) = out.paragraph_styles.get_mut(&id) {
+            p.nested_styles = list;
+        }
     }
     // Conditions + sets: one reader for every spelling (see
     // [`parse_conditions`]), so Styles.xml and designmap.xml read the
@@ -814,10 +850,14 @@ fn parse_tab_stop_styles(e: &quick_xml::events::BytesStart) -> Option<TabStop> {
     })
 }
 
-/// Phase 4 — parse one `<NestedStyle>` child of a `<ParagraphStyle>`.
-/// Returns None when `AppliedCharacterStyle` is missing (the entry
-/// becomes a no-op without an override style).
-fn parse_nested_style(e: &quick_xml::events::BytesStart) -> Option<NestedStyle> {
+/// The engine's older spelling of one nested style: a `<NestedStyle
+/// AppliedCharacterStyle=… Delimiter=… Repetition=… Inclusive=…/>` child
+/// of a `<ParagraphStyle>`. InDesign does not read it (its spelling is
+/// the `<AllNestedStyles>` list, [`crate::style_lists`]); it is kept as a
+/// legacy read for the packages written with it. Returns None when
+/// `AppliedCharacterStyle` is missing (the entry becomes a no-op without
+/// an override style).
+pub fn parse_legacy_nested_style(e: &quick_xml::events::BytesStart) -> Option<NestedStyle> {
     let applied = attr(e, b"AppliedCharacterStyle")?;
     let delim_str = attr(e, b"Delimiter").unwrap_or_default();
     let delimiter = parse_nested_delimiter(&delim_str);
@@ -1218,8 +1258,24 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         rule_above: parse_paragraph_rule(e, "RuleAbove"),
         rule_below: parse_paragraph_rule(e, "RuleBelow"),
         border: parse_paragraph_border(e),
-        // Populated later by the `<NestedStyle>` start-tag handler.
+        // `Ligatures`, `KerningMethod` and the `OTF*` toggles: InDesign
+        // writes run formatting on paragraph styles as on character
+        // styles (asked 2026-10-12: `Ligatures="false"
+        // OTFHistorical="true" OTFStylisticAlternate="true"
+        // KerningMethod="$ID/Optical"` on a `<ParagraphStyle>`). The
+        // kerning value keeps its `$ID/` prefix, as the character
+        // style's does.
+        ligatures_on: attr(e, b"Ligatures").and_then(|s| s.parse().ok()),
+        kerning_method: attr(e, b"KerningMethod"),
+        otf: crate::story::parse_otf_features(e),
+        // Filled by the `<AllNestedStyles>` / `<AllLineStyles>` /
+        // `<AllGREPStyles>` children (or the legacy `<NestedStyle>`).
         nested_styles: Vec::new(),
+        // `true` on a style whose list is empty — one that cleared its
+        // parent's — and `false` on one that inherits it.
+        empty_nested_styles: attr(e, b"EmptyNestedStyles").and_then(|s| s.parse().ok()),
+        empty_line_styles: attr(e, b"EmptyLineStyles").and_then(|s| s.parse().ok()),
+        empty_grep_styles: attr(e, b"EmptyGrepStyles").and_then(|s| s.parse().ok()),
         // Fields this parser does not read yet fall back to their default;
         // lets the core model grow (e.g. keep options, ADR 028) without
         // breaking this crate at a pinned rev.
@@ -2325,5 +2381,153 @@ mod tests {
             sheet.resolve_paragraph("ParagraphStyle/Derived").point_size,
             Some(6.5)
         );
+    }
+
+    /// The probe document's paragraph style as InDesign 20.0.1 exported
+    /// it (2026-10-12): a drop cap's style as the first nested style,
+    /// two more nested styles, a GREP and a line style.
+    const INDESIGN_NESTED: &str = r#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="u7a">
+<ParagraphStyle Self="ParagraphStyle/Nested" Name="Nested" EmptyNestedStyles="false" EmptyLineStyles="false" EmptyGrepStyles="false" DropCapCharacters="1" DropCapLines="2">
+  <Properties>
+    <BasedOn type="string">$ID/[No paragraph style]</BasedOn>
+    <AllNestedStyles type="list">
+      <ListItem type="record">
+        <AppliedCharacterStyle type="object">CharacterStyle/DropMagenta</AppliedCharacterStyle>
+        <Delimiter type="enumeration">Dropcap</Delimiter>
+        <Repetition type="long">1</Repetition>
+        <Inclusive type="boolean">true</Inclusive>
+      </ListItem>
+      <ListItem type="record">
+        <AppliedCharacterStyle type="object">CharacterStyle/NestRed</AppliedCharacterStyle>
+        <Delimiter type="enumeration">Tabs</Delimiter>
+        <Repetition type="long">1</Repetition>
+        <Inclusive type="boolean">true</Inclusive>
+      </ListItem>
+      <ListItem type="record">
+        <AppliedCharacterStyle type="object">CharacterStyle/NestBlue</AppliedCharacterStyle>
+        <Delimiter type="enumeration">AnyWord</Delimiter>
+        <Repetition type="long">2</Repetition>
+        <Inclusive type="boolean">false</Inclusive>
+      </ListItem>
+    </AllNestedStyles>
+    <AllGREPStyles type="list">
+      <ListItem type="record">
+        <AppliedCharacterStyle type="object">CharacterStyle/GrepGreen</AppliedCharacterStyle>
+        <GrepExpression type="string">\d+</GrepExpression>
+      </ListItem>
+    </AllGREPStyles>
+    <AllLineStyles type="list">
+      <ListItem type="record">
+        <AppliedCharacterStyle type="object">CharacterStyle/LineUnder</AppliedCharacterStyle>
+        <LineCount type="long">2</LineCount>
+        <RepeatLast type="long">-1</RepeatLast>
+      </ListItem>
+    </AllLineStyles>
+  </Properties>
+</ParagraphStyle>
+<ParagraphStyle Self="ParagraphStyle/Inherits" Name="Inherits" EmptyNestedStyles="false" EmptyLineStyles="false" EmptyGrepStyles="false"><Properties><BasedOn type="object">ParagraphStyle/Nested</BasedOn></Properties></ParagraphStyle>
+<ParagraphStyle Self="ParagraphStyle/Cleared" Name="Cleared" EmptyNestedStyles="true" EmptyLineStyles="true" EmptyGrepStyles="true"><Properties><BasedOn type="object">ParagraphStyle/Nested</BasedOn></Properties></ParagraphStyle>
+</RootParagraphStyleGroup></idPkg:Styles>"#;
+
+    #[test]
+    fn reads_nested_line_and_grep_styles_as_indesign_writes_them() {
+        let s = parse_stylesheet(INDESIGN_NESTED.as_bytes()).unwrap();
+        let p = &s.paragraph_styles["ParagraphStyle/Nested"];
+        let delimiters: Vec<&NestedDelimiter> =
+            p.nested_styles.iter().map(|n| &n.delimiter).collect();
+        assert_eq!(
+            delimiters,
+            [
+                &NestedDelimiter::Dropcap,
+                &NestedDelimiter::Tab,
+                &NestedDelimiter::Words
+            ]
+        );
+        assert_eq!(
+            p.nested_styles[2].applied_character_style,
+            "CharacterStyle/NestBlue"
+        );
+        assert_eq!(p.nested_styles[2].repetition, 2);
+        assert!(!p.nested_styles[2].inclusive);
+        assert_eq!(p.grep_styles[0].grep_expression, r"\d+");
+        assert_eq!(p.line_styles[0].line_count, 2);
+        assert_eq!(p.line_styles[0].repeat_last, Some(-1));
+        assert_eq!(p.empty_nested_styles, Some(false));
+    }
+
+    /// InDesign 20.0.1: a style that inherits its parent's lists writes
+    /// none and `Empty*Styles="false"`; one that cleared them writes none
+    /// and `"true"` — and then sets no nested style at all.
+    #[test]
+    fn an_inheriting_style_takes_its_parents_lists_and_a_cleared_one_none() {
+        let s = parse_stylesheet(INDESIGN_NESTED.as_bytes()).unwrap();
+        let inherits = s.resolve_paragraph("ParagraphStyle/Inherits");
+        assert_eq!(inherits.nested_styles.len(), 3);
+        assert_eq!(inherits.line_styles.len(), 1);
+        assert_eq!(inherits.grep_styles.len(), 1);
+        let cleared = s.resolve_paragraph("ParagraphStyle/Cleared");
+        assert!(cleared.nested_styles.is_empty());
+        assert!(cleared.line_styles.is_empty());
+        assert!(cleared.grep_styles.is_empty());
+    }
+
+    /// The engine's older `<NestedStyle>` child still reads, for the
+    /// packages written with it.
+    #[test]
+    fn legacy_nested_style_children_still_read() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+          <ParagraphStyle Self="ParagraphStyle/Old" Name="Old">
+            <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn></Properties>
+            <NestedStyle AppliedCharacterStyle="CharacterStyle/Num" Delimiter="." Repetition="1" Inclusive="true"/>
+            <NestedStyle AppliedCharacterStyle="CharacterStyle/Lead" Delimiter="Words" Repetition="2" Inclusive="false"/>
+          </ParagraphStyle>
+        </RootParagraphStyleGroup></idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let n = &s.paragraph_styles["ParagraphStyle/Old"].nested_styles;
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0].delimiter, NestedDelimiter::Char('.'));
+        assert_eq!(n[1].delimiter, NestedDelimiter::Words);
+        assert!(!n[1].inclusive);
+    }
+
+    /// Where both spellings are present, InDesign's list wins.
+    #[test]
+    fn legacy_nested_style_children_yield_to_indesigns_list() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+          <ParagraphStyle Self="ParagraphStyle/Both" Name="Both">
+            <NestedStyle AppliedCharacterStyle="CharacterStyle/Old" Delimiter="." Repetition="1" Inclusive="true"/>
+            <Properties><AllNestedStyles type="list"><ListItem type="record"><AppliedCharacterStyle type="object">CharacterStyle/New</AppliedCharacterStyle><Delimiter type="enumeration">AnyWord</Delimiter><Repetition type="long">1</Repetition><Inclusive type="boolean">true</Inclusive></ListItem></AllNestedStyles></Properties>
+          </ParagraphStyle>
+        </RootParagraphStyleGroup></idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let n = &s.paragraph_styles["ParagraphStyle/Both"].nested_styles;
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].applied_character_style, "CharacterStyle/New");
+    }
+
+    /// InDesign 20.0.1 writes run formatting on paragraph styles
+    /// (2026-10-12: `Ligatures="false" OTFHistorical="true"
+    /// OTFStylisticAlternate="true" KerningMethod="$ID/Optical"`, …); the
+    /// style carries it and it cascades through `BasedOn`.
+    #[test]
+    fn a_paragraph_style_reads_ligatures_kerning_and_opentype() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+          <ParagraphStyle Self="ParagraphStyle/OTF" Name="OTF" Ligatures="false" KerningMethod="$ID/Optical" OTFFigureStyle="ProportionalOldstyle" OTFOrdinal="true" OTFFraction="true" OTFDiscretionaryLigature="true" OTFTitling="true" OTFSlashedZero="true" OTFStylisticSets="5" OTFHistorical="true" OTFContextualAlternate="false" OTFSwash="true" OTFStylisticAlternate="true"/>
+          <ParagraphStyle Self="ParagraphStyle/Child" Name="Child" OTFSwash="false"><Properties><BasedOn type="object">ParagraphStyle/OTF</BasedOn></Properties></ParagraphStyle>
+        </RootParagraphStyleGroup></idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let p = &s.paragraph_styles["ParagraphStyle/OTF"];
+        assert_eq!(p.ligatures_on, Some(false));
+        assert_eq!(p.kerning_method.as_deref(), Some("$ID/Optical"));
+        assert_eq!(p.otf.historical, Some(true));
+        assert_eq!(p.otf.stylistic_alternate, Some(true));
+        assert_eq!(p.otf.contextual_alternates, Some(false));
+        assert_eq!(p.otf.figure_style.as_deref(), Some("ProportionalOldstyle"));
+        assert_eq!(p.otf.stylistic_sets, Some(5));
+        let child = s.resolve_paragraph("ParagraphStyle/Child");
+        assert_eq!(child.otf.swash, Some(false));
+        assert_eq!(child.otf.historical, Some(true));
+        assert_eq!(child.ligatures_on, Some(false));
+        assert_eq!(child.kerning_method.as_deref(), Some("$ID/Optical"));
     }
 }

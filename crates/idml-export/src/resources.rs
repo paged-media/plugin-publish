@@ -313,6 +313,7 @@ fn write_paragraph_style(
         &s.font,
         s.leading,
         Some(&crate::paragraph_props::Owner::of_style(s)),
+        Some(s),
     )
 }
 
@@ -328,6 +329,7 @@ fn write_character_style(
         &s.based_on,
         &s.font,
         s.leading,
+        None,
         None,
     )
 }
@@ -355,8 +357,12 @@ fn emit_style_element(
     font: &Option<String>,
     leading: Option<f32>,
     props: Option<&crate::paragraph_props::Owner<'_>>,
+    lists: Option<&ParagraphStyleDef>,
 ) -> Result<(), quick_xml::Error> {
-    let owes_props = props.is_some_and(|p| p.any());
+    let owes_lists = lists.is_some_and(|s| {
+        !s.nested_styles.is_empty() || !s.line_styles.is_empty() || !s.grep_styles.is_empty()
+    });
+    let owes_props = props.is_some_and(|p| p.any()) || owes_lists;
     if based_on.is_none() && font.is_none() && leading.is_none() && !owes_props {
         return emit_empty(writer, name, attrs);
     }
@@ -395,6 +401,15 @@ fn emit_style_element(
         };
         writer.write_event(Event::Text(quick_xml::events::BytesText::new(&value)))?;
         writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Leading")))?;
+    }
+    // Nested, GREP and line styles: typed lists (see `nested_styles`).
+    if let Some(s) = lists {
+        crate::nested_styles::write_style_lists(
+            writer,
+            &s.nested_styles,
+            &s.line_styles,
+            &s.grep_styles,
+        )?;
     }
     if let Some(p) = props {
         p.write_children(writer)?;
@@ -474,6 +489,7 @@ fn write_object_style(
         &attrs,
         &s.based_on,
         &None,
+        None,
         None,
         None,
     )
@@ -1054,6 +1070,7 @@ mod tests {
                 &None,
                 Some(leading),
                 None,
+                None,
             )
             .expect("emit");
             String::from_utf8(w.into_inner().into_inner()).expect("utf8")
@@ -1189,6 +1206,67 @@ mod tests {
             out.contains(r#"<CharacterStyle Self="CharacterStyle/Caps" Name="Caps" PointSize="9" Tracking="70"/>"#),
             "{out}"
         );
+    }
+
+    /// A style the export mints carries its typography and its nested,
+    /// GREP and line styles in InDesign's spelling; an edited style's
+    /// `Ligatures` and `KerningMethod` follow the model.
+    #[test]
+    fn a_minted_style_carries_its_typography_and_style_lists() {
+        let src = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup Self="u9e"><ParagraphStyle Self="ParagraphStyle/Kept" Name="Kept" Ligatures="false" KerningMethod="$ID/Optical"/></RootParagraphStyleGroup></idPkg:Styles>"#;
+        let mut styles = idml_import::parse_stylesheet(src).unwrap();
+        assert_eq!(
+            patch_styles(src, &styles).unwrap(),
+            src.to_vec(),
+            "unchanged: byte-identical"
+        );
+        let kept = styles
+            .paragraph_styles
+            .get_mut("ParagraphStyle/Kept")
+            .unwrap();
+        kept.ligatures_on = Some(true);
+        kept.kerning_method = Some("$ID/None".into());
+        let mut minted = ParagraphStyleDef {
+            self_id: "ParagraphStyle/Minted".into(),
+            name: Some("Minted".into()),
+            ligatures_on: Some(false),
+            empty_line_styles: Some(true),
+            nested_styles: vec![idml_import::NestedStyle {
+                applied_character_style: "CharacterStyle/Red".into(),
+                delimiter: idml_import::NestedDelimiter::Words,
+                repetition: 2,
+                inclusive: false,
+            }],
+            grep_styles: vec![idml_import::GrepStyle {
+                applied_character_style: "CharacterStyle/Green".into(),
+                grep_expression: r"\d+".into(),
+            }],
+            ..Default::default()
+        };
+        minted.otf.historical = Some(true);
+        styles
+            .paragraph_styles
+            .insert(minted.self_id.clone(), minted);
+        let out = String::from_utf8(patch_styles(src, &styles).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyle Self="ParagraphStyle/Kept" Name="Kept" Ligatures="true" KerningMethod="$ID/None"/>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"<ParagraphStyle Self="ParagraphStyle/Minted" Name="Minted" Ligatures="false" OTFHistorical="true" EmptyLineStyles="true"><Properties><AllNestedStyles type="list"><ListItem type="record"><AppliedCharacterStyle type="object">CharacterStyle/Red</AppliedCharacterStyle><Delimiter type="enumeration">AnyWord</Delimiter><Repetition type="long">2</Repetition><Inclusive type="boolean">false</Inclusive></ListItem></AllNestedStyles><AllGREPStyles type="list"><ListItem type="record"><AppliedCharacterStyle type="object">CharacterStyle/Green</AppliedCharacterStyle><GrepExpression type="string">\d+</GrepExpression></ListItem></AllGREPStyles></Properties></ParagraphStyle>"#),
+            "{out}"
+        );
+        // And reads back as it was minted.
+        let back = idml_import::parse_stylesheet(out.as_bytes()).unwrap();
+        let m = &back.paragraph_styles["ParagraphStyle/Minted"];
+        assert_eq!(
+            m.nested_styles,
+            styles.paragraph_styles["ParagraphStyle/Minted"].nested_styles
+        );
+        assert_eq!(m.grep_styles.len(), 1);
+        assert_eq!(m.otf.historical, Some(true));
+        assert_eq!(m.ligatures_on, Some(false));
+        assert_eq!(m.empty_line_styles, Some(true));
     }
 
     #[test]

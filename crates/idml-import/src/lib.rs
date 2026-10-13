@@ -33,6 +33,7 @@ pub mod designmap;
 pub mod graphic;
 pub mod spread;
 pub mod story;
+pub mod style_lists;
 pub mod styles;
 mod util;
 
@@ -66,10 +67,10 @@ pub use story::{
 };
 pub use styles::{
     parse_conditions, parse_stylesheet, CellStyleDef, CharacterStyleDef, ConditionDef,
-    ConditionSetDef, NestedDelimiter, NestedStyle, ObjectStyleDef, ParagraphBorder, ParagraphRule,
-    ParagraphShading, ParagraphStyleDef, ResolvedCell, ResolvedCharacter, ResolvedObject,
-    ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef, StrokeStyleKind, StyleSheet,
-    TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
+    ConditionSetDef, GrepStyle, LineStyle, NestedDelimiter, NestedStyle, ObjectStyleDef,
+    ParagraphBorder, ParagraphRule, ParagraphShading, ParagraphStyleDef, ResolvedCell,
+    ResolvedCharacter, ResolvedObject, ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef,
+    StrokeStyleKind, StyleSheet, TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
 };
 pub use util::{decode_aid_escapes, parse_tint};
 
