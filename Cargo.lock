@@ -293,7 +293,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "paged-composition"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=ddd07493f1e713d2550cd48c83aa0934a35056fa#ddd07493f1e713d2550cd48c83aa0934a35056fa"
+source = "git+https://github.com/paged-media/core?rev=eff623b259deda282c297b8a129688291b4d3e69#eff623b259deda282c297b8a129688291b4d3e69"
 dependencies = [
  "paged-flow",
  "serde",
@@ -302,7 +302,7 @@ dependencies = [
 [[package]]
 name = "paged-flow"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=ddd07493f1e713d2550cd48c83aa0934a35056fa#ddd07493f1e713d2550cd48c83aa0934a35056fa"
+source = "git+https://github.com/paged-media/core?rev=eff623b259deda282c297b8a129688291b4d3e69#eff623b259deda282c297b8a129688291b4d3e69"
 dependencies = [
  "serde",
 ]
@@ -310,7 +310,7 @@ dependencies = [
 [[package]]
 name = "paged-model"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=ddd07493f1e713d2550cd48c83aa0934a35056fa#ddd07493f1e713d2550cd48c83aa0934a35056fa"
+source = "git+https://github.com/paged-media/core?rev=eff623b259deda282c297b8a129688291b4d3e69#eff623b259deda282c297b8a129688291b4d3e69"
 dependencies = [
  "base64",
  "serde",
@@ -319,7 +319,7 @@ dependencies = [
 [[package]]
 name = "paged-scene"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=ddd07493f1e713d2550cd48c83aa0934a35056fa#ddd07493f1e713d2550cd48c83aa0934a35056fa"
+source = "git+https://github.com/paged-media/core?rev=eff623b259deda282c297b8a129688291b4d3e69#eff623b259deda282c297b8a129688291b4d3e69"
 dependencies = [
  "blake3",
  "paged-composition",
@@ -333,7 +333,7 @@ dependencies = [
 [[package]]
 name = "paged-store"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=ddd07493f1e713d2550cd48c83aa0934a35056fa#ddd07493f1e713d2550cd48c83aa0934a35056fa"
+source = "git+https://github.com/paged-media/core?rev=eff623b259deda282c297b8a129688291b4d3e69#eff623b259deda282c297b8a129688291b4d3e69"
 dependencies = [
  "blake3",
  "paged-model",
