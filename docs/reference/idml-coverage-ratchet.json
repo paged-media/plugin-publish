@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 103268,
+      "covered": 107873,
       "total": 633952,
-      "value": 0.162896
+      "value": 0.17016
     },
     "impactImport": {
-      "covered": 22360,
+      "covered": 23485,
       "total": 54667,
-      "value": 0.409022
+      "value": 0.429601
     },
     "weightedExport": {
       "covered": 78270,
@@ -296,6 +296,16 @@
     "Resources/Styles|ObjectStyle@BasedOn|properties-child",
     "Resources/Styles|ObjectStyle@CornerOption|attr",
     "Resources/Styles|ObjectStyle@CornerRadius|attr",
+    "Resources/Styles|ObjectStyle@EnableAnchoredObjectOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableFill|attr",
+    "Resources/Styles|ObjectStyle@EnableFrameFittingOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableParagraphStyle|attr",
+    "Resources/Styles|ObjectStyle@EnableStrokeAndCornerOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableStroke|attr",
+    "Resources/Styles|ObjectStyle@EnableTextFrameAutoSizingOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableTextFrameBaselineOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableTextFrameGeneralOptions|attr",
+    "Resources/Styles|ObjectStyle@EnableTextWrapAndOthers|attr",
     "Resources/Styles|ObjectStyle@FillColor|attr",
     "Resources/Styles|ObjectStyle@FillTint|attr",
     "Resources/Styles|ObjectStyle@Name|attr",
@@ -490,6 +500,13 @@
     "Resources/Styles|TableStyle@StartRowFillTint|attr",
     "Resources/Styles|TableStyle@TopBorderStrokeColor|attr",
     "Resources/Styles|TableStyle@TopBorderStrokeWeight|attr",
+    "Resources/Styles|TextFramePreference@AutoSizingType|attr",
+    "Resources/Styles|TextFramePreference@FirstBaselineOffset|attr",
+    "Resources/Styles|TextFramePreference@InsetSpacing|properties-child",
+    "Resources/Styles|TextFramePreference@MinimumFirstBaselineOffset|attr",
+    "Resources/Styles|TextFramePreference@TextColumnCount|attr",
+    "Resources/Styles|TextFramePreference@TextColumnGutter|attr",
+    "Resources/Styles|TextFramePreference@VerticalJustification|attr",
     "Resources/Styles|WavyStrokeStyle@Name|attr",
     "Resources/Styles|WavyStrokeStyle@Self|attr",
     "Resources/Styles|WavyStrokeStyle@Wavelength|attr",
