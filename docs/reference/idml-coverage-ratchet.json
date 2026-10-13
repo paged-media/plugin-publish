@@ -8,21 +8,21 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 97846,
+      "covered": 98395,
       "total": 633952,
-      "value": 0.154343
+      "value": 0.155209
     },
     "impactImport": {
-      "covered": 22319,
+      "covered": 22326,
       "total": 54667,
-      "value": 0.408272
+      "value": 0.4084
     },
     "weightedExport": {
-      "covered": 73118,
+      "covered": 73667,
       "total": 633952,
-      "value": 0.115337
+      "value": 0.116203
     },
-    "misplacedReads": 30,
+    "misplacedReads": 44,
     "unseenReads": 279,
     "unjustifiedUnseenReads": 0
   },
@@ -230,6 +230,8 @@
     "Resources/Preferences|GridPreference@BaselineStart|attr",
     "Resources/Preferences|GridPreference@HorizontalGridlineDivision|attr",
     "Resources/Preferences|GridPreference@VerticalGridlineDivision|attr",
+    "Resources/Preferences|TransparencyPreference@GlobalLightAltitude|attr",
+    "Resources/Preferences|TransparencyPreference@GlobalLightAngle|attr",
     "Resources/Styles|CellStyle@BasedOn|attr",
     "Resources/Styles|CellStyle@BasedOn|properties-child",
     "Resources/Styles|CellStyle@BottomEdgeStrokeColor|attr",
@@ -498,6 +500,7 @@
     "Spreads|DirectionalFeatherSetting@LeftWidth|attr",
     "Spreads|DirectionalFeatherSetting@RightWidth|attr",
     "Spreads|DirectionalFeatherSetting@TopWidth|attr",
+    "Spreads|DropShadowSetting@BlendMode|attr",
     "Spreads|DropShadowSetting@EffectColor|attr",
     "Spreads|DropShadowSetting@Mode|attr",
     "Spreads|DropShadowSetting@Opacity|attr",
@@ -519,6 +522,8 @@
     "Spreads|GradientFeatherSetting@Angle|attr",
     "Spreads|GradientFeatherSetting@Applied|attr",
     "Spreads|GradientFeatherSetting@GradientStart|attr",
+    "Spreads|GradientFeatherSetting@HiliteAngle|attr",
+    "Spreads|GradientFeatherSetting@HiliteLength|attr",
     "Spreads|GradientFeatherSetting@Length|attr",
     "Spreads|GraphicLine@AppliedObjectStyle|attr",
     "Spreads|GraphicLine@BottomLeftCornerOption|attr",
@@ -1238,6 +1243,8 @@
     "Resources/Preferences|TextDefault@FontStyle|attr",
     "Resources/Preferences|TextDefault@PointSize|attr",
     "Resources/Preferences|TextPreference@UseOpticalSize|attr",
+    "Resources/Preferences|TransparencyPreference@GlobalLightAltitude|attr",
+    "Resources/Preferences|TransparencyPreference@GlobalLightAngle|attr",
     "Resources/Styles|CharacterStyle@AppliedFont|properties-child",
     "Resources/Styles|CharacterStyle@BasedOn|properties-child",
     "Resources/Styles|CharacterStyle@BaselineShift|attr",
@@ -1352,6 +1359,7 @@
     "Spreads|DirectionalFeatherSetting@LeftWidth|attr",
     "Spreads|DirectionalFeatherSetting@RightWidth|attr",
     "Spreads|DirectionalFeatherSetting@TopWidth|attr",
+    "Spreads|DropShadowSetting@BlendMode|attr",
     "Spreads|DropShadowSetting@EffectColor|attr",
     "Spreads|DropShadowSetting@Mode|attr",
     "Spreads|DropShadowSetting@Opacity|attr",
@@ -1365,6 +1373,8 @@
     "Spreads|GradientFeatherSetting@Angle|attr",
     "Spreads|GradientFeatherSetting@Applied|attr",
     "Spreads|GradientFeatherSetting@GradientStart|attr",
+    "Spreads|GradientFeatherSetting@HiliteAngle|attr",
+    "Spreads|GradientFeatherSetting@HiliteLength|attr",
     "Spreads|GradientFeatherSetting@Length|attr",
     "Spreads|GraphicLine@AppliedObjectStyle|attr",
     "Spreads|GraphicLine@BottomLeftCornerOption|attr",

@@ -53,7 +53,8 @@ pub use spread::{
     GradientFeatherParams, GradientFeatherStop, GraphicLine, Group, GroupTransparency,
     GuideOrientation, ImageMetadata, InnerGlowParams, InnerShadowParams, MarginPreference,
     OuterGlowParams, Oval, Page, PathAnchor, Polygon, Rectangle, RulerGuide, SatinParams, Spread,
-    SpreadProvenance, TextFrame, TextPath, TextWrap, TextWrapMode, VerticalJustification,
+    SpreadProvenance, TargetTransparency, TextFrame, TextPath, TextWrap, TextWrapMode,
+    TransparencyPreference, VerticalJustification,
 };
 pub use story::{
     parse_story, parse_story_with_provenance, story_text_anchors, AnchoredFrame, AnchoredFrameKind,

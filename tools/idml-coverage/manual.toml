@@ -336,6 +336,14 @@ attributes = [
 ]
 elements = ["ParagraphStyleRange", "ParagraphStyle"]
 
+# R-11 — the global light, patched onto `<TransparencyPreference>` through a
+# table of byte-string keys.
+[[export]]
+file = "crates/idml-export/src/preferences.rs"
+item = "patch_transparency_preference"
+attributes = ["GlobalLightAngle", "GlobalLightAltitude"]
+elements = ["TransparencyPreference"]
+
 # Typed <Properties> children.
 
 [[export]]
@@ -708,6 +716,12 @@ parts = ["Resources/Fonts"]
 [[part_entry]]
 file = "crates/idml-export/src/preferences.rs"
 name = "patch_preferences"
+parts = ["Resources/Preferences"]
+
+# R-11 — the document's global light on `<TransparencyPreference>`.
+[[part_entry]]
+file = "crates/idml-export/src/preferences.rs"
+name = "patch_transparency_preference"
 parts = ["Resources/Preferences"]
 
 # `<DocumentPreference>` is patched where the source keeps it: Preferences.xml
