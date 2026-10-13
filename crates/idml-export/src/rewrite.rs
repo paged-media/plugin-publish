@@ -1949,9 +1949,19 @@ fn write_text_paths(
                 .unwrap_or_else(|| format!("{}tp{i}", crate::emit::sanitize_id(&tp.parent_story))),
         )];
         attrs.push(("ParentStory", crate::emit::sanitize_id(&tp.parent_story)));
+        // InDesign writes the glyph seat as `TextAlignment`, its values
+        // ending `TextAlignment`; a value an older Paged build read as
+        // `…PathType` is written in InDesign's spelling.
+        let text_alignment =
+            tp.path_type_alignment
+                .as_ref()
+                .map(|v| match v.strip_suffix("PathType") {
+                    Some(part) => format!("{part}TextAlignment"),
+                    None => v.clone(),
+                });
         for (k, v) in [
             ("PathAlignment", &tp.path_alignment),
-            ("PathTypeAlignment", &tp.path_type_alignment),
+            ("TextAlignment", &text_alignment),
             ("PathEffect", &tp.path_effect),
             ("FlipPathEffect", &tp.flip_path_effect),
         ] {
