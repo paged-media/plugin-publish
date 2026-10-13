@@ -781,10 +781,20 @@ pub(crate) fn emit_paragraph_properties(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     p: &idml_import::Paragraph,
 ) -> Result<(), quick_xml::Error> {
-    if !paragraph_has_properties(p) {
+    let has_lists =
+        !p.nested_styles.is_empty() || !p.line_styles.is_empty() || !p.grep_styles.is_empty();
+    if !paragraph_has_properties(p) && !has_lists {
         return Ok(());
     }
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+    // The paragraph's own nested / GREP / line styles (see
+    // `nested_styles`).
+    crate::nested_styles::write_style_lists(
+        writer,
+        &p.nested_styles,
+        &p.line_styles,
+        &p.grep_styles,
+    )?;
     if !p.tab_list.is_empty() {
         write_tab_list(writer, &p.tab_list)?;
     }
