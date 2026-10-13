@@ -8,9 +8,9 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 102169,
+      "covered": 102440,
       "total": 633952,
-      "value": 0.161162
+      "value": 0.16159
     },
     "impactImport": {
       "covered": 22343,
@@ -23,7 +23,7 @@
       "value": 0.122159
     },
     "misplacedReads": 30,
-    "unseenReads": 288,
+    "unseenReads": 289,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -224,6 +224,7 @@
     "Resources/Preferences|FootnoteOption@SeparatorText|attr",
     "Resources/Preferences|FootnoteOption@SpaceBetween|attr",
     "Resources/Preferences|FootnoteOption@Spacer|attr",
+    "Resources/Preferences|FootnoteOption@StartAt|attr",
     "Resources/Preferences|GridPreference@BaselineDivision|attr",
     "Resources/Preferences|GridPreference@BaselineGridRelativeOption|attr",
     "Resources/Preferences|GridPreference@BaselineGridShown|attr",
