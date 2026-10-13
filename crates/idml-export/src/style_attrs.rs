@@ -185,7 +185,8 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
         out.push(("DropCapLines", n.to_string()));
     }
     if let Some(n) = s.drop_cap_detail {
-        out.push(("DropCapDetail", n.to_string()));
+        // InDesign's spelling, lowercase c.
+        out.push(("DropcapDetail", n.to_string()));
     }
     push_strs(
         &mut out,
@@ -236,10 +237,13 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
             ("StrikeThru", s.strikethru),
             ("OverprintFill", s.overprint_fill),
             ("OverprintStroke", s.overprint_stroke),
-            ("RubyFlag", s.ruby_flag),
             ("Ligatures", s.ligatures_on),
         ],
     );
+    // InDesign writes the ruby flag as a number (`RubyFlag="1"`).
+    if let Some(f) = s.ruby_flag {
+        out.push(("RubyFlag", if f { "1" } else { "0" }.to_string()));
+    }
     push_strs(
         &mut out,
         &[
@@ -341,7 +345,10 @@ pub(crate) fn paragraph_style_attr_patch(
         b"MaximumGlyphScaling" => Some(preserving_f32_patch(raw, s.maximum_glyph_scaling)),
         b"DropCapCharacters" => Some(opt_u32_patch(raw, s.drop_cap_characters)),
         b"DropCapLines" => Some(opt_u32_patch(raw, s.drop_cap_lines)),
-        b"DropCapDetail" => Some(opt_i32_patch(raw, s.drop_cap_detail)),
+        b"DropcapDetail" => Some(opt_i32_patch(raw, s.drop_cap_detail)),
+        // The spelling older Paged builds wrote: the value is written again
+        // in InDesign's spelling above, so the old key goes.
+        b"DropCapDetail" => Some(Patch::Remove),
         b"KinsokuSet" => Some(opt_string_patch(&s.kinsoku_set)),
         b"KinsokuType" => Some(opt_string_patch(&s.kinsoku_type)),
         b"MojikumiTable" => Some(opt_string_patch(&s.mojikumi_table)),
@@ -378,7 +385,13 @@ pub(crate) fn character_style_attr_patch(
         b"StrikeThru" => Some(opt_bool_patch(s.strikethru)),
         b"OverprintFill" => Some(opt_bool_patch(s.overprint_fill)),
         b"OverprintStroke" => Some(opt_bool_patch(s.overprint_stroke)),
-        b"RubyFlag" => Some(opt_bool_patch(s.ruby_flag)),
+        // A source spelling of the same value (`1` or `true`) keeps its
+        // bytes; a change is written as InDesign writes it.
+        b"RubyFlag" => Some(match s.ruby_flag {
+            Some(f) if raw.and_then(idml_import::parse_flag) == Some(f) => Patch::Keep,
+            Some(f) => Patch::Set(if f { "1" } else { "0" }.to_string()),
+            None => Patch::Remove,
+        }),
         b"Ligatures" => Some(opt_bool_patch(s.ligatures_on)),
         b"RubyType" => Some(opt_string_patch(&s.ruby_type)),
         b"RubyString" => Some(opt_string_patch(&s.ruby_string)),
@@ -387,5 +400,58 @@ pub(crate) fn character_style_attr_patch(
         b"KerningMethod" => Some(opt_string_patch(&s.kerning_method)),
         b"KentenFontSize" => Some(preserving_f32_patch(raw, s.kenten_font_size)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ruby_flag_is_written_as_indesign_writes_it() {
+        // InDesign 20.0.1 writes `RubyFlag="1"`.
+        let on = CharacterStyleDef {
+            ruby_flag: Some(true),
+            ..Default::default()
+        };
+        assert!(character_style_attrs(&on).contains(&("RubyFlag", "1".to_string())));
+        // A source spelling of the same value keeps its bytes…
+        for raw in [&b"1"[..], b"true"] {
+            assert!(matches!(
+                character_style_attr_patch(b"RubyFlag", raw, &on),
+                Some(Patch::Keep)
+            ));
+        }
+        // …and a change is written InDesign's way.
+        let off = CharacterStyleDef {
+            ruby_flag: Some(false),
+            ..Default::default()
+        };
+        assert!(matches!(
+            character_style_attr_patch(b"RubyFlag", b"1", &off),
+            Some(Patch::Set(ref v)) if v == "0"
+        ));
+    }
+
+    #[test]
+    fn drop_cap_detail_is_written_in_indesigns_spelling() {
+        let s = ParagraphStyleDef {
+            drop_cap_detail: Some(2),
+            ..Default::default()
+        };
+        assert!(paragraph_style_attrs(&s).contains(&("DropcapDetail", "2".to_string())));
+        assert!(!paragraph_style_attrs(&s)
+            .iter()
+            .any(|(k, _)| *k == "DropCapDetail"));
+        // The camel-cased key older Paged builds wrote is dropped on save;
+        // the value goes out again in InDesign's spelling.
+        assert!(matches!(
+            paragraph_style_attr_patch(b"DropCapDetail", b"2", &s),
+            Some(Patch::Remove)
+        ));
+        assert!(matches!(
+            paragraph_style_attr_patch(b"DropcapDetail", b"2", &s),
+            Some(Patch::Keep)
+        ));
     }
 }

@@ -2392,7 +2392,12 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                             self_id: attr(&e, b"Self"),
                             parent_story,
                             path_alignment: attr(&e, b"PathAlignment"),
-                            path_type_alignment: attr(&e, b"PathTypeAlignment"),
+                            // Which part of the type sits on the path. InDesign
+                            // 20.0.1 writes `TextAlignment` (`AscenderTextAlignment`
+                            // …); `PathTypeAlignment` is what older Paged builds
+                            // wrote, and reads too.
+                            path_type_alignment: attr(&e, b"TextAlignment")
+                                .or_else(|| attr(&e, b"PathTypeAlignment")),
                             path_effect: attr(&e, b"PathEffect"),
                             flip_path_effect: attr(&e, b"FlipPathEffect"),
                             start_bracket: attr(&e, b"StartBracket").and_then(|s| s.parse().ok()),
@@ -4625,7 +4630,7 @@ mod tests {
               </Properties>
               <TextPath Self="tp1" ParentStory="story_u1"
                         PathAlignment="CenterPathAlignment"
-                        PathTypeAlignment="CenterPathType"
+                        TextAlignment="CenterTextAlignment"
                         PathEffect="RainbowPathEffect"
                         FlipPathEffect="NotFlipped"
                         StartBracket="0" EndBracket="100"/>
@@ -4639,10 +4644,25 @@ mod tests {
         assert_eq!(tp.parent_story, "story_u1");
         assert_eq!(tp.self_id.as_deref(), Some("tp1"));
         assert_eq!(tp.path_alignment.as_deref(), Some("CenterPathAlignment"));
-        assert_eq!(tp.path_type_alignment.as_deref(), Some("CenterPathType"));
+        // InDesign's own attribute, as InDesign 20.0.1 exports it.
+        assert_eq!(
+            tp.path_type_alignment.as_deref(),
+            Some("CenterTextAlignment")
+        );
         assert_eq!(tp.path_effect.as_deref(), Some("RainbowPathEffect"));
         assert_eq!(tp.start_bracket, Some(0.0));
         assert_eq!(tp.end_bracket, Some(100.0));
+
+        // A file an older Paged wrote names it `PathTypeAlignment`.
+        let legacy = std::str::from_utf8(xml).unwrap().replace(
+            r#"TextAlignment="CenterTextAlignment""#,
+            r#"PathTypeAlignment="CenterPathType""#,
+        );
+        let s = parse_spread(legacy.as_bytes()).unwrap();
+        assert_eq!(
+            s.polygons[0].text_paths[0].path_type_alignment.as_deref(),
+            Some("CenterPathType")
+        );
     }
 
     #[test]

@@ -8,19 +8,19 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 102989,
+      "covered": 103268,
       "total": 633952,
-      "value": 0.162456
+      "value": 0.162896
     },
     "impactImport": {
-      "covered": 22350,
+      "covered": 22360,
       "total": 54667,
-      "value": 0.408839
+      "value": 0.409022
     },
     "weightedExport": {
-      "covered": 77992,
+      "covered": 78270,
       "total": 633952,
-      "value": 0.123025
+      "value": 0.123464
     },
     "misplacedReads": 30,
     "unseenReads": 289,
@@ -322,6 +322,7 @@
     "Resources/Styles|ParagraphStyle@DesiredWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@DropCapCharacters|attr",
     "Resources/Styles|ParagraphStyle@DropCapLines|attr",
+    "Resources/Styles|ParagraphStyle@DropcapDetail|attr",
     "Resources/Styles|ParagraphStyle@EmptyGrepStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyLineStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyNestedStyles|attr",
@@ -793,6 +794,7 @@
     "Spreads|TextPath@PathTypeAlignment|attr",
     "Spreads|TextPath@Self|attr",
     "Spreads|TextPath@StartBracket|attr",
+    "Spreads|TextPath@TextAlignment|attr",
     "Spreads|TextWrapPreference@Inverse|attr",
     "Spreads|TextWrapPreference@TextWrapMode|attr",
     "Stories|AnchoredObjectSetting@AnchorPoint|attr",
@@ -892,6 +894,7 @@
     "Stories|ParagraphStyleRange@Composer|attr",
     "Stories|ParagraphStyleRange@DropCapCharacters|attr",
     "Stories|ParagraphStyleRange@DropCapLines|attr",
+    "Stories|ParagraphStyleRange@DropcapDetail|attr",
     "Stories|ParagraphStyleRange@FirstLineIndent|attr",
     "Stories|ParagraphStyleRange@HyphenationZone|attr",
     "Stories|ParagraphStyleRange@Hyphenation|attr",
@@ -1314,6 +1317,7 @@
     "Resources/Styles|ParagraphStyle@DesiredWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@DropCapCharacters|attr",
     "Resources/Styles|ParagraphStyle@DropCapLines|attr",
+    "Resources/Styles|ParagraphStyle@DropcapDetail|attr",
     "Resources/Styles|ParagraphStyle@EmptyGrepStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyLineStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyNestedStyles|attr",
@@ -1661,9 +1665,9 @@
     "Spreads|TextPath@ParentStory|attr",
     "Spreads|TextPath@PathAlignment|attr",
     "Spreads|TextPath@PathEffect|attr",
-    "Spreads|TextPath@PathTypeAlignment|attr",
     "Spreads|TextPath@Self|attr",
     "Spreads|TextPath@StartBracket|attr",
+    "Spreads|TextPath@TextAlignment|attr",
     "Spreads|TextWrapPreference@ApplyToMasterPageOnly|attr",
     "Spreads|TextWrapPreference@Inverse|attr",
     "Spreads|TextWrapPreference@TextWrapMode|attr",
@@ -1731,6 +1735,7 @@
     "Stories|ParagraphStyleRange@Composer|attr",
     "Stories|ParagraphStyleRange@DropCapCharacters|attr",
     "Stories|ParagraphStyleRange@DropCapLines|attr",
+    "Stories|ParagraphStyleRange@DropcapDetail|attr",
     "Stories|ParagraphStyleRange@FirstLineIndent|attr",
     "Stories|ParagraphStyleRange@HyphenationZone|attr",
     "Stories|ParagraphStyleRange@Hyphenation|attr",

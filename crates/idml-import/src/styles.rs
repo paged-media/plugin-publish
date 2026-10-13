@@ -828,7 +828,7 @@ fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterS
         strikethru: attr(e, b"StrikeThru").and_then(|s| s.parse().ok()),
         overprint_fill: attr(e, b"OverprintFill").and_then(|s| s.parse().ok()),
         overprint_stroke: attr(e, b"OverprintStroke").and_then(|s| s.parse().ok()),
-        ruby_flag: attr(e, b"RubyFlag").and_then(|s| s.parse().ok()),
+        ruby_flag: attr(e, b"RubyFlag").and_then(|s| crate::util::parse_flag(&s)),
         ruby_type: attr(e, b"RubyType"),
         ruby_string: attr(e, b"RubyString"),
         kenten_kind: attr(e, b"KentenKind"),
@@ -1247,7 +1247,10 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
         maximum_glyph_scaling: attr(e, b"MaximumGlyphScaling").and_then(|s| s.parse().ok()),
         drop_cap_characters: attr(e, b"DropCapCharacters").and_then(|s| s.parse().ok()),
         drop_cap_lines: attr(e, b"DropCapLines").and_then(|s| s.parse().ok()),
-        drop_cap_detail: attr(e, b"DropCapDetail").and_then(|s| s.parse().ok()),
+        // `DropcapDetail` is InDesign's spelling; `DropCapDetail` what Paged once wrote.
+        drop_cap_detail: attr(e, b"DropcapDetail")
+            .or_else(|| attr(e, b"DropCapDetail"))
+            .and_then(|s| s.parse().ok()),
         overprint_fill: attr(e, b"OverprintFill").and_then(|s| s.parse().ok()),
         overprint_stroke: attr(e, b"OverprintStroke").and_then(|s| s.parse().ok()),
         kinsoku_set: attr(e, b"KinsokuSet"),
@@ -1420,6 +1423,33 @@ mod tests {
         // BasedOn child with no own zone inherits it.
         let sub = s.resolve_paragraph("ParagraphStyle/Sub");
         assert_eq!(sub.hyphenation_zone, Some(36.0));
+    }
+
+    #[test]
+    fn reads_drop_cap_detail_in_indesigns_spelling() {
+        // InDesign writes `DropcapDetail`; older Paged builds wrote
+        // `DropCapDetail`. Both read, and the value cascades.
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/Body" DropcapDetail="1"/>
+            <ParagraphStyle Self="ParagraphStyle/Sub" BasedOn="ParagraphStyle/Body"/>
+            <ParagraphStyle Self="ParagraphStyle/Old" DropCapDetail="2"/>
+          </RootParagraphStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        assert_eq!(
+            s.resolve_paragraph("ParagraphStyle/Body").drop_cap_detail,
+            Some(1)
+        );
+        assert_eq!(
+            s.resolve_paragraph("ParagraphStyle/Sub").drop_cap_detail,
+            Some(1)
+        );
+        assert_eq!(
+            s.resolve_paragraph("ParagraphStyle/Old").drop_cap_detail,
+            Some(2)
+        );
     }
 
     /// ADR 028 — keep options live on paragraph STYLES in real documents

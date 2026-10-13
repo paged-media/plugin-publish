@@ -660,7 +660,8 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
         out.push(("DropCapLines", p.drop_cap_lines.to_string()));
     }
     if p.drop_cap_detail != 0 {
-        out.push(("DropCapDetail", p.drop_cap_detail.to_string()));
+        // InDesign's spelling, lowercase c.
+        out.push(("DropcapDetail", p.drop_cap_detail.to_string()));
     }
     let bool_attrs: [(&'static str, Option<bool>); 6] = [
         ("Hyphenation", p.hyphenation),
