@@ -44,7 +44,7 @@ use std::io::Cursor;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
-use idml_import::graphic::{ColorEntry, GradientEntry, GradientKind, Graphic};
+use idml_import::graphic::{ColorEntry, GradientEntry, GradientKind, Graphic, InkDef};
 use idml_import::styles::{CharacterStyleDef, ObjectStyleDef, ParagraphStyleDef, StyleSheet};
 
 use crate::rewrite::{escape_attr, format_f32};
@@ -116,6 +116,42 @@ fn write_color(
     emit_empty(writer, "Color", &attrs)
 }
 
+/// Serialise one model `<Ink>` in InDesign's attribute order (`Self Name
+/// Angle ConvertToProcess Frequency NeutralDensity PrintInk TrapOrder
+/// InkType`, then `AliasInkName`), each only when the model has it.
+fn write_ink(writer: &mut Writer<Cursor<Vec<u8>>>, ink: &InkDef) -> Result<(), quick_xml::Error> {
+    let flag = |b: bool| if b { "true" } else { "false" }.to_string();
+    let mut attrs: Vec<(&str, String)> = vec![("Self", ink.self_id.clone())];
+    if let Some(v) = &ink.name {
+        attrs.push(("Name", v.clone()));
+    }
+    if let Some(v) = ink.angle {
+        attrs.push(("Angle", format_f32(v)));
+    }
+    if let Some(v) = ink.convert_to_process {
+        attrs.push(("ConvertToProcess", flag(v)));
+    }
+    if let Some(v) = ink.frequency {
+        attrs.push(("Frequency", format_f32(v)));
+    }
+    if let Some(v) = ink.neutral_density {
+        attrs.push(("NeutralDensity", format_f32(v)));
+    }
+    if let Some(v) = ink.print_ink {
+        attrs.push(("PrintInk", flag(v)));
+    }
+    if let Some(v) = ink.trap_order {
+        attrs.push(("TrapOrder", v.to_string()));
+    }
+    if let Some(v) = &ink.ink_type {
+        attrs.push(("InkType", v.clone()));
+    }
+    if let Some(v) = &ink.alias_ink_name {
+        attrs.push(("AliasInkName", v.clone()));
+    }
+    emit_empty(writer, "Ink", &attrs)
+}
+
 /// Serialise one model `<Gradient>` swatch + its stops.
 fn write_gradient(
     writer: &mut Writer<Cursor<Vec<u8>>>,
@@ -151,7 +187,7 @@ fn write_gradient(
 }
 
 /// Rewrite `Resources/Graphic.xml` so every model `<Color>` / `<Gradient>`
-/// is present. Existing entries pass through verbatim; entries the source
+/// / `<Ink>` is present. Existing entries pass through verbatim; entries the source
 /// lacks are appended just before `</idPkg:Graphic>`. Byte-identical to
 /// `original` when nothing new.
 pub fn patch_graphic(original: &[u8], palette: &Graphic) -> Result<Vec<u8>, quick_xml::Error> {
@@ -207,6 +243,7 @@ pub fn patch_graphic_with(
 
     let mut seen_colors: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_gradients: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen_inks: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
         let ev = reader.read_event_into(&mut buf)?;
@@ -238,6 +275,11 @@ pub fn patch_graphic_with(
                             seen_gradients.insert(id);
                         }
                     }
+                    b"Ink" => {
+                        if let Some(id) = attr_value(e, b"Self") {
+                            seen_inks.insert(id);
+                        }
+                    }
                     _ => {}
                 }
                 writer.write_event(ev.borrow())?;
@@ -253,6 +295,13 @@ pub fn patch_graphic_with(
                 for g in palette.gradients.values() {
                     if !seen_gradients.contains(&g.self_id) {
                         write_gradient(&mut writer, g)?;
+                    }
+                }
+                // The model's inks the source does not declare (a source
+                // that has them passes each `<Ink>` through verbatim).
+                for ink in &palette.inks {
+                    if !seen_inks.contains(&ink.self_id) {
+                        write_ink(&mut writer, ink)?;
                     }
                 }
                 if needs.paper && !seen_paper && !palette.colors.contains_key("Color/Paper") {

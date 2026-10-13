@@ -93,6 +93,8 @@ fn open_pkg_root(
 /// across `<Content>` / `<Br/>` / `<Tab/>` via
 /// `rewrite::write_run_content`. Attributes the model doesn't set are
 /// omitted, so a save→reopen reproduces the model (`None` stays `None`).
+/// A table-of-contents story names its style on the `<Story>`
+/// (`AppliedTOCStyle`), where InDesign writes it.
 ///
 /// On top of the text-pour lane this now serialises what InDesign 2025
 /// was measured to lose from a minted story:
@@ -124,6 +126,9 @@ pub(crate) fn story_part(
     open_pkg_root(&mut writer, "idPkg:Story", dom_version)?;
     let mut s = BytesStart::new("Story");
     s.push_attribute(("Self", self_id));
+    if let Some(toc) = story.applied_toc_style.as_deref() {
+        s.push_attribute(("AppliedTOCStyle", toc));
+    }
     writer.write_event(Event::Start(s))?;
     if story.paragraphs.is_empty() && !anchors.is_empty() {
         // An anchor still needs a paragraph to sit in.

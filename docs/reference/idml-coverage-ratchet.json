@@ -8,22 +8,22 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 107884,
+      "covered": 111498,
       "total": 633952,
-      "value": 0.170177
+      "value": 0.175878
     },
     "impactImport": {
-      "covered": 23485,
+      "covered": 25278,
       "total": 54667,
-      "value": 0.429601
+      "value": 0.4624
     },
     "weightedExport": {
-      "covered": 82108,
+      "covered": 84909,
       "total": 633952,
-      "value": 0.129518
+      "value": 0.133936
     },
     "misplacedReads": 30,
-    "unseenReads": 294,
+    "unseenReads": 295,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -203,6 +203,15 @@
     "Resources/Graphic|GradientStop@Location|attr",
     "Resources/Graphic|GradientStop@Midpoint|attr",
     "Resources/Graphic|GradientStop@StopColor|attr",
+    "Resources/Graphic|Ink@Angle|attr",
+    "Resources/Graphic|Ink@ConvertToProcess|attr",
+    "Resources/Graphic|Ink@Frequency|attr",
+    "Resources/Graphic|Ink@InkType|attr",
+    "Resources/Graphic|Ink@Name|attr",
+    "Resources/Graphic|Ink@NeutralDensity|attr",
+    "Resources/Graphic|Ink@PrintInk|attr",
+    "Resources/Graphic|Ink@Self|attr",
+    "Resources/Graphic|Ink@TrapOrder|attr",
     "Resources/Graphic|Swatch@Color|attr",
     "Resources/Graphic|Swatch@Name|attr",
     "Resources/Graphic|Swatch@Self|attr",
@@ -211,6 +220,10 @@
     "Resources/Preferences|DocumentPreference@DocumentBleedInsideOrLeftOffset|attr",
     "Resources/Preferences|DocumentPreference@DocumentBleedOutsideOrRightOffset|attr",
     "Resources/Preferences|DocumentPreference@DocumentBleedTopOffset|attr",
+    "Resources/Preferences|DocumentPreference@FacingPages|attr",
+    "Resources/Preferences|DocumentPreference@PageBinding|attr",
+    "Resources/Preferences|DocumentPreference@PageHeight|attr",
+    "Resources/Preferences|DocumentPreference@PageWidth|attr",
     "Resources/Preferences|DocumentPreference@SlugBottomOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugInsideOrLeftOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugRightOrOutsideOffset|attr",
@@ -943,6 +956,7 @@
     "Stories|Row@Name|attr",
     "Stories|Row@Self|attr",
     "Stories|Row@SingleRowHeight|attr",
+    "Stories|Story@AppliedTOCStyle|attr",
     "Stories|Story@StoryDirection|attr",
     "Stories|StoryPreference@OpticalMarginAlignment|attr",
     "Stories|StoryPreference@OpticalMarginSize|attr",
@@ -1281,6 +1295,15 @@
     "Resources/Graphic|GradientStop@Location|attr",
     "Resources/Graphic|GradientStop@Midpoint|attr",
     "Resources/Graphic|GradientStop@StopColor|attr",
+    "Resources/Graphic|Ink@Angle|attr",
+    "Resources/Graphic|Ink@ConvertToProcess|attr",
+    "Resources/Graphic|Ink@Frequency|attr",
+    "Resources/Graphic|Ink@InkType|attr",
+    "Resources/Graphic|Ink@Name|attr",
+    "Resources/Graphic|Ink@NeutralDensity|attr",
+    "Resources/Graphic|Ink@PrintInk|attr",
+    "Resources/Graphic|Ink@Self|attr",
+    "Resources/Graphic|Ink@TrapOrder|attr",
     "Resources/Graphic|StrokeStyle@Name|attr",
     "Resources/Graphic|StrokeStyle@Self|attr",
     "Resources/Preferences|DocumentPreference@DocumentBleedBottomOffset|attr",
@@ -1290,6 +1313,7 @@
     "Resources/Preferences|DocumentPreference@DocumentBleedUniformSize|attr",
     "Resources/Preferences|DocumentPreference@DocumentSlugUniformSize|attr",
     "Resources/Preferences|DocumentPreference@FacingPages|attr",
+    "Resources/Preferences|DocumentPreference@PageBinding|attr",
     "Resources/Preferences|DocumentPreference@PageHeight|attr",
     "Resources/Preferences|DocumentPreference@PageWidth|attr",
     "Resources/Preferences|DocumentPreference@SlugBottomOffset|attr",
@@ -1791,6 +1815,7 @@
     "Stories|Row@Name|attr",
     "Stories|Row@Self|attr",
     "Stories|Row@SingleRowHeight|attr",
+    "Stories|Story@AppliedTOCStyle|attr",
     "Stories|Story@Self|attr",
     "Stories|Table@AppliedTableStyle|attr",
     "Stories|Table@BodyRowCount|attr",

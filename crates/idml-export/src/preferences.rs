@@ -242,12 +242,15 @@ fn uniform_flags(pref: &paged_model::DocumentPreference) -> [(&'static str, &'st
 /// core's InDesign lane, scenario `bleed`: a 9 / 12 / 3 / 6 pt bleed set on
 /// a generated document opened with none).
 ///
-/// The element carries the first page's size and `FacingPages="true"` —
-/// what InDesign assumes when the element is absent — because an element
-/// without them makes InDesign re-shuffle every page into its own spread
-/// (see [`patch_document_preference`]), and the bleed and slug values that
-/// are not 0. It goes last in the part's root. Byte-identical when the
-/// package already has the element or the model sets neither.
+/// The element carries a page size and `FacingPages` — the model's page
+/// setup where it states one, else the first page's size and
+/// `FacingPages="true"`, what InDesign assumes when the element is absent
+/// — because an element without them makes InDesign re-shuffle every page
+/// into its own spread (see [`patch_document_preference`]); then the bleed
+/// and slug values that are not 0, and the model's `PageBinding`. It goes
+/// last in the part's root. Byte-identical when the package already has
+/// the element or the model sets no bleed or slug: the page setup alone
+/// is not a reason to add the element.
 pub fn insert_document_preference(
     original: &[u8],
     designmap: Option<&[u8]>,
@@ -269,7 +272,10 @@ pub fn insert_document_preference(
         ("SlugRightOrOutsideOffset", pref.slug_right_or_outside),
     ];
     let set: Vec<(&str, f32)> = values.into_iter().filter(|(_, v)| v.abs() > 1e-4).collect();
-    let Some((width, height)) = page_size else {
+    let (Some(width), Some(height)) = (
+        pref.page_width.or(page_size.map(|s| s.0)),
+        pref.page_height.or(page_size.map(|s| s.1)),
+    ) else {
         return Ok(original.to_vec());
     };
     if set.is_empty() || named(original) || designmap.is_some_and(named) {
@@ -278,13 +284,16 @@ pub fn insert_document_preference(
     let mut attrs = vec![
         ("PageHeight", crate::rewrite::format_f32(height)),
         ("PageWidth", crate::rewrite::format_f32(width)),
-        ("FacingPages", "true".to_string()),
+        ("FacingPages", pref.facing_pages.unwrap_or(true).to_string()),
     ];
     attrs.extend(
         set.iter()
             .map(|(n, v)| (*n, crate::rewrite::format_f32(*v))),
     );
     attrs.extend(uniform_flags(pref).map(|(n, v)| (n, v.to_string())));
+    if let Some(binding) = &pref.page_binding {
+        attrs.push(("PageBinding", binding.clone()));
+    }
 
     let mut reader = Reader::from_reader(original);
     let config = reader.config_mut();
@@ -311,16 +320,64 @@ pub fn insert_document_preference(
     Ok(writer.into_inner().into_inner())
 }
 
-/// The document's bleed and slug written onto the `<DocumentPreference>`
-/// the part already carries — in `Resources/Preferences.xml`, where
-/// InDesign keeps it, or in `designmap.xml`, where the engine's older
-/// fixtures put it.
+/// One page-setup value the model states on `<DocumentPreference>`.
+enum Setup {
+    Length(f32),
+    Flag(bool),
+    Word(String),
+}
+
+impl Setup {
+    fn written(&self) -> String {
+        match self {
+            Setup::Length(v) => crate::rewrite::format_f32(*v),
+            Setup::Flag(b) => b.to_string(),
+            Setup::Word(w) => w.clone(),
+        }
+    }
+
+    /// Whether the value on disk already says this one.
+    fn agrees(&self, on_disk: &[u8]) -> bool {
+        let on_disk = std::str::from_utf8(on_disk).unwrap_or_default();
+        match self {
+            Setup::Length(v) => on_disk.parse::<f32>().is_ok_and(|d| (d - v).abs() <= 1e-4),
+            Setup::Flag(b) => on_disk.parse::<bool>() == Ok(*b),
+            Setup::Word(w) => on_disk == w,
+        }
+    }
+}
+
+/// The page setup the model states: page size, facing pages and binding.
+/// A `None` field states nothing, so the part's own value stands.
+fn page_setup(pref: &paged_model::DocumentPreference) -> Vec<(&'static str, Setup)> {
+    let mut out = Vec::new();
+    if let Some(v) = pref.page_height {
+        out.push(("PageHeight", Setup::Length(v)));
+    }
+    if let Some(v) = pref.page_width {
+        out.push(("PageWidth", Setup::Length(v)));
+    }
+    if let Some(v) = pref.facing_pages {
+        out.push(("FacingPages", Setup::Flag(v)));
+    }
+    if let Some(v) = &pref.page_binding {
+        out.push(("PageBinding", Setup::Word(v.clone())));
+    }
+    out
+}
+
+/// The document's bleed, slug and page setup written onto the
+/// `<DocumentPreference>` the part already carries — in
+/// `Resources/Preferences.xml`, where InDesign keeps it, or in
+/// `designmap.xml`, where the engine's older fixtures put it.
 ///
 /// Only an existing element is patched, attribute by attribute: InDesign
 /// re-shuffles every page into its own spread when a package that never
 /// had a `DocumentPreference` gains one without its page-size and
 /// facing-page attributes (measured 2026-09-05), so a part without the
-/// element is left alone. Byte-identical when every value already agrees.
+/// element is left alone. Page size, facing pages and binding are written
+/// only where the model states them (an imported document states what
+/// the part says). Byte-identical when every value already agrees.
 pub fn patch_document_preference(
     original: &[u8],
     pref: &paged_model::DocumentPreference,
@@ -341,6 +398,7 @@ pub fn patch_document_preference(
         (b"SlugInsideOrLeftOffset", pref.slug_inside_or_left),
         (b"SlugRightOrOutsideOffset", pref.slug_right_or_outside),
     ];
+    let setup = page_setup(pref);
     // An absent attribute reads as 0 on import, so 0 needs no attribute.
     let differs = |e: &BytesStart| {
         wanted.iter().any(|(name, v)| {
@@ -351,6 +409,11 @@ pub fn patch_document_preference(
                 .and_then(|a| std::str::from_utf8(&a.value).ok()?.parse::<f32>().ok())
                 .unwrap_or(0.0);
             (have - v).abs() > 1e-4
+        }) || setup.iter().any(|(name, v)| {
+            !e.attributes()
+                .flatten()
+                .find(|a| a.key.as_ref() == name.as_bytes())
+                .is_some_and(|a| v.agrees(&a.value))
         })
     };
     let needs = {
@@ -390,6 +453,15 @@ pub fn patch_document_preference(
             {
                 out.push_attribute((*name, *v));
                 written.push(name.as_bytes());
+            } else if let Some((name, v)) =
+                setup.iter().find(|(n, _)| a.key.as_ref() == n.as_bytes())
+            {
+                if v.agrees(&a.value) {
+                    out.push_attribute((a.key.as_ref(), a.value.as_ref()));
+                } else {
+                    out.push_attribute((*name, v.written().as_str()));
+                }
+                written.push(name.as_bytes());
             } else {
                 out.push_attribute((a.key.as_ref(), a.value.as_ref()));
             }
@@ -397,6 +469,11 @@ pub fn patch_document_preference(
         for (name, v) in &wanted {
             if !written.contains(name) && v.abs() > 1e-4 {
                 out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+            }
+        }
+        for (name, v) in &setup {
+            if !written.contains(&name.as_bytes()) {
+                out.push_attribute((*name, v.written().as_str()));
             }
         }
         for (name, v) in &flags {
@@ -576,6 +653,58 @@ mod tests {
         assert_eq!(
             insert_document_preference(bare, None, &bleed(0.0), size).unwrap(),
             bare.to_vec()
+        );
+    }
+
+    fn setup() -> paged_model::DocumentPreference {
+        paged_model::DocumentPreference {
+            bleed_top: 9.0,
+            page_width: Some(612.0),
+            page_height: Some(792.0),
+            facing_pages: Some(false),
+            page_binding: Some("RightToLeft".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_inserted_preference_takes_the_models_page_setup() {
+        let src = r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><ViewPreference/></idPkg:Preferences>"#;
+        // The model's setup wins over the first page's size, and needs no page.
+        for page in [Some((595.276, 841.89)), None] {
+            let out = String::from_utf8(
+                insert_document_preference(src.as_bytes(), None, &setup(), page).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                out,
+                r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><ViewPreference/><DocumentPreference PageHeight="792" PageWidth="612" FacingPages="false" DocumentBleedTopOffset="9" DocumentBleedUniformSize="false" DocumentSlugUniformSize="true" PageBinding="RightToLeft"/></idPkg:Preferences>"#
+            );
+        }
+        // The page setup alone is no reason to add the element.
+        let only = paged_model::DocumentPreference {
+            bleed_top: 0.0,
+            ..setup()
+        };
+        assert_eq!(
+            insert_document_preference(src.as_bytes(), None, &only, None).unwrap(),
+            src.as_bytes()
+        );
+    }
+
+    /// The engine's older spelling carries no page setup on the element;
+    /// a stated one is added, a missing one adds nothing.
+    #[test]
+    fn a_stated_page_setup_is_written_onto_an_element_without_it() {
+        let src = br#"<Document><DocumentPreference DocumentBleedTopOffset="9"/></Document>"#;
+        let out = String::from_utf8(patch_document_preference(src, &setup()).unwrap()).unwrap();
+        assert_eq!(
+            out,
+            r#"<Document><DocumentPreference DocumentBleedTopOffset="9" PageHeight="792" PageWidth="612" FacingPages="false" PageBinding="RightToLeft" DocumentBleedUniformSize="false"/></Document>"#
+        );
+        assert_eq!(
+            patch_document_preference(src, &bleed(9.0)).unwrap(),
+            src.to_vec()
         );
     }
 
