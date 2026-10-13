@@ -678,7 +678,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             drop_cap_lines: attr(&e, b"DropCapLines")
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
-                            drop_cap_detail: attr(&e, b"DropCapDetail")
+                            // InDesign spells it with a lowercase c
+                            // (`DropcapDetail`, every corpus file); the
+                            // camel-cased form is what Paged wrote before.
+                            drop_cap_detail: attr(&e, b"DropcapDetail")
+                                .or_else(|| attr(&e, b"DropCapDetail"))
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
                             hyphenation: attr(&e, b"Hyphenation")
@@ -2830,18 +2834,24 @@ mod tests {
     #[test]
     fn parses_drop_cap_attributes_on_paragraph_style_range() {
         let xml = br#"<Story>
-          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropCapDetail="0">
+          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropcapDetail="3">
             <CharacterStyleRange><Content>The quick brown fox</Content></CharacterStyleRange>
           </ParagraphStyleRange>
           <ParagraphStyleRange>
             <CharacterStyleRange><Content>No drop cap here.</Content></CharacterStyleRange>
           </ParagraphStyleRange>
+          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="2" DropCapDetail="2">
+            <CharacterStyleRange><Content>Written by an older Paged.</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
         </Story>"#;
         let s = parse_story(xml).unwrap();
-        assert_eq!(s.paragraphs.len(), 2);
+        assert_eq!(s.paragraphs.len(), 3);
         assert_eq!(s.paragraphs[0].drop_cap_characters, 1);
         assert_eq!(s.paragraphs[0].drop_cap_lines, 3);
-        assert_eq!(s.paragraphs[0].drop_cap_detail, 0);
+        // InDesign's spelling, lowercase c.
+        assert_eq!(s.paragraphs[0].drop_cap_detail, 3);
+        // The camel-cased spelling older Paged builds wrote still reads.
+        assert_eq!(s.paragraphs[2].drop_cap_detail, 2);
         // No drop cap on the second paragraph — fields default to 0.
         assert_eq!(s.paragraphs[1].drop_cap_characters, 0);
         assert_eq!(s.paragraphs[1].drop_cap_lines, 0);

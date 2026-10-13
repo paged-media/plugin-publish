@@ -185,7 +185,8 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
         out.push(("DropCapLines", n.to_string()));
     }
     if let Some(n) = s.drop_cap_detail {
-        out.push(("DropCapDetail", n.to_string()));
+        // InDesign's spelling, lowercase c.
+        out.push(("DropcapDetail", n.to_string()));
     }
     push_strs(
         &mut out,
@@ -341,7 +342,10 @@ pub(crate) fn paragraph_style_attr_patch(
         b"MaximumGlyphScaling" => Some(preserving_f32_patch(raw, s.maximum_glyph_scaling)),
         b"DropCapCharacters" => Some(opt_u32_patch(raw, s.drop_cap_characters)),
         b"DropCapLines" => Some(opt_u32_patch(raw, s.drop_cap_lines)),
-        b"DropCapDetail" => Some(opt_i32_patch(raw, s.drop_cap_detail)),
+        b"DropcapDetail" => Some(opt_i32_patch(raw, s.drop_cap_detail)),
+        // The spelling older Paged builds wrote: the value is written again
+        // in InDesign's spelling above, so the old key goes.
+        b"DropCapDetail" => Some(Patch::Remove),
         b"KinsokuSet" => Some(opt_string_patch(&s.kinsoku_set)),
         b"KinsokuType" => Some(opt_string_patch(&s.kinsoku_type)),
         b"MojikumiTable" => Some(opt_string_patch(&s.mojikumi_table)),
