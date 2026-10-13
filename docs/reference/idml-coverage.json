@@ -16,41 +16,41 @@
     "documents": 305
   },
   "counts": {
-    "rows": 1313,
-    "elements": 120,
-    "attributes": 632,
-    "imported": 1188,
-    "exported": 871,
-    "importedAndExported": 746,
+    "rows": 1321,
+    "elements": 121,
+    "attributes": 638,
+    "imported": 1196,
+    "exported": 879,
+    "importedAndExported": 754,
     "importOnly": 442,
     "exportOnly": 125,
     "propertiesChild": 48,
-    "importerReadSites": 883,
-    "exporterWriteSites": 843,
+    "importerReadSites": 891,
+    "exporterWriteSites": 851,
     "unresolved": 0,
     "partRows": 4150,
     "misplaced": 30,
-    "unseen": 289
+    "unseen": 290
   },
   "metrics": {
     "weightedImport": {
-      "covered": 107873,
+      "covered": 108548,
       "total": 633952,
-      "value": 0.17016
+      "value": 0.171224
     },
     "impactImport": {
-      "covered": 23485,
+      "covered": 23495,
       "total": 54667,
-      "value": 0.429601
+      "value": 0.429784
     },
     "weightedExport": {
-      "covered": 81793,
+      "covered": 82468,
       "total": 633952,
-      "value": 0.129021
+      "value": 0.130086
     },
     "misplacedReads": 30,
-    "unseenReads": 289,
-    "unjustifiedUnseenReads": 0
+    "unseenReads": 290,
+    "unjustifiedUnseenReads": 1
   },
   "rows": [
     {
@@ -67,7 +67,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2004
+        "line": 2009
       },
       "exportSource": null
     },
@@ -85,7 +85,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1998
+        "line": 2003
       },
       "exportSource": null
     },
@@ -103,7 +103,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2001
+        "line": 2006
       },
       "exportSource": null
     },
@@ -121,7 +121,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1994
+        "line": 1999
       },
       "exportSource": null
     },
@@ -139,7 +139,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2009
+        "line": 2014
       },
       "exportSource": null
     },
@@ -157,7 +157,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2008
+        "line": 2013
       },
       "exportSource": null
     },
@@ -175,7 +175,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2005
+        "line": 2010
       },
       "exportSource": null
     },
@@ -193,7 +193,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1995
+        "line": 2000
       },
       "exportSource": null
     },
@@ -211,7 +211,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2011
+        "line": 2016
       },
       "exportSource": null
     },
@@ -229,7 +229,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2010
+        "line": 2015
       },
       "exportSource": null
     },
@@ -286,6 +286,106 @@
         "line": 334
       },
       "exportSource": null
+    },
+    {
+      "element": "BaselineFrameGridOption",
+      "attribute": "BaselineFrameGridIncrement",
+      "kind": "attr",
+      "importerField": "BaselineFrameGrid.increment",
+      "coarseType": "number",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "exportParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/spread.rs",
+        "line": 2178
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/rewrite.rs",
+        "line": 1535
+      }
+    },
+    {
+      "element": "BaselineFrameGridOption",
+      "attribute": "BaselineFrameGridRelativeOption",
+      "kind": "attr",
+      "importerField": "BaselineFrameGrid.relative_option",
+      "coarseType": "enum",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "exportParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/spread.rs",
+        "line": 2174
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/rewrite.rs",
+        "line": 1532
+      }
+    },
+    {
+      "element": "BaselineFrameGridOption",
+      "attribute": "StartingOffsetForBaselineFrameGrid",
+      "kind": "attr",
+      "importerField": "BaselineFrameGrid.starting_offset",
+      "coarseType": "number",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "exportParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/spread.rs",
+        "line": 2172
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/rewrite.rs",
+        "line": 1529
+      }
+    },
+    {
+      "element": "BaselineFrameGridOption",
+      "attribute": "UseCustomBaselineFrameGrid",
+      "kind": "attr",
+      "importerField": "BaselineFrameGrid.use_custom",
+      "coarseType": "bool",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "exportParts": [
+        "MasterSpreads",
+        "Spreads"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/spread.rs",
+        "line": 2170
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/rewrite.rs",
+        "line": 1526
+      }
     },
     {
       "element": "BevelAndEmbossSetting",
@@ -1016,11 +1116,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 950
+        "line": 967
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 950
+        "line": 967
       }
     },
     {
@@ -1042,11 +1142,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1611
+        "line": 1616
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 951
+        "line": 968
       }
     },
     {
@@ -1141,7 +1241,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 955
+        "line": 960
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1164,7 +1264,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 960
+        "line": 965
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1187,7 +1287,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 963
+        "line": 968
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1210,7 +1310,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 973
+        "line": 978
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1233,7 +1333,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 961
+        "line": 966
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1277,7 +1377,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 940
+        "line": 945
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1298,7 +1398,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 993
+        "line": 998
       },
       "exportSource": null
     },
@@ -1318,7 +1418,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 976
+        "line": 981
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1341,7 +1441,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 977
+        "line": 982
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1364,7 +1464,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 964
+        "line": 969
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1387,7 +1487,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 967
+        "line": 972
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1410,7 +1510,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 974
+        "line": 979
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1433,7 +1533,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 965
+        "line": 970
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1454,7 +1554,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 981
+        "line": 986
       },
       "exportSource": null
     },
@@ -1472,7 +1572,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 983
+        "line": 988
       },
       "exportSource": null
     },
@@ -1490,7 +1590,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 986
+        "line": 991
       },
       "exportSource": null
     },
@@ -1508,7 +1608,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 984
+        "line": 989
       },
       "exportSource": null
     },
@@ -1526,7 +1626,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 978
+        "line": 983
       },
       "exportSource": null
     },
@@ -1546,7 +1646,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 936
+        "line": 941
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1569,7 +1669,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 968
+        "line": 973
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1592,7 +1692,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 971
+        "line": 976
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1615,7 +1715,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 975
+        "line": 980
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1638,7 +1738,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 969
+        "line": 974
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1659,7 +1759,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 987
+        "line": 992
       },
       "exportSource": null
     },
@@ -1677,7 +1777,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 989
+        "line": 994
       },
       "exportSource": null
     },
@@ -1695,7 +1795,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 992
+        "line": 997
       },
       "exportSource": null
     },
@@ -1713,7 +1813,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 990
+        "line": 995
       },
       "exportSource": null
     },
@@ -1733,7 +1833,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 996
+        "line": 1001
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1756,7 +1856,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 937
+        "line": 942
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1779,7 +1879,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 935
+        "line": 940
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1802,7 +1902,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 949
+        "line": 954
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1825,7 +1925,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 946
+        "line": 951
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1848,7 +1948,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 952
+        "line": 957
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1871,7 +1971,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 943
+        "line": 948
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1894,7 +1994,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 956
+        "line": 961
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1917,7 +2017,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 959
+        "line": 964
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1940,7 +2040,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 972
+        "line": 977
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1963,7 +2063,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 957
+        "line": 962
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -1986,7 +2086,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 997
+        "line": 1002
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -2567,7 +2667,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 226
+        "line": 229
       }
     },
     {
@@ -2591,7 +2691,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 216
+        "line": 219
       }
     },
     {
@@ -2615,7 +2715,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 214
+        "line": 217
       }
     },
     {
@@ -2639,7 +2739,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 224
+        "line": 227
       }
     },
     {
@@ -2663,7 +2763,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 213
+        "line": 216
       }
     },
     {
@@ -2687,7 +2787,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 227
+        "line": 230
       }
     },
     {
@@ -2711,7 +2811,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 253
+        "line": 256
       }
     },
     {
@@ -2735,7 +2835,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 257
+        "line": 260
       }
     },
     {
@@ -2759,7 +2859,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 252
+        "line": 255
       }
     },
     {
@@ -2783,7 +2883,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 254
+        "line": 257
       }
     },
     {
@@ -2850,7 +2950,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 240
+        "line": 243
       }
     },
     {
@@ -2874,7 +2974,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 212
+        "line": 215
       }
     },
     {
@@ -2899,7 +2999,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 58
+        "line": 60
       }
     },
     {
@@ -2924,7 +3024,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 55
+        "line": 57
       }
     },
     {
@@ -2949,7 +3049,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 63
+        "line": 65
       }
     },
     {
@@ -2974,7 +3074,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 52
+        "line": 54
       }
     },
     {
@@ -2999,7 +3099,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 60
+        "line": 62
       }
     },
     {
@@ -3024,7 +3124,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 53
+        "line": 55
       }
     },
     {
@@ -3049,7 +3149,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 56
+        "line": 58
       }
     },
     {
@@ -3074,7 +3174,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 59
+        "line": 61
       }
     },
     {
@@ -3099,7 +3199,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 65
+        "line": 67
       }
     },
     {
@@ -3124,7 +3224,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 54
+        "line": 56
       }
     },
     {
@@ -3149,7 +3249,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 57
+        "line": 59
       }
     },
     {
@@ -3173,7 +3273,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 238
+        "line": 241
       }
     },
     {
@@ -3197,7 +3297,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 239
+        "line": 242
       }
     },
     {
@@ -3221,7 +3321,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 223
+        "line": 226
       }
     },
     {
@@ -3245,7 +3345,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 217
+        "line": 220
       }
     },
     {
@@ -3269,7 +3369,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 245
+        "line": 248
       }
     },
     {
@@ -3293,7 +3393,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 251
+        "line": 254
       }
     },
     {
@@ -3317,7 +3417,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 250
+        "line": 253
       }
     },
     {
@@ -3341,7 +3441,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 208
+        "line": 211
       }
     },
     {
@@ -3365,7 +3465,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 229
+        "line": 232
       }
     },
     {
@@ -3389,7 +3489,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 237
+        "line": 240
       }
     },
     {
@@ -3413,7 +3513,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 215
+        "line": 218
       }
     },
     {
@@ -3437,7 +3537,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 225
+        "line": 228
       }
     },
     {
@@ -3461,7 +3561,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 230
+        "line": 233
       }
     },
     {
@@ -3485,7 +3585,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 236
+        "line": 239
       }
     },
     {
@@ -3509,7 +3609,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 228
+        "line": 231
       }
     },
     {
@@ -3528,7 +3628,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1022
+        "line": 1027
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -3549,7 +3649,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1075
+        "line": 1080
       },
       "exportSource": null
     },
@@ -3569,11 +3669,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1024
+        "line": 1029
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 6582
+        "line": 6640
       }
     },
     {
@@ -3592,7 +3692,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1291
+        "line": 1296
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -3615,11 +3715,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1067
+        "line": 1072
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 972
+        "line": 989
       }
     },
     {
@@ -3638,11 +3738,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1030
+        "line": 1035
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 985
+        "line": 1002
       }
     },
     {
@@ -3661,11 +3761,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1029
+        "line": 1034
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 969
+        "line": 986
       }
     },
     {
@@ -3684,11 +3784,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1027
+        "line": 1032
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 967
+        "line": 984
       }
     },
     {
@@ -3707,11 +3807,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1028
+        "line": 1033
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 981
+        "line": 998
       }
     },
     {
@@ -3730,11 +3830,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1025
+        "line": 1030
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 966
+        "line": 983
       }
     },
     {
@@ -3751,7 +3851,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1298
+        "line": 1303
       },
       "exportSource": null
     },
@@ -3771,11 +3871,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1031
+        "line": 1036
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 986
+        "line": 1003
       }
     },
     {
@@ -3792,7 +3892,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1046
+        "line": 1051
       },
       "exportSource": null
     },
@@ -3810,7 +3910,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1047
+        "line": 1052
       },
       "exportSource": null
     },
@@ -3828,7 +3928,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1045
+        "line": 1050
       },
       "exportSource": null
     },
@@ -3848,11 +3948,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1066
+        "line": 1071
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 971
+        "line": 988
       }
     },
     {
@@ -3871,11 +3971,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1040
+        "line": 1045
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 983
+        "line": 1000
       }
     },
     {
@@ -3892,7 +3992,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1305
+        "line": 1310
       },
       "exportSource": null
     },
@@ -3912,11 +4012,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1064
+        "line": 1069
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 998
+        "line": 1015
       }
     },
     {
@@ -4153,7 +4253,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1049
+        "line": 1054
       },
       "exportSource": null
     },
@@ -4171,7 +4271,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1051
+        "line": 1056
       },
       "exportSource": null
     },
@@ -4191,11 +4291,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1015
+        "line": 1020
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1008
+        "line": 1025
       }
     },
     {
@@ -4214,11 +4314,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1026
+        "line": 1031
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 980
+        "line": 997
       }
     },
     {
@@ -4237,11 +4337,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1035
+        "line": 1040
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 970
+        "line": 987
       }
     },
     {
@@ -4258,7 +4358,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1041
+        "line": 1046
       },
       "exportSource": null
     },
@@ -4276,7 +4376,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1044
+        "line": 1049
       },
       "exportSource": null
     },
@@ -4294,7 +4394,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1043
+        "line": 1048
       },
       "exportSource": null
     },
@@ -4314,11 +4414,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1034
+        "line": 1039
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 988
+        "line": 1005
       }
     },
     {
@@ -4337,11 +4437,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1038
+        "line": 1043
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 997
+        "line": 1014
       }
     },
     {
@@ -4360,11 +4460,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1058
+        "line": 1063
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 968
+        "line": 985
       }
     },
     {
@@ -4383,11 +4483,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1062
+        "line": 1067
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 982
+        "line": 999
       }
     },
     {
@@ -4406,11 +4506,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1036
+        "line": 1041
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 984
+        "line": 1001
       }
     },
     {
@@ -4429,11 +4529,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1037
+        "line": 1042
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 996
+        "line": 1013
       }
     },
     {
@@ -4452,11 +4552,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1033
+        "line": 1038
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 987
+        "line": 1004
       }
     },
     {
@@ -4474,7 +4574,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2324
+        "line": 2345
       },
       "exportSource": null
     },
@@ -4493,7 +4593,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2316
+        "line": 2337
       },
       "exportSource": null
     },
@@ -4512,7 +4612,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2320
+        "line": 2341
       },
       "exportSource": null
     },
@@ -4531,7 +4631,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2317
+        "line": 2338
       },
       "exportSource": null
     },
@@ -4550,7 +4650,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2325
+        "line": 2346
       },
       "exportSource": null
     },
@@ -4569,7 +4669,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2326
+        "line": 2347
       },
       "exportSource": null
     },
@@ -5007,7 +5107,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1757
+        "line": 1762
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -5030,7 +5130,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1756
+        "line": 1761
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -5053,7 +5153,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1758
+        "line": 1763
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -5448,7 +5548,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1724
+        "line": 1752
       }
     },
     {
@@ -6672,7 +6772,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2853
+        "line": 2874
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6719,7 +6819,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2850
+        "line": 2871
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6744,7 +6844,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2857
+        "line": 2878
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6769,7 +6869,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2856
+        "line": 2877
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6794,7 +6894,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2839
+        "line": 2860
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6819,7 +6919,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2855
+        "line": 2876
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6844,7 +6944,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2847
+        "line": 2868
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6869,7 +6969,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2846
+        "line": 2867
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6894,7 +6994,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2854
+        "line": 2875
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6919,7 +7019,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2858
+        "line": 2879
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6944,7 +7044,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2840
+        "line": 2861
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6969,7 +7069,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2843
+        "line": 2864
       },
       "exportSource": {
         "file": "crates/idml-export/src/effects.rs",
@@ -6991,7 +7091,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -7010,7 +7110,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -7663,7 +7763,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 917
+        "line": 922
       },
       "exportSource": null
     },
@@ -7910,7 +8010,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2377
+        "line": 2398
       },
       "exportSource": null
     },
@@ -7929,7 +8029,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2374
+        "line": 2395
       },
       "exportSource": null
     },
@@ -7948,7 +8048,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2376
+        "line": 2397
       },
       "exportSource": null
     },
@@ -7967,7 +8067,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2375
+        "line": 2396
       },
       "exportSource": null
     },
@@ -7986,7 +8086,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2371
+        "line": 2392
       },
       "exportSource": null
     },
@@ -8005,7 +8105,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2373
+        "line": 2394
       },
       "exportSource": null
     },
@@ -8024,7 +8124,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2372
+        "line": 2393
       },
       "exportSource": null
     },
@@ -8621,7 +8721,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -8646,7 +8746,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -8671,7 +8771,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -8696,7 +8796,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -8721,7 +8821,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4594
+        "line": 4622
       }
     },
     {
@@ -8746,7 +8846,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4591
+        "line": 4619
       }
     },
     {
@@ -8767,7 +8867,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2452
+        "line": 2473
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -8792,7 +8892,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2453
+        "line": 2474
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -8905,11 +9005,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2431
+        "line": 2452
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4826
+        "line": 4854
       }
     },
     {
@@ -9128,7 +9228,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1857
+        "line": 1885
       }
     },
     {
@@ -9174,7 +9274,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2454
+        "line": 2475
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -9310,7 +9410,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1858
+        "line": 1886
       }
     },
     {
@@ -9335,7 +9435,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1810
+        "line": 1838
       }
     },
     {
@@ -9482,7 +9582,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -9507,7 +9607,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -9532,7 +9632,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -9557,7 +9657,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -9758,7 +9858,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -9783,7 +9883,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -9808,7 +9908,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -9833,7 +9933,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -9858,7 +9958,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4594
+        "line": 4622
       }
     },
     {
@@ -9883,7 +9983,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4591
+        "line": 4619
       }
     },
     {
@@ -9973,11 +10073,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 2437
+        "line": 2465
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 2437
+        "line": 2465
       }
     },
     {
@@ -10003,7 +10103,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 2420
+        "line": 2448
       }
     },
     {
@@ -10072,7 +10172,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 2418
+        "line": 2446
       }
     },
     {
@@ -10133,7 +10233,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -10158,7 +10258,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -10183,7 +10283,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -10208,7 +10308,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -10968,7 +11068,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2071
+        "line": 2076
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -11013,11 +11113,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1056
+        "line": 1073
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1056
+        "line": 1073
       }
     },
     {
@@ -11034,11 +11134,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1053
+        "line": 1070
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1053
+        "line": 1070
       }
     },
     {
@@ -11061,7 +11161,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1051
+        "line": 1068
       }
     },
     {
@@ -11190,7 +11290,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 3120
+        "line": 3141
       },
       "exportSource": null
     },
@@ -11209,7 +11309,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 3121
+        "line": 3142
       },
       "exportSource": null
     },
@@ -11232,7 +11332,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2244
+        "line": 2265
       },
       "exportSource": {
         "file": "crates/idml-export/src/images.rs",
@@ -11255,7 +11355,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -11299,7 +11399,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 3119
+        "line": 3140
       },
       "exportSource": {
         "file": "crates/idml-export/src/images.rs",
@@ -11322,7 +11422,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -11341,7 +11441,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -11360,7 +11460,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -11378,7 +11478,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2021
+        "line": 2026
       },
       "exportSource": null
     },
@@ -11396,7 +11496,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2036
+        "line": 2041
       },
       "exportSource": null
     },
@@ -11414,7 +11514,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2020
+        "line": 2025
       },
       "exportSource": null
     },
@@ -11432,7 +11532,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2021
+        "line": 2026
       },
       "exportSource": null
     },
@@ -11450,7 +11550,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2036
+        "line": 2041
       },
       "exportSource": null
     },
@@ -11468,7 +11568,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2020
+        "line": 2025
       },
       "exportSource": null
     },
@@ -12069,7 +12169,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2169
+        "line": 2190
       },
       "exportSource": null
     },
@@ -12478,7 +12578,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": {
         "file": "crates/idml-export/src/images.rs",
@@ -12567,7 +12667,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -12699,11 +12799,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1151
+        "line": 1168
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1151
+        "line": 1168
       }
     },
     {
@@ -12727,7 +12827,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1155
+        "line": 1172
       }
     },
     {
@@ -12750,7 +12850,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1149
+        "line": 1166
       }
     },
     {
@@ -12767,11 +12867,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1150
+        "line": 1167
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1150
+        "line": 1167
       }
     },
     {
@@ -12788,11 +12888,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1152
+        "line": 1169
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1152
+        "line": 1169
       }
     },
     {
@@ -12816,7 +12916,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1148
+        "line": 1165
       }
     },
     {
@@ -12840,7 +12940,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1153
+        "line": 1170
       }
     },
     {
@@ -14232,7 +14332,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -14257,7 +14357,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -14282,7 +14382,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -14307,7 +14407,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -14332,7 +14432,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4594
+        "line": 4622
       }
     },
     {
@@ -14357,7 +14457,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4591
+        "line": 4619
       }
     },
     {
@@ -14517,7 +14617,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4826
+        "line": 4854
       }
     },
     {
@@ -14852,7 +14952,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1765
+        "line": 1793
       }
     },
     {
@@ -15002,7 +15102,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -15027,7 +15127,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -15052,7 +15152,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -15077,7 +15177,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -15120,7 +15220,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -15139,7 +15239,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2220
+        "line": 2241
       },
       "exportSource": null
     },
@@ -15165,7 +15265,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1190
+        "line": 1207
       }
     },
     {
@@ -15190,7 +15290,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1199
+        "line": 1216
       }
     },
     {
@@ -15215,7 +15315,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1193
+        "line": 1210
       }
     },
     {
@@ -15240,7 +15340,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1209
+        "line": 1226
       }
     },
     {
@@ -15265,7 +15365,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1187
+        "line": 1204
       }
     },
     {
@@ -15290,7 +15390,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1212
+        "line": 1229
       }
     },
     {
@@ -15315,7 +15415,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1184
+        "line": 1201
       }
     },
     {
@@ -15340,7 +15440,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1215
+        "line": 1232
       }
     },
     {
@@ -15449,7 +15549,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2021
+        "line": 2026
       },
       "exportSource": null
     },
@@ -15467,7 +15567,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2036
+        "line": 2041
       },
       "exportSource": null
     },
@@ -15485,7 +15585,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2020
+        "line": 2025
       },
       "exportSource": null
     },
@@ -15624,11 +15724,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1450
+        "line": 1455
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 166
+        "line": 168
       }
     },
     {
@@ -15652,7 +15752,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 329
+        "line": 332
       }
     },
     {
@@ -15677,7 +15777,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 886
+        "line": 903
       }
     },
     {
@@ -15744,7 +15844,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 100
+        "line": 102
       }
     },
     {
@@ -15768,7 +15868,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 324
+        "line": 327
       }
     },
     {
@@ -15792,7 +15892,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 152
+        "line": 154
       }
     },
     {
@@ -15816,7 +15916,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 323
+        "line": 326
       }
     },
     {
@@ -15841,7 +15941,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 855
+        "line": 872
       }
     },
     {
@@ -15865,7 +15965,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 153
+        "line": 155
       }
     },
     {
@@ -15908,7 +16008,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 90
+        "line": 92
       }
     },
     {
@@ -15932,7 +16032,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 164
+        "line": 166
       }
     },
     {
@@ -15952,11 +16052,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1458
+        "line": 1463
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 177
+        "line": 179
       }
     },
     {
@@ -15976,11 +16076,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1455
+        "line": 1460
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 174
+        "line": 176
       }
     },
     {
@@ -16000,11 +16100,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1452
+        "line": 1457
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 171
+        "line": 173
       }
     },
     {
@@ -16024,11 +16124,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1460
+        "line": 1465
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 182
+        "line": 184
       }
     },
     {
@@ -16048,11 +16148,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1464
+        "line": 1469
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 351
+        "line": 354
       }
     },
     {
@@ -16072,11 +16172,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1461
+        "line": 1466
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 185
+        "line": 187
       }
     },
     {
@@ -16096,11 +16196,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1463
+        "line": 1468
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 189
+        "line": 191
       }
     },
     {
@@ -16120,11 +16220,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1493
+        "line": 1498
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 140
+        "line": 142
       }
     },
     {
@@ -16144,11 +16244,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1492
+        "line": 1497
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 139
+        "line": 141
       }
     },
     {
@@ -16168,11 +16268,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1491
+        "line": 1496
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 138
+        "line": 140
       }
     },
     {
@@ -16196,7 +16296,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 88
+        "line": 90
       }
     },
     {
@@ -16220,7 +16320,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 98
+        "line": 100
       }
     },
     {
@@ -16244,7 +16344,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 113
+        "line": 115
       }
     },
     {
@@ -16268,7 +16368,57 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 87
+        "line": 89
+      }
+    },
+    {
+      "element": "ParagraphStyle",
+      "attribute": "GridAlignFirstLineOnly",
+      "kind": "attr",
+      "importerField": "ParagraphStyleDef.grid_align_first_line_only",
+      "coarseType": "bool",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "Resources/Graphic",
+        "Resources/Styles"
+      ],
+      "exportParts": [
+        "Resources/Styles",
+        "Stories"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/styles.rs",
+        "line": 1454
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/emit.rs",
+        "line": 754
+      }
+    },
+    {
+      "element": "ParagraphStyle",
+      "attribute": "GridAlignment",
+      "kind": "attr",
+      "importerField": "ParagraphStyleDef.grid_alignment",
+      "coarseType": "enum",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "Resources/Graphic",
+        "Resources/Styles"
+      ],
+      "exportParts": [
+        "Resources/Styles",
+        "Stories"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/styles.rs",
+        "line": 1452
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/emit.rs",
+        "line": 751
       }
     },
     {
@@ -16292,7 +16442,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 101
+        "line": 103
       }
     },
     {
@@ -16468,7 +16618,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 161
+        "line": 163
       }
     },
     {
@@ -16492,7 +16642,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 162
+        "line": 164
       }
     },
     {
@@ -16516,7 +16666,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 108
+        "line": 110
       }
     },
     {
@@ -16631,11 +16781,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1484
+        "line": 1489
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 130
+        "line": 132
       }
     },
     {
@@ -16655,11 +16805,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1468
+        "line": 1473
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 194
+        "line": 196
       }
     },
     {
@@ -16679,11 +16829,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1469
+        "line": 1474
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 195
+        "line": 197
       }
     },
     {
@@ -16750,7 +16900,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 114
+        "line": 116
       }
     },
     {
@@ -16770,11 +16920,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1483
+        "line": 1488
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 127
+        "line": 129
       }
     },
     {
@@ -16794,11 +16944,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1459
+        "line": 1464
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 178
+        "line": 180
       }
     },
     {
@@ -16818,11 +16968,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1456
+        "line": 1461
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 175
+        "line": 177
       }
     },
     {
@@ -16842,11 +16992,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1453
+        "line": 1458
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 172
+        "line": 174
       }
     },
     {
@@ -16866,11 +17016,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1457
+        "line": 1462
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 176
+        "line": 178
       }
     },
     {
@@ -16890,11 +17040,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1454
+        "line": 1459
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 173
+        "line": 175
       }
     },
     {
@@ -16914,11 +17064,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1451
+        "line": 1456
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 170
+        "line": 172
       }
     },
     {
@@ -16938,11 +17088,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1471
+        "line": 1476
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 197
+        "line": 199
       }
     },
     {
@@ -16962,11 +17112,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1470
+        "line": 1475
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 196
+        "line": 198
       }
     },
     {
@@ -16990,7 +17140,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 86
+        "line": 88
       }
     },
     {
@@ -17014,7 +17164,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 160
+        "line": 162
       }
     },
     {
@@ -17039,7 +17189,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 865
+        "line": 882
       }
     },
     {
@@ -17063,7 +17213,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 159
+        "line": 161
       }
     },
     {
@@ -17087,7 +17237,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 328
+        "line": 331
       }
     },
     {
@@ -17112,7 +17262,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 875
+        "line": 892
       }
     },
     {
@@ -17136,7 +17286,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 327
+        "line": 330
       }
     },
     {
@@ -17161,7 +17311,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 845
+        "line": 862
       }
     },
     {
@@ -17185,7 +17335,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 157
+        "line": 159
       }
     },
     {
@@ -17210,7 +17360,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 58
+        "line": 60
       }
     },
     {
@@ -17235,7 +17385,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 55
+        "line": 57
       }
     },
     {
@@ -17260,7 +17410,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 63
+        "line": 65
       }
     },
     {
@@ -17285,7 +17435,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 52
+        "line": 54
       }
     },
     {
@@ -17310,7 +17460,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 60
+        "line": 62
       }
     },
     {
@@ -17335,7 +17485,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 53
+        "line": 55
       }
     },
     {
@@ -17360,7 +17510,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 56
+        "line": 58
       }
     },
     {
@@ -17385,7 +17535,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 59
+        "line": 61
       }
     },
     {
@@ -17410,7 +17560,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 65
+        "line": 67
       }
     },
     {
@@ -17435,7 +17585,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 54
+        "line": 56
       }
     },
     {
@@ -17460,7 +17610,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 57
+        "line": 59
       }
     },
     {
@@ -17480,11 +17630,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1466
+        "line": 1471
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 125
+        "line": 127
       }
     },
     {
@@ -17504,11 +17654,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/styles.rs",
-        "line": 1467
+        "line": 1472
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 126
+        "line": 128
       }
     },
     {
@@ -18102,7 +18252,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 97
+        "line": 99
       }
     },
     {
@@ -18126,7 +18276,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 91
+        "line": 93
       }
     },
     {
@@ -18150,7 +18300,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 115
+        "line": 117
       }
     },
     {
@@ -18582,7 +18732,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 82
+        "line": 84
       }
     },
     {
@@ -18606,7 +18756,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 103
+        "line": 105
       }
     },
     {
@@ -18630,7 +18780,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 117
+        "line": 119
       }
     },
     {
@@ -18654,7 +18804,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 116
+        "line": 118
       }
     },
     {
@@ -18679,7 +18829,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 753
+        "line": 770
       }
     },
     {
@@ -18704,7 +18854,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 752
+        "line": 769
       }
     },
     {
@@ -18729,7 +18879,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 749
+        "line": 766
       }
     },
     {
@@ -18754,7 +18904,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 835
+        "line": 852
       }
     },
     {
@@ -18779,7 +18929,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 754
+        "line": 771
       }
     },
     {
@@ -18804,7 +18954,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 755
+        "line": 772
       }
     },
     {
@@ -18847,7 +18997,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 124
+        "line": 126
       }
     },
     {
@@ -18871,7 +19021,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 89
+        "line": 91
       }
     },
     {
@@ -18895,7 +19045,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 99
+        "line": 101
       }
     },
     {
@@ -18913,11 +19063,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 921
+        "line": 938
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 921
+        "line": 938
       }
     },
     {
@@ -18935,11 +19085,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 927
+        "line": 944
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 927
+        "line": 944
       }
     },
     {
@@ -18957,11 +19107,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 933
+        "line": 950
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 933
+        "line": 950
       }
     },
     {
@@ -18979,11 +19129,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 937
+        "line": 954
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 937
+        "line": 954
       }
     },
     {
@@ -19007,7 +19157,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 104
+        "line": 106
       }
     },
     {
@@ -19031,7 +19181,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 123
+        "line": 125
       }
     },
     {
@@ -19055,7 +19205,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/style_attrs.rs",
-        "line": 102
+        "line": 104
       }
     },
     {
@@ -19075,7 +19225,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1093
+        "line": 1098
       },
       "exportSource": {
         "file": "crates/idml-export/src/nested_styles.rs",
@@ -19099,7 +19249,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1093
+        "line": 1098
       },
       "exportSource": {
         "file": "crates/idml-export/src/nested_styles.rs",
@@ -19123,7 +19273,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1093
+        "line": 1098
       },
       "exportSource": {
         "file": "crates/idml-export/src/nested_styles.rs",
@@ -19150,7 +19300,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 6528
+        "line": 6583
       }
     },
     {
@@ -19170,11 +19320,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1281
+        "line": 1286
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 886
+        "line": 903
       }
     },
     {
@@ -19220,7 +19370,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 720
+        "line": 721
       }
     },
     {
@@ -19240,11 +19390,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1258
+        "line": 1263
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 855
+        "line": 872
       }
     },
     {
@@ -19267,7 +19417,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 722
+        "line": 723
       }
     },
     {
@@ -19284,7 +19434,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1250
+        "line": 1255
       },
       "exportSource": null
     },
@@ -19354,7 +19504,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 6497
+        "line": 6552
       }
     },
     {
@@ -19424,6 +19574,54 @@
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
         "line": 645
+      }
+    },
+    {
+      "element": "ParagraphStyleRange",
+      "attribute": "GridAlignFirstLineOnly",
+      "kind": "attr",
+      "importerField": "Paragraph.grid_align_first_line_only",
+      "coarseType": "bool",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "Stories"
+      ],
+      "exportParts": [
+        "Resources/Styles",
+        "Stories"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/story.rs",
+        "line": 738
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/emit.rs",
+        "line": 754
+      }
+    },
+    {
+      "element": "ParagraphStyleRange",
+      "attribute": "GridAlignment",
+      "kind": "attr",
+      "importerField": "Paragraph.grid_alignment",
+      "coarseType": "enum",
+      "imported": true,
+      "exported": true,
+      "importParts": [
+        "Stories"
+      ],
+      "exportParts": [
+        "Resources/Styles",
+        "Stories"
+      ],
+      "source": {
+        "file": "crates/idml-import/src/story.rs",
+        "line": 736
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/emit.rs",
+        "line": 751
       }
     },
     {
@@ -19695,7 +19893,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 736
+        "line": 741
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -19718,11 +19916,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 738
+        "line": 743
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 706
+        "line": 707
       }
     },
     {
@@ -19741,11 +19939,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 740
+        "line": 745
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 709
+        "line": 710
       }
     },
     {
@@ -19810,11 +20008,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 744
+        "line": 749
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 721
+        "line": 722
       }
     },
     {
@@ -19831,7 +20029,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 745
+        "line": 750
       },
       "exportSource": null
     },
@@ -19872,7 +20070,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 747
+        "line": 752
       },
       "exportSource": null
     },
@@ -19890,7 +20088,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 746
+        "line": 751
       },
       "exportSource": null
     },
@@ -19911,11 +20109,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1265
+        "line": 1270
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 865
+        "line": 882
       }
     },
     {
@@ -19938,7 +20136,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 734
+        "line": 735
       }
     },
     {
@@ -19961,7 +20159,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 723
+        "line": 724
       }
     },
     {
@@ -19981,11 +20179,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1245
+        "line": 1250
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 875
+        "line": 892
       }
     },
     {
@@ -20005,11 +20203,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1234
+        "line": 1239
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 845
+        "line": 862
       }
     },
     {
@@ -20032,7 +20230,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 731
+        "line": 732
       }
     },
     {
@@ -20049,7 +20247,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 751
+        "line": 756
       },
       "exportSource": null
     },
@@ -20067,7 +20265,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 753
+        "line": 758
       },
       "exportSource": null
     },
@@ -20569,7 +20767,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 753
+        "line": 770
       }
     },
     {
@@ -20593,7 +20791,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 752
+        "line": 769
       }
     },
     {
@@ -20617,7 +20815,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 749
+        "line": 766
       }
     },
     {
@@ -20637,11 +20835,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1275
+        "line": 1280
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 835
+        "line": 852
       }
     },
     {
@@ -20665,7 +20863,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 754
+        "line": 771
       }
     },
     {
@@ -20689,7 +20887,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 755
+        "line": 772
       }
     },
     {
@@ -20732,11 +20930,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1210
+        "line": 1215
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 921
+        "line": 938
       }
     },
     {
@@ -20756,11 +20954,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1217
+        "line": 1222
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 927
+        "line": 944
       }
     },
     {
@@ -20780,11 +20978,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1224
+        "line": 1229
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 933
+        "line": 950
       }
     },
     {
@@ -20804,11 +21002,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1202
+        "line": 1207
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 937
+        "line": 954
       }
     },
     {
@@ -20934,7 +21132,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -20959,7 +21157,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -20984,7 +21182,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -21009,7 +21207,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -21034,7 +21232,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4594
+        "line": 4622
       }
     },
     {
@@ -21059,7 +21257,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4591
+        "line": 4619
       }
     },
     {
@@ -21080,7 +21278,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2548
+        "line": 2569
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -21105,7 +21303,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2553
+        "line": 2574
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -21218,11 +21416,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2529
+        "line": 2550
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4826
+        "line": 4854
       }
     },
     {
@@ -21441,7 +21639,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1857
+        "line": 1885
       }
     },
     {
@@ -21487,7 +21685,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2554
+        "line": 2575
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -21623,7 +21821,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1858
+        "line": 1886
       }
     },
     {
@@ -21648,7 +21846,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1810
+        "line": 1838
       }
     },
     {
@@ -21669,7 +21867,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2545
+        "line": 2566
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
@@ -21798,7 +21996,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -21823,7 +22021,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -21848,7 +22046,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -21873,7 +22071,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -21949,7 +22147,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -21974,7 +22172,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -21999,7 +22197,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -22024,7 +22222,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -22049,7 +22247,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4594
+        "line": 4622
       }
     },
     {
@@ -22074,7 +22272,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4591
+        "line": 4619
       }
     },
     {
@@ -22240,7 +22438,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4826
+        "line": 4854
       }
     },
     {
@@ -22599,7 +22797,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1765
+        "line": 1793
       }
     },
     {
@@ -22751,7 +22949,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -22776,7 +22974,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -22801,7 +22999,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -22826,7 +23024,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -22870,7 +23068,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1745
+        "line": 1750
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -22893,7 +23091,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1746
+        "line": 1751
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -22916,7 +23114,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1740
+        "line": 1745
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -22939,7 +23137,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1738
+        "line": 1743
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -22962,7 +23160,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1735
+        "line": 1740
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -22985,7 +23183,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1734
+        "line": 1739
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -23008,7 +23206,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1736
+        "line": 1741
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -23516,11 +23714,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1122
+        "line": 1139
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1122
+        "line": 1139
       }
     },
     {
@@ -23544,7 +23742,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1128
+        "line": 1145
       }
     },
     {
@@ -23561,11 +23759,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1121
+        "line": 1138
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1121
+        "line": 1138
       }
     },
     {
@@ -23589,7 +23787,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1114
+        "line": 1131
       }
     },
     {
@@ -24290,7 +24488,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2044
+        "line": 2049
       },
       "exportSource": null
     },
@@ -24310,7 +24508,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2045
+        "line": 2050
       },
       "exportSource": null
     },
@@ -24330,7 +24528,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2046
+        "line": 2051
       },
       "exportSource": null
     },
@@ -24350,7 +24548,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 2041
+        "line": 2046
       },
       "exportSource": null
     },
@@ -24370,7 +24568,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 809
+        "line": 814
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24393,7 +24591,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 799
+        "line": 804
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24416,7 +24614,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 821
+        "line": 826
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24437,7 +24635,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 826
+        "line": 831
       },
       "exportSource": null
     },
@@ -24455,7 +24653,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 829
+        "line": 834
       },
       "exportSource": null
     },
@@ -24475,7 +24673,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 825
+        "line": 830
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24498,7 +24696,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 822
+        "line": 827
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24521,7 +24719,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 823
+        "line": 828
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24544,7 +24742,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 802
+        "line": 807
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24567,7 +24765,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 884
+        "line": 889
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24590,7 +24788,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 882
+        "line": 887
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24611,7 +24809,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 889
+        "line": 894
       },
       "exportSource": null
     },
@@ -24629,7 +24827,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 890
+        "line": 895
       },
       "exportSource": null
     },
@@ -24649,7 +24847,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 888
+        "line": 893
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24672,7 +24870,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 885
+        "line": 890
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24695,7 +24893,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 886
+        "line": 891
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24718,7 +24916,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 861
+        "line": 866
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24741,7 +24939,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 859
+        "line": 864
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24762,7 +24960,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 866
+        "line": 871
       },
       "exportSource": null
     },
@@ -24780,7 +24978,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 867
+        "line": 872
       },
       "exportSource": null
     },
@@ -24800,7 +24998,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 865
+        "line": 870
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24823,7 +25021,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 862
+        "line": 867
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24846,7 +25044,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 863
+        "line": 868
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24869,7 +25067,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 796
+        "line": 801
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24892,7 +25090,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 793
+        "line": 798
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24915,7 +25113,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 831
+        "line": 836
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24936,7 +25134,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 836
+        "line": 841
       },
       "exportSource": null
     },
@@ -24954,7 +25152,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 837
+        "line": 842
       },
       "exportSource": null
     },
@@ -24974,7 +25172,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 835
+        "line": 840
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -24997,7 +25195,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 832
+        "line": 837
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25020,7 +25218,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 833
+        "line": 838
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25043,7 +25241,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 807
+        "line": 812
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25066,7 +25264,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 805
+        "line": 810
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25089,7 +25287,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 838
+        "line": 843
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25110,7 +25308,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 843
+        "line": 848
       },
       "exportSource": null
     },
@@ -25128,7 +25326,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 846
+        "line": 851
       },
       "exportSource": null
     },
@@ -25148,7 +25346,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 842
+        "line": 847
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25171,7 +25369,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 839
+        "line": 844
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25194,7 +25392,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 840
+        "line": 845
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25217,7 +25415,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 792
+        "line": 797
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25240,7 +25438,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 872
+        "line": 877
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25263,7 +25461,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 870
+        "line": 875
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25284,7 +25482,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 877
+        "line": 882
       },
       "exportSource": null
     },
@@ -25302,7 +25500,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 880
+        "line": 885
       },
       "exportSource": null
     },
@@ -25322,7 +25520,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 876
+        "line": 881
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25345,7 +25543,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 873
+        "line": 878
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25368,7 +25566,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 874
+        "line": 879
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25391,7 +25589,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 852
+        "line": 857
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25414,7 +25612,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 850
+        "line": 855
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25435,7 +25633,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 857
+        "line": 862
       },
       "exportSource": null
     },
@@ -25453,7 +25651,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 858
+        "line": 863
       },
       "exportSource": null
     },
@@ -25473,7 +25671,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 856
+        "line": 861
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25496,7 +25694,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 853
+        "line": 858
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25519,7 +25717,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 854
+        "line": 859
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25563,7 +25761,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 814
+        "line": 819
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25584,7 +25782,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 819
+        "line": 824
       },
       "exportSource": null
     },
@@ -25602,7 +25800,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 820
+        "line": 825
       },
       "exportSource": null
     },
@@ -25622,7 +25820,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 818
+        "line": 823
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25645,7 +25843,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 815
+        "line": 820
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -25668,7 +25866,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 816
+        "line": 821
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
@@ -26449,7 +26647,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -26474,7 +26672,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4580
+        "line": 4608
       }
     },
     {
@@ -26499,7 +26697,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -26524,7 +26722,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4579
+        "line": 4607
       }
     },
     {
@@ -26571,7 +26769,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4594
+        "line": 4622
       }
     },
     {
@@ -26596,7 +26794,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4591
+        "line": 4619
       }
     },
     {
@@ -26756,7 +26954,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4826
+        "line": 4854
       }
     },
     {
@@ -27319,7 +27517,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -27344,7 +27542,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4577
+        "line": 4605
       }
     },
     {
@@ -27369,7 +27567,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -27394,7 +27592,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 4578
+        "line": 4606
       }
     },
     {
@@ -27444,7 +27642,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1561
+        "line": 1589
       }
     },
     {
@@ -27470,7 +27668,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1557
+        "line": 1585
       }
     },
     {
@@ -27573,7 +27771,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1569
+        "line": 1597
       }
     },
     {
@@ -27598,7 +27796,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1566
+        "line": 1594
       }
     },
     {
@@ -27663,7 +27861,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1572
+        "line": 1600
       }
     },
     {
@@ -27723,11 +27921,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2404
+        "line": 2425
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1976
+        "line": 2004
       }
     },
     {
@@ -27748,11 +27946,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2402
+        "line": 2423
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1966
+        "line": 1994
       }
     },
     {
@@ -27773,11 +27971,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2389
+        "line": 2410
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1951
+        "line": 1979
       }
     },
     {
@@ -27798,11 +27996,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2394
+        "line": 2415
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1963
+        "line": 1991
       }
     },
     {
@@ -27823,11 +28021,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2401
+        "line": 2422
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1965
+        "line": 1993
       }
     },
     {
@@ -27845,7 +28043,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2400
+        "line": 2421
       },
       "exportSource": null
     },
@@ -27867,11 +28065,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2392
+        "line": 2413
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1946
+        "line": 1974
       }
     },
     {
@@ -27892,11 +28090,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2403
+        "line": 2424
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1973
+        "line": 2001
       }
     },
     {
@@ -27917,11 +28115,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/spread.rs",
-        "line": 2399
+        "line": 2420
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 1964
+        "line": 1992
       }
     },
     {
@@ -28030,11 +28228,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1691
+        "line": 1696
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1041
+        "line": 1058
       }
     },
     {
@@ -28051,11 +28249,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1039
+        "line": 1056
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1039
+        "line": 1056
       }
     },
     {
@@ -28074,11 +28272,11 @@
       ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
-        "line": 1665
+        "line": 1670
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1040
+        "line": 1057
       }
     },
     {
@@ -28095,11 +28293,11 @@
       ],
       "source": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1038
+        "line": 1055
       },
       "exportSource": {
         "file": "crates/idml-export/src/emit.rs",
-        "line": 1038
+        "line": 1055
       }
     },
     {
@@ -30388,6 +30586,12 @@
     },
     {
       "element": "ParagraphStyleRange",
+      "attribute": "GridAlignFirstLineOnly",
+      "kind": "attr",
+      "reason": null
+    },
+    {
+      "element": "ParagraphStyleRange",
       "attribute": "HyphenWeight",
       "kind": "attr",
       "reason": "A style attribute applied as a local override, which no corpus document does: the census finds it only on the paragraph or character style."
@@ -31246,26 +31450,26 @@
     {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridColor","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridColor","kind":"properties-child","docCount":29,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Stories","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridColor","kind":"properties-child","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":4,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":271,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":29,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":4,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":29,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":4,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":29,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":4,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":29,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":4,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":271,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":29,"nonModalDocs":2,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridIncrement","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":4,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":29,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"BaselineFrameGridRelativeOption","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":4,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":29,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"StartingOffsetForBaselineFrameGrid","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"MasterSpreads","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":4,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Resources/Styles","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":271,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":true},
+    {"part":"Spreads","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":29,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Stories","element":"BaselineFrameGridOption","attribute":"UseCustomBaselineFrameGrid","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
     {"part":"Resources/Preferences","element":"BevelAndEmbossSetting","attribute":"Altitude","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
     {"part":"Spreads","element":"BevelAndEmbossSetting","attribute":"Altitude","kind":"attr","docCount":1,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"BevelAndEmbossSetting","attribute":"Angle","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":true},
@@ -33329,8 +33533,8 @@
     {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GradientStrokeAngle","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GradientStrokeLength","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GradientStrokeStart","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GridAlignFirstLineOnly","kind":"attr","docCount":271,"nonModalDocs":1,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GridAlignment","kind":"attr","docCount":271,"nonModalDocs":7,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GridAlignFirstLineOnly","kind":"attr","docCount":271,"nonModalDocs":1,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GridAlignment","kind":"attr","docCount":271,"nonModalDocs":7,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"GridGyoudori","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"HorizontalScale","kind":"attr","docCount":271,"nonModalDocs":1,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Styles","element":"ParagraphStyle","attribute":"HyphenWeight","kind":"attr","docCount":271,"nonModalDocs":3,"imported":true,"exported":false,"readElsewhere":false},
@@ -33625,7 +33829,7 @@
     {"part":"Stories","element":"ParagraphStyleRange","attribute":"DropCapLines","kind":"attr","docCount":5,"nonModalDocs":1,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Stories","element":"ParagraphStyleRange","attribute":"DropcapDetail","kind":"attr","docCount":5,"nonModalDocs":2,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Stories","element":"ParagraphStyleRange","attribute":"FirstLineIndent","kind":"attr","docCount":5,"nonModalDocs":3,"imported":true,"exported":true,"readElsewhere":false},
-    {"part":"Stories","element":"ParagraphStyleRange","attribute":"GridAlignment","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Stories","element":"ParagraphStyleRange","attribute":"GridAlignment","kind":"attr","docCount":1,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Stories","element":"ParagraphStyleRange","attribute":"Hyphenation","kind":"attr","docCount":25,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Stories","element":"ParagraphStyleRange","attribute":"HyphenationZone","kind":"attr","docCount":26,"nonModalDocs":26,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Stories","element":"ParagraphStyleRange","attribute":"Justification","kind":"attr","docCount":51,"nonModalDocs":43,"imported":true,"exported":true,"readElsewhere":false},

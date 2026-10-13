@@ -1447,6 +1447,11 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
             inside_gutter: attr(e, b"SplitColumnInsideGutter").and_then(|s| s.parse().ok()),
             outside_gutter: attr(e, b"SplitColumnOutsideGutter").and_then(|s| s.parse().ok()),
         },
+        // Align to baseline grid: real documents set it on the body
+        // style, not on each range.
+        grid_alignment: attr(e, b"GridAlignment")
+            .and_then(|s| paged_model::GridAlignment::from_idml(&s)),
+        grid_align_first_line_only: attr(e, b"GridAlignFirstLineOnly").and_then(|s| s.parse().ok()),
         applied_language: attr(e, b"AppliedLanguage"),
         minimum_word_spacing: attr(e, b"MinimumWordSpacing").and_then(|s| s.parse().ok()),
         desired_word_spacing: attr(e, b"DesiredWordSpacing").and_then(|s| s.parse().ok()),
@@ -1699,6 +1704,43 @@ mod tests {
         assert_eq!(sub.keep_with_next, Some(1));
         assert_eq!(sub.keep_all_lines_together, Some(true));
         assert_eq!(sub.keep_last_lines, Some(4));
+    }
+
+    /// Align to baseline grid lives on the body style in real documents
+    /// (`GridAlignment="AlignBaseline"`, 29 styles of one magazine
+    /// template); both attributes parse and cascade through `BasedOn`.
+    #[test]
+    fn parses_and_cascades_grid_alignment() {
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/Body" GridAlignment="AlignBaseline"
+                            GridAlignFirstLineOnly="false"/>
+            <ParagraphStyle Self="ParagraphStyle/Lead" BasedOn="ParagraphStyle/Body"
+                            GridAlignFirstLineOnly="true"/>
+            <ParagraphStyle Self="ParagraphStyle/Free" BasedOn="ParagraphStyle/Body"
+                            GridAlignment="None"/>
+            <ParagraphStyle Self="ParagraphStyle/Odd" GridAlignment="SomethingElse"/>
+          </RootParagraphStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let body = s.resolve_paragraph("ParagraphStyle/Body");
+        assert_eq!(
+            body.grid_alignment,
+            Some(paged_model::GridAlignment::AlignBaseline)
+        );
+        assert_eq!(body.grid_align_first_line_only, Some(false));
+        let lead = s.resolve_paragraph("ParagraphStyle/Lead");
+        assert_eq!(
+            lead.grid_alignment,
+            Some(paged_model::GridAlignment::AlignBaseline)
+        );
+        assert_eq!(lead.grid_align_first_line_only, Some(true));
+        let free = s.resolve_paragraph("ParagraphStyle/Free");
+        assert_eq!(free.grid_alignment, Some(paged_model::GridAlignment::None));
+        // A spelling InDesign does not write reads as unset.
+        let odd = s.resolve_paragraph("ParagraphStyle/Odd");
+        assert_eq!(odd.grid_alignment, None);
     }
 
     #[test]

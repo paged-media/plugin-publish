@@ -702,6 +702,7 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
         out.push(("StartParagraph", s.as_idml().to_string()));
     }
     span_column_attrs(&mut out, &p.span_columns);
+    grid_alignment_attrs(&mut out, p.grid_alignment, p.grid_align_first_line_only);
     if let Some(n) = p.keep_first_lines {
         out.push(("KeepFirstLines", n.to_string()));
     }
@@ -736,6 +737,22 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     paragraph_rule_attrs(&mut out, &RULE_ABOVE, &p.rule_above);
     paragraph_rule_attrs(&mut out, &RULE_BELOW, &p.rule_below);
     out
+}
+
+/// Align to baseline grid, on a range or a paragraph style: InDesign
+/// writes both as attributes (`GridAlignment="AlignBaseline"`,
+/// `GridAlignFirstLineOnly="true"`).
+pub(crate) fn grid_alignment_attrs(
+    out: &mut Vec<(&'static str, String)>,
+    alignment: Option<paged_model::GridAlignment>,
+    first_line_only: Option<bool>,
+) {
+    if let Some(g) = alignment {
+        out.push(("GridAlignment", g.as_idml().to_string()));
+    }
+    if let Some(b) = first_line_only {
+        out.push(("GridAlignFirstLineOnly", b.to_string()));
+    }
 }
 
 /// The span / split columns attributes of a range or a paragraph style.

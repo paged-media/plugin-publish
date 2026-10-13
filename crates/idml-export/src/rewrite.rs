@@ -1504,9 +1504,37 @@ fn write_new_text_frame(
     write_box_path_geometry(writer, f.bounds)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Properties")))?;
     write_text_frame_preference(writer, f)?;
+    write_baseline_frame_grid(writer, f)?;
     write_transparency_setting(writer, &paint)?;
     writer.write_event(Event::End(quick_xml::events::BytesEnd::new("TextFrame")))?;
     Ok(())
+}
+
+/// A frame's own baseline grid, as InDesign writes it: a
+/// `<BaselineFrameGridOption>` sibling of `<TextFramePreference>` with
+/// the four attributes the model carries. Nothing when the model has
+/// none. A source frame keeps its own element verbatim.
+pub(crate) fn write_baseline_frame_grid(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    f: &TextFrame,
+) -> Result<(), quick_xml::Error> {
+    let Some(grid) = f.baseline_frame_grid else {
+        return Ok(());
+    };
+    let mut attrs: Vec<(&str, String)> = Vec::new();
+    if let Some(v) = grid.use_custom {
+        attrs.push(("UseCustomBaselineFrameGrid", v.to_string()));
+    }
+    if let Some(v) = grid.starting_offset {
+        attrs.push(("StartingOffsetForBaselineFrameGrid", format_f32(v)));
+    }
+    if let Some(v) = grid.relative_option {
+        attrs.push(("BaselineFrameGridRelativeOption", v.as_idml().to_string()));
+    }
+    if let Some(v) = grid.increment {
+        attrs.push(("BaselineFrameGridIncrement", format_f32(v)));
+    }
+    emit_empty_with_attrs(writer, "BaselineFrameGridOption", &attrs)
 }
 
 pub(crate) fn auto_sizing_idml(v: idml_import::AutoSizingType) -> &'static str {
@@ -6466,6 +6494,33 @@ pub(crate) fn span_column_patch(
     }
 }
 
+/// Align to baseline grid, on a range or a paragraph style (the key set
+/// `emit::grid_alignment_attrs` writes). A source spelling the reader does
+/// not know, with nothing in the model, stays as written.
+pub(crate) fn grid_alignment_patch(
+    key: &[u8],
+    raw: Option<&str>,
+    alignment: Option<paged_model::GridAlignment>,
+    first_line_only: Option<bool>,
+) -> Option<Patch> {
+    match key {
+        b"GridAlignment" => Some(match alignment {
+            Some(g) if raw == Some(g.as_idml()) => Patch::Keep,
+            Some(g) => Patch::Set(g.as_idml().to_string()),
+            None if raw.is_some_and(|r| paged_model::GridAlignment::from_idml(r).is_none()) => {
+                Patch::Keep
+            }
+            None => Patch::Remove,
+        }),
+        b"GridAlignFirstLineOnly" => Some(match (raw.map(str::parse::<bool>), first_line_only) {
+            (Some(Ok(r)), Some(m)) if r == m => Patch::Keep,
+            (Some(Err(_)), None) => Patch::Keep,
+            _ => opt_bool_patch(first_line_only),
+        }),
+        _ => None,
+    }
+}
+
 /// The `<ParagraphStyleRange>` attributes the model owns — every
 /// paragraph override InDesign reads from the range (the key set
 /// `emit::paragraph_attrs` writes). A key the model does not own passes
@@ -6528,6 +6583,9 @@ pub(crate) fn paragraph_attr_patch(
         b"AppliedNumberingList" => Some(numbering_list_patch(raw, &p.applied_numbering_list)),
         b"KinsokuSet" => Some(opt_string_patch(&p.kinsoku_set)),
         _ => span_column_patch(key, raw, &p.span_columns)
+            .or_else(|| {
+                grid_alignment_patch(key, raw, p.grid_alignment, p.grid_align_first_line_only)
+            })
             .or_else(|| paragraph_rule_patch(key, raw, &crate::emit::RULE_ABOVE, &p.rule_above))
             .or_else(|| paragraph_rule_patch(key, raw, &crate::emit::RULE_BELOW, &p.rule_below)),
     }
@@ -6717,6 +6775,54 @@ pub(crate) fn unformatted_xref_sources(story: &[u8]) -> Result<usize, quick_xml:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An inserted frame (a duplicate, say) keeps its own baseline grid,
+    /// written in InDesign's spelling; a frame with none writes nothing.
+    #[test]
+    fn an_inserted_frame_writes_its_baseline_frame_grid() {
+        let mut f = TextFrame::new("tf9", None, idml_import::Bounds::ZERO);
+        let write = |f: &TextFrame| {
+            let mut writer = Writer::new(Cursor::new(Vec::new()));
+            write_baseline_frame_grid(&mut writer, f).unwrap();
+            String::from_utf8(writer.into_inner().into_inner()).unwrap()
+        };
+        assert_eq!(write(&f), "");
+        f.baseline_frame_grid = Some(paged_model::BaselineFrameGrid {
+            use_custom: Some(true),
+            starting_offset: Some(5.0),
+            relative_option: Some(paged_model::BaselineFrameGridRelativeOption::TopOfFrame),
+            increment: Some(13.0),
+        });
+        assert_eq!(
+            write(&f),
+            r#"<BaselineFrameGridOption UseCustomBaselineFrameGrid="true" StartingOffsetForBaselineFrameGrid="5" BaselineFrameGridRelativeOption="TopOfFrame" BaselineFrameGridIncrement="13"/>"#
+        );
+    }
+
+    /// A range's grid alignment: kept when the model agrees, removed when
+    /// the model leaves it to the style, and an unknown spelling with
+    /// nothing in the model stays as written.
+    #[test]
+    fn grid_alignment_is_patched_onto_the_range() {
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange GridAlignment="AlignBaseline"><CharacterStyleRange><Content>a</Content><Br/></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange GridAlignment="Sideways"><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(
+            rewrite_story(src, &story).unwrap(),
+            src.to_vec(),
+            "unmutated: byte-identical"
+        );
+        story.paragraphs[0].grid_alignment = None;
+        story.paragraphs[1].grid_align_first_line_only = Some(true);
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyleRange><CharacterStyleRange><Content>a</Content>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"GridAlignment="Sideways" GridAlignFirstLineOnly="true""#),
+            "{out}"
+        );
+    }
 
     #[test]
     fn a_childless_range_is_dropped_and_the_appended_table_follows_the_caption() {

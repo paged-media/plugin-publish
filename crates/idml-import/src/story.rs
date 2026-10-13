@@ -732,6 +732,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 outside_gutter: attr(&e, b"SplitColumnOutsideGutter")
                                     .and_then(|s| s.parse().ok()),
                             },
+                            // Align to baseline grid, over the style's.
+                            grid_alignment: attr(&e, b"GridAlignment")
+                                .and_then(|s| paged_model::GridAlignment::from_idml(&s)),
+                            grid_align_first_line_only: attr(&e, b"GridAlignFirstLineOnly")
+                                .and_then(|s| s.parse::<bool>().ok()),
                             // ADR 028 — which lines KeepLinesTogether keeps.
                             keep_all_lines_together: attr(&e, b"KeepAllLinesTogether")
                                 .and_then(|s| s.parse::<bool>().ok()),
@@ -3496,6 +3501,31 @@ mod tests {
         assert_eq!(p.rule_above.offset, Some(3.0));
         // Absent RuleBelow stays all-None.
         assert_eq!(p.rule_below.on, None);
+    }
+
+    #[test]
+    fn paragraph_style_range_parses_grid_alignment() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange GridAlignment="AlignBaseline" GridAlignFirstLineOnly="true">
+            <CharacterStyleRange><Content>aligned</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+          <ParagraphStyleRange GridAlignment="None">
+            <CharacterStyleRange><Content>free</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+          <ParagraphStyleRange>
+            <CharacterStyleRange><Content>from the style</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let p = &s.paragraphs;
+        assert_eq!(
+            p[0].grid_alignment,
+            Some(paged_model::GridAlignment::AlignBaseline)
+        );
+        assert_eq!(p[0].grid_align_first_line_only, Some(true));
+        assert_eq!(p[1].grid_alignment, Some(paged_model::GridAlignment::None));
+        assert_eq!(p[1].grid_align_first_line_only, None);
+        assert_eq!(p[2].grid_alignment, None);
     }
 
     #[test]
