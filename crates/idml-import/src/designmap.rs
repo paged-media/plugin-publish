@@ -488,7 +488,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     Ok(out)
 }
 
-/// The three document-level preferences InDesign keeps in
+/// The document-level preferences InDesign keeps in
 /// `Resources/Preferences.xml` (measured in 271 of the 305 census
 /// documents) and the engine's own older fixtures wrote into
 /// `designmap.xml`. One reader serves both parts.
@@ -531,6 +531,17 @@ fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
             // (see `read_footnote_option_properties`); an attribute is
             // read too.
             numbering_style: attr(e, b"FootnoteNumberingStyle"),
+        };
+    }
+    // R-11 — `<TransparencyPreference>`: the document's global light,
+    // which every effect with `UseGlobalLight="true"` takes its angle
+    // (and a bevel its altitude) from. InDesign writes it in
+    // Preferences.xml; absent attributes are its 120° / 30°.
+    if e.name().as_ref() == b"TransparencyPreference" {
+        let f = |name: &[u8]| -> Option<f32> { attr(e, name).and_then(|s| s.parse().ok()) };
+        out.transparency_preference = paged_model::TransparencyPreference {
+            global_light_angle: f(b"GlobalLightAngle"),
+            global_light_altitude: f(b"GlobalLightAltitude"),
         };
     }
     // W2.5 — `<GridPreference>` baseline-grid + document-

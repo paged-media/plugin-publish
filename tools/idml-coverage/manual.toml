@@ -359,6 +359,14 @@ attributes = [
 ]
 elements = ["ParagraphStyleRange", "ParagraphStyle"]
 
+# R-11 — the global light, patched onto `<TransparencyPreference>` through a
+# table of byte-string keys.
+[[export]]
+file = "crates/idml-export/src/preferences.rs"
+item = "patch_transparency_preference"
+attributes = ["GlobalLightAngle", "GlobalLightAltitude"]
+elements = ["TransparencyPreference"]
+
 # Typed <Properties> children.
 
 # Nested, line and GREP styles: the typed lists `nested_styles` writes into
@@ -747,6 +755,12 @@ parts = ["Resources/Fonts"]
 [[part_entry]]
 file = "crates/idml-export/src/preferences.rs"
 name = "patch_preferences"
+parts = ["Resources/Preferences"]
+
+# R-11 — the document's global light on `<TransparencyPreference>`.
+[[part_entry]]
+file = "crates/idml-export/src/preferences.rs"
+name = "patch_transparency_preference"
 parts = ["Resources/Preferences"]
 
 # `<DocumentPreference>` is patched where the source keeps it: Preferences.xml
@@ -1213,3 +1227,23 @@ elements = ["Button", "MultiStateObject", "State"]
 [[unseen]]
 reason = "Condition sets in InDesign's element form (<VisibilityPair>); the corpus has one condition set, in the attribute form."
 elements = ["VisibilityPair"]
+
+[[seen]]
+reason = "InDesign 20.0.1 writes these on a page item's <TransparencySetting> / <FillTransparencySetting> / <StrokeTransparencySetting> / <ContentTransparencySetting> whenever they differ from the default (core's effects-attrs and transparency-targets fixtures, exported by InDesign from documents built through its DOM). The census corpus leaves them at their defaults on page items, so it has seen them only in Preferences.xml's object defaults."
+parts = ["Spreads", "MasterSpreads"]
+keys = [
+  "BevelAndEmbossSetting@HighlightBlendMode",
+  "BevelAndEmbossSetting@ShadowBlendMode",
+  "BevelAndEmbossSetting@UseGlobalLight",
+  "BlendingSetting@IsolateBlending",
+  "BlendingSetting@KnockoutGroup",
+  "DirectionalFeatherSetting@FollowShapeMode",
+  "DropShadowSetting@HonorOtherEffects",
+  "DropShadowSetting@KnockedOut",
+  "DropShadowSetting@Noise",
+  "DropShadowSetting@Spread",
+  "DropShadowSetting@UseGlobalLight",
+  "InnerGlowSetting@Technique",
+  "InnerShadowSetting@UseGlobalLight",
+  "OuterGlowSetting@Technique",
+]

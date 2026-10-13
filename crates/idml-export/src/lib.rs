@@ -835,6 +835,15 @@ pub(crate) fn write_package(
                 entry: PREFERENCES_SRC.to_string(),
                 source,
             })?;
+        // R-11 — the document's global light.
+        let new = preferences::patch_transparency_preference(
+            &new,
+            &doc.designmap.transparency_preference,
+        )
+        .map_err(|source| WriteError::Rewrite {
+            entry: PREFERENCES_SRC.to_string(),
+            source,
+        })?;
         if new != orig.as_slice() {
             patched.insert(PREFERENCES_SRC.to_string(), new);
         }

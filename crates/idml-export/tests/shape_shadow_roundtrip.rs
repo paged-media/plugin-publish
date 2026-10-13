@@ -52,6 +52,7 @@ fn shadow(x: f32) -> DropShadowSetting {
         size: 5.0,
         opacity_pct: 60.0,
         effect_color: Some("Color/Black".into()),
+        ..Default::default()
     }
 }
 
