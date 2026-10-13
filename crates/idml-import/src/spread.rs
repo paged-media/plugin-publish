@@ -1137,13 +1137,17 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                 .map(|s| s.split_whitespace().map(str::to_string).collect())
                                 .unwrap_or_default(),
                             name: attr(&e, b"Name"),
-                            // A per-page spelling still wins if one is
-                            // present — our own writer emitted it there
-                            // for a while — but the spread is where the
-                            // format actually carries it.
-                            show_master_items: attr(&e, b"ShowMasterItems")
-                                .and_then(|s| s.parse().ok())
-                                .or(spread_show_master_items),
+                            // The spread decides: InDesign 20.0.1 ignores a
+                            // page's own `ShowMasterItems` whenever it reads the
+                            // spread's (core tools/indesign-export/
+                            // master-items-probe: spread true + page false
+                            // prints the master items, spread false + page true
+                            // hides them). A page spelling is only a fallback,
+                            // for files older Paged builds wrote, which carried
+                            // it on the page alone.
+                            show_master_items: spread_show_master_items.or_else(|| {
+                                attr(&e, b"ShowMasterItems").and_then(|s| s.parse().ok())
+                            }),
                         });
                     }
                 }
@@ -3519,8 +3523,8 @@ mod tests {
         );
         assert_eq!(
             s.pages[1].show_master_items,
-            Some(true),
-            "a page-level spelling still wins — our own writer emitted one for a while"
+            Some(false),
+            "the spread wins over a page's own spelling, as in InDesign (master-items-probe)"
         );
     }
 

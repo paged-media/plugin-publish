@@ -17,7 +17,8 @@
 //! Extracts `<Color>` entries keyed by their `Self` attribute so
 //! `FillColor="Color/Red"` on a TextFrame resolves to an actual
 //! ColorValue. `<Swatch>` elements are also captured for the "None" /
-//! "Paper" / "Registration" special cases.
+//! "Paper" / "Registration" special cases. `<Ink>` entries (the
+//! separations' inks) are kept in document order.
 //!
 //! Spot colours are captured with `Model="Spot"` plus optional
 //! `AlternateSpace` / `AlternateColorValue` (CMYK fallback used when
@@ -43,7 +44,7 @@ use crate::ParseError;
 
 pub use paged_model::{
     to_linear_rgb, ColorEntry, ColorGroupEntry, ColorModel, ColorSpace, GradientEntry,
-    GradientKind, GradientStopRef, Graphic, ReservedSwatch, SwatchEntry,
+    GradientKind, GradientStopRef, Graphic, InkDef, ReservedSwatch, SwatchEntry,
 };
 
 /// Parse `Resources/Graphic.xml` into a [`Graphic`] swatch palette.
@@ -112,6 +113,7 @@ pub fn parse_graphic(xml: &[u8]) -> Result<Graphic, ParseError> {
                         out.color_groups.insert(entry.self_id.clone(), entry);
                     }
                 }
+                b"Ink" => out.inks.extend(parse_ink(&e)),
                 _ => {}
             },
             Event::End(e) => {
@@ -239,6 +241,27 @@ fn parse_gradient_stop(e: &quick_xml::events::BytesStart) -> Option<GradientStop
         stop_color,
         location_pct,
         midpoint_pct,
+    })
+}
+
+/// `<Ink Self="Ink/$ID/Process Cyan" Name="$ID/Process Cyan" Angle="75"
+/// ConvertToProcess="false" Frequency="70" NeutralDensity="0.61"
+/// PrintInk="true" TrapOrder="1" InkType="Normal"/>` — InDesign's own
+/// spelling, one per process ink and one per spot ink.
+fn parse_ink(e: &quick_xml::events::BytesStart) -> Option<InkDef> {
+    let f = |name: &[u8]| attr(e, name).and_then(|s| s.parse::<f32>().ok());
+    let b = |name: &[u8]| attr(e, name).and_then(|s| s.parse::<bool>().ok());
+    Some(InkDef {
+        self_id: attr(e, b"Self")?,
+        name: attr(e, b"Name"),
+        angle: f(b"Angle"),
+        frequency: f(b"Frequency"),
+        neutral_density: f(b"NeutralDensity"),
+        convert_to_process: b(b"ConvertToProcess"),
+        print_ink: b(b"PrintInk"),
+        trap_order: attr(e, b"TrapOrder").and_then(|s| s.trim().parse::<i32>().ok()),
+        ink_type: attr(e, b"InkType"),
+        alias_ink_name: attr(e, b"AliasInkName"),
     })
 }
 
@@ -520,5 +543,48 @@ mod tests {
         assert!(c.tint.is_none());
         // Effective CMYK is the unscaled alternate.
         assert_eq!(c.effective_cmyk(), Some([100.0, 0.0, 0.0, 0.0]));
+    }
+
+    /// The inks, in document order: InDesign's process-ink spelling
+    /// (sample-3.idml), and a spot ink with an alias.
+    #[test]
+    fn reads_the_inks() {
+        const INKS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Graphic xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0">
+	<Color Self="Color/Black" Model="Process" Space="CMYK" ColorValue="0 0 0 100" Name="Black"/>
+	<Ink Self="Ink/$ID/Process Cyan" Name="$ID/Process Cyan" Angle="71.5651" ConvertToProcess="false" Frequency="63.2456" NeutralDensity="0.61" PrintInk="true" TrapOrder="1" InkType="Normal" />
+	<Ink Self="Ink/$ID/Process Black" Name="$ID/Process Black" Angle="45" ConvertToProcess="false" Frequency="70.7107" NeutralDensity="1.7" PrintInk="true" TrapOrder="4" InkType="Normal" />
+	<Ink Self="Ink/PANTONE 286 C" Name="PANTONE 286 C" Angle="45" ConvertToProcess="true" Frequency="70" NeutralDensity="1.0532" PrintInk="false" TrapOrder="5" InkType="Opaque" AliasInkName="$ID/Process Cyan" />
+	<Swatch Self="Swatch/None" Name="None"/>
+</idPkg:Graphic>"#;
+        let g = parse_graphic(INKS).unwrap();
+        assert_eq!(g.inks.len(), 3);
+        assert_eq!(
+            g.inks[0],
+            InkDef {
+                self_id: "Ink/$ID/Process Cyan".into(),
+                name: Some("$ID/Process Cyan".into()),
+                angle: Some(71.5651),
+                frequency: Some(63.2456),
+                neutral_density: Some(0.61),
+                convert_to_process: Some(false),
+                print_ink: Some(true),
+                trap_order: Some(1),
+                ink_type: Some("Normal".into()),
+                alias_ink_name: None,
+            }
+        );
+        assert_eq!(g.inks[1].self_id, "Ink/$ID/Process Black");
+        let spot = &g.inks[2];
+        assert_eq!(spot.name.as_deref(), Some("PANTONE 286 C"));
+        assert_eq!(spot.convert_to_process, Some(true));
+        assert_eq!(spot.print_ink, Some(false));
+        assert_eq!(spot.trap_order, Some(5));
+        assert_eq!(spot.ink_type.as_deref(), Some("Opaque"));
+        assert_eq!(spot.alias_ink_name.as_deref(), Some("$ID/Process Cyan"));
+        // An ink is not a colour.
+        assert_eq!(g.colors.len(), 1);
+        // A palette without inks reads none.
+        assert!(parse_graphic(SAMPLE).unwrap().inks.is_empty());
     }
 }

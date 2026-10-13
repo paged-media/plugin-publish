@@ -545,14 +545,17 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 }
                 match name {
                     // `<Story Self="..." StoryDirection="...">` is the
-                    // document root inside `<idPkg:Story>`. We only
-                    // surface the writing-direction flag today;
-                    // additional Story-level attributes (`AppliedTOCStyle`,
-                    // `TrackChanges`, etc.) land in followup parser slices.
+                    // document root inside `<idPkg:Story>`: the
+                    // writing-direction flag (the engine's older
+                    // spelling) and the table-of-contents style, where
+                    // InDesign writes it — `"n"` (none) on an ordinary
+                    // story.
                     b"Story" => {
                         if let Some(v) = attr(&e, b"StoryDirection") {
                             out.story_direction = StoryDirection::from_idml(&v);
                         }
+                        out.applied_toc_style =
+                            attr(&e, b"AppliedTOCStyle").filter(|v| v != "n" && !v.is_empty());
                     }
                     // W1.4 — a hyperlink / cross-reference source span
                     // wraps the character ranges it covers. Push its
@@ -689,6 +692,27 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 .or_else(|| attr(&e, b"DropCapDetail"))
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
+                            // Word and letter spacing and glyph scaling set on
+                            // the range itself, over the paragraph style's (a
+                            // local paragraph override, as InDesign writes it).
+                            minimum_word_spacing: attr(&e, b"MinimumWordSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            desired_word_spacing: attr(&e, b"DesiredWordSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            maximum_word_spacing: attr(&e, b"MaximumWordSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            minimum_letter_spacing: attr(&e, b"MinimumLetterSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            desired_letter_spacing: attr(&e, b"DesiredLetterSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            maximum_letter_spacing: attr(&e, b"MaximumLetterSpacing")
+                                .and_then(|s| s.parse().ok()),
+                            minimum_glyph_scaling: attr(&e, b"MinimumGlyphScaling")
+                                .and_then(|s| s.parse().ok()),
+                            desired_glyph_scaling: attr(&e, b"DesiredGlyphScaling")
+                                .and_then(|s| s.parse().ok()),
+                            maximum_glyph_scaling: attr(&e, b"MaximumGlyphScaling")
+                                .and_then(|s| s.parse().ok()),
                             hyphenation: attr(&e, b"Hyphenation")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             hyphenation_zone: attr(&e, b"HyphenationZone")
@@ -3334,6 +3358,21 @@ mod tests {
             s.story_direction,
             Some(StoryDirection::VerticalWritingDirection)
         );
+    }
+
+    /// InDesign writes the table-of-contents style on the `<Story>` (sample.idml's
+    /// generated TOC), and `"n"` on every ordinary story.
+    #[test]
+    fn reads_applied_toc_style_on_the_story() {
+        let toc = br#"<Story Self="u28e69" UserText="true" IsEndnoteStory="false" AppliedTOCStyle="TOCStyle/TOC Style" TrackChanges="false" StoryTitle="$ID/" AppliedNamedGrid="n"><ParagraphStyleRange><CharacterStyleRange><Content>Contents</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
+        assert_eq!(
+            parse_story(toc).unwrap().applied_toc_style.as_deref(),
+            Some("TOCStyle/TOC Style")
+        );
+        let plain = br#"<Story Self="u1" AppliedTOCStyle="n" TrackChanges="false"><ParagraphStyleRange><CharacterStyleRange><Content>x</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
+        assert_eq!(parse_story(plain).unwrap().applied_toc_style, None);
+        let bare = br#"<Story Self="u1"><ParagraphStyleRange/></Story>"#;
+        assert_eq!(parse_story(bare).unwrap().applied_toc_style, None);
     }
 
     /// InDesign spells the direction on the story's preference

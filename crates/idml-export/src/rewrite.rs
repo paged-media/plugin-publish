@@ -5434,6 +5434,9 @@ fn rewrite_story_part(
                     _ if footnote_depth > 0 => {
                         body.events.push(Event::Start(e.into_owned()));
                     }
+                    b"Story" if table_depth == 0 => {
+                        writer.write_event(Event::Start(patch_story_start(&e, story)?))?;
+                    }
                     b"Table" => {
                         table_depth += 1;
                         if table_depth == 1 {
@@ -6212,6 +6215,31 @@ mod marker_content_tests {
     }
 }
 
+/// The `<Story>` start tag carrying the model's table-of-contents style
+/// (`Story::applied_toc_style`). InDesign writes `AppliedTOCStyle` on
+/// every story, `"n"` for none; `"n"` and an absent attribute both read
+/// as none, so a story whose style the model kept passes through
+/// byte-identical.
+fn patch_story_start(
+    e: &BytesStart,
+    story: &Story,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
+    let on_disk = attr_value(e, b"AppliedTOCStyle");
+    let have = on_disk.as_deref().filter(|v| *v != "n" && !v.is_empty());
+    if have == story.applied_toc_style.as_deref() {
+        return Ok(e.to_owned());
+    }
+    let value = story
+        .applied_toc_style
+        .clone()
+        .unwrap_or_else(|| "n".to_string());
+    patch_start(
+        e,
+        |k, _| (k == b"AppliedTOCStyle").then(|| Patch::Set(value.clone())),
+        &[("AppliedTOCStyle", value.clone())],
+    )
+}
+
 /// The model paragraph the `<ParagraphStyleRange>` at `pos` produced,
 /// within `scope` (the story's paragraph list, or a cell's).
 /// The story part written from the model alone, keeping the source's
@@ -6550,6 +6578,16 @@ pub(crate) fn paragraph_attr_patch(
         // InDesign's spelling (`emit::paragraph_attrs`).
         b"DropcapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
         b"DropCapDetail" => Some(Patch::Remove),
+        // Spacing set on the range (the model owns it since it is read).
+        b"MinimumWordSpacing" => Some(preserving_f32_patch(raw, p.minimum_word_spacing)),
+        b"DesiredWordSpacing" => Some(preserving_f32_patch(raw, p.desired_word_spacing)),
+        b"MaximumWordSpacing" => Some(preserving_f32_patch(raw, p.maximum_word_spacing)),
+        b"MinimumLetterSpacing" => Some(preserving_f32_patch(raw, p.minimum_letter_spacing)),
+        b"DesiredLetterSpacing" => Some(preserving_f32_patch(raw, p.desired_letter_spacing)),
+        b"MaximumLetterSpacing" => Some(preserving_f32_patch(raw, p.maximum_letter_spacing)),
+        b"MinimumGlyphScaling" => Some(preserving_f32_patch(raw, p.minimum_glyph_scaling)),
+        b"DesiredGlyphScaling" => Some(preserving_f32_patch(raw, p.desired_glyph_scaling)),
+        b"MaximumGlyphScaling" => Some(preserving_f32_patch(raw, p.maximum_glyph_scaling)),
         b"Hyphenation" => Some(opt_bool_patch(p.hyphenation)),
         // The rest of InDesign's hyphenation panel. These used to fall
         // through to the pass-through arm; now that the importer reads

@@ -262,6 +262,12 @@ file = "crates/idml-export/src/resources.rs"
 name = "write_gradient"
 elements = ["Gradient"]
 
+# The page setup `patch_document_preference` writes onto the element.
+[[fn]]
+file = "crates/idml-export/src/preferences.rs"
+name = "page_setup"
+elements = ["DocumentPreference"]
+
 [[fn]]
 file = "crates/idml-export/src/rewrite.rs"
 name = "write_text_paths"
@@ -915,6 +921,15 @@ keys = [
 ]
 
 [[unseen]]
+reason = "InDesign writes these on a <ParagraphStyleRange> whose paragraph sets its spacing itself rather than through its style (asked of InDesign 20.0.1, 2026-10-13: core tools/indesign-export/spelling-and-spacing-probe builds the paragraph in its DOM and exports it; all nine Minimum/Desired/Maximum Word and Letter Spacing and Glyph Scaling land on the range). The census documents set them only on styles, bar one range's letter spacing and four documents' Min/Max glyph scaling."
+keys = [
+  "ParagraphStyleRange@DesiredGlyphScaling",
+  "ParagraphStyleRange@DesiredWordSpacing",
+  "ParagraphStyleRange@MaximumWordSpacing",
+  "ParagraphStyleRange@MinimumWordSpacing",
+]
+
+[[unseen]]
 reason = "InDesign writes these lists on a style with GREP or line styles, and on a range whose nested, GREP or line styles differ from its style's (asked of InDesign 20.0.1, 2026-10-12: a document built in its DOM and exported); no census document has one."
 keys = [
   "ParagraphStyle@AllGREPStyles",
@@ -1120,6 +1135,10 @@ keys = ["Group@ParentStory", "Rectangle@ParentStory"]
 [[unseen]]
 reason = "InDesign writes AppliedTOCStyle on <Story>; the TextFrame spelling is the engine's older one, and no corpus frame has it."
 keys = ["TextFrame@AppliedTOCStyle"]
+
+[[unseen]]
+reason = "Ink Manager's ink alias: written only on a spot ink aliased to another ink, and every corpus ink is a process ink."
+keys = ["Ink@AliasInkName"]
 
 [[unseen]]
 reason = "A fallback for InDesign's `Inverse`, which is read first."

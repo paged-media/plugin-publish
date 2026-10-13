@@ -499,7 +499,7 @@ fn write_condition_set(
             "VisibilityPair",
             &[
                 ("Condition", member.clone()),
-                ("Visibility", "true".to_string()),
+                ("Visibility", (!s.hidden.contains(member)).to_string()),
             ],
         )?;
     }
@@ -814,19 +814,25 @@ fn emit_condition_set(
     {
         return write_condition_set(writer, s);
     }
-    // Canonical form: the members are the model's truth; re-serialise
-    // only when they differ.
-    let mut source_members: Vec<String> = Vec::new();
+    // Canonical form: the members and the visibility each recorded are
+    // the model's truth; re-serialise only when they differ.
+    let mut source_pairs: Vec<(String, bool)> = Vec::new();
     for ev in &sub.children {
         if let Event::Empty(e) | Event::Start(e) = ev {
             if e.name().as_ref() == b"VisibilityPair" {
                 if let Some(m) = attr_value(e, b"Condition") {
-                    source_members.push(m);
+                    let visible = attr_value(e, b"Visibility").as_deref() != Some("false");
+                    source_pairs.push((m, visible));
                 }
             }
         }
     }
-    if source_members == s.conditions {
+    let model_pairs: Vec<(String, bool)> = s
+        .conditions
+        .iter()
+        .map(|m| (m.clone(), !s.hidden.contains(m)))
+        .collect();
+    if source_pairs == model_pairs {
         return sub.replay(writer);
     }
     write_condition_set(writer, s)
