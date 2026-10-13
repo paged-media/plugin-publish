@@ -122,3 +122,49 @@ fn the_unwrapped_styles_spelling_reads_too() {
     let source = pkg::simple("", pkg::STORY_BODY, &styles);
     check_model(&pkg::open(&source));
 }
+
+/// InDesign records each condition's visibility in its set (asked of
+/// InDesign 20.0.1: a set made while `Print` was hidden writes
+/// `Visibility="false"` for it). The pair reads into the set's hidden
+/// list, survives a byte-identical round trip, and an export from the
+/// model writes it back.
+#[test]
+fn a_hidden_visibility_pair_reads_and_round_trips() {
+    let block = CANONICAL_BLOCK.replace(
+        r#"<VisibilityPair Condition="Condition/Print" Visibility="true"/>"#,
+        r#"<VisibilityPair Condition="Condition/Print" Visibility="false"/>"#,
+    );
+    let source = pkg::simple(&format!("{block}\n"), pkg::STORY_BODY, pkg::STYLES);
+    let doc = pkg::open(&source);
+    check_model(&doc);
+    let set = &doc.styles.condition_sets["ConditionSet/Review"];
+    assert_eq!(set.hidden, vec!["Condition/Print".to_string()]);
+    assert_eq!(source, write_idml(&doc, &source).expect("write"));
+
+    // A set the model changes is written from the model, pair by pair.
+    let mut shown = doc;
+    shown
+        .styles
+        .condition_sets
+        .get_mut("ConditionSet/Review")
+        .unwrap()
+        .hidden
+        .clear();
+    let out = write_idml(&shown, &source).expect("write");
+    let dm = pkg::entry(&out, "designmap.xml").expect("designmap");
+    assert!(dm.contains(CANONICAL_BLOCK), "{dm}");
+    let from_old = pkg::simple("", pkg::STORY_BODY, OLD_STYLES);
+    let mut hidden = pkg::open(&from_old);
+    hidden
+        .styles
+        .condition_sets
+        .get_mut("ConditionSet/Review")
+        .unwrap()
+        .hidden = vec!["Condition/Print".to_string()];
+    let out = write_idml(&hidden, &from_old).expect("write");
+    let dm = pkg::entry(&out, "designmap.xml").expect("designmap");
+    assert!(
+        dm.contains(r#"<VisibilityPair Condition="Condition/Print" Visibility="false"/>"#),
+        "{dm}"
+    );
+}
