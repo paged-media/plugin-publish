@@ -199,6 +199,118 @@ pub fn patch_preferences(
     Ok(writer.into_inner().into_inner())
 }
 
+/// `DocumentBleedUniformSize` / `DocumentSlugUniformSize` for these
+/// values: InDesign applies the top value to every side while the flag is
+/// true (its default when absent), so four different bleeds need it false
+/// (asked of InDesign 20.0.1 through core's InDesign lane, scenario
+/// `bleed`: 9 / 12 / 3 / 6 pt read back as 9 on every side).
+fn uniform(values: [f32; 4]) -> &'static str {
+    if values.iter().all(|v| (v - values[0]).abs() <= 1e-4) {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+fn uniform_flags(pref: &paged_model::DocumentPreference) -> [(&'static str, &'static str); 2] {
+    [
+        (
+            "DocumentBleedUniformSize",
+            uniform([
+                pref.bleed_top,
+                pref.bleed_bottom,
+                pref.bleed_inside_or_left,
+                pref.bleed_outside_or_right,
+            ]),
+        ),
+        (
+            "DocumentSlugUniformSize",
+            uniform([
+                pref.slug_top,
+                pref.slug_bottom,
+                pref.slug_inside_or_left,
+                pref.slug_right_or_outside,
+            ]),
+        ),
+    ]
+}
+
+/// A `<DocumentPreference>` for a package that has none — in neither
+/// `Resources/Preferences.xml` nor `designmap.xml` — but whose model sets a
+/// bleed or a slug: without the element InDesign opens the document at its
+/// own defaults and the edit is lost (asked of InDesign 20.0.1 through
+/// core's InDesign lane, scenario `bleed`: a 9 / 12 / 3 / 6 pt bleed set on
+/// a generated document opened with none).
+///
+/// The element carries the first page's size and `FacingPages="true"` —
+/// what InDesign assumes when the element is absent — because an element
+/// without them makes InDesign re-shuffle every page into its own spread
+/// (see [`patch_document_preference`]), and the bleed and slug values that
+/// are not 0. It goes last in the part's root. Byte-identical when the
+/// package already has the element or the model sets neither.
+pub fn insert_document_preference(
+    original: &[u8],
+    designmap: Option<&[u8]>,
+    pref: &paged_model::DocumentPreference,
+    page_size: Option<(f32, f32)>,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let named = |part: &[u8]| part.windows(19).any(|w| w == b"<DocumentPreference");
+    let values: [(&str, f32); 8] = [
+        ("DocumentBleedTopOffset", pref.bleed_top),
+        ("DocumentBleedBottomOffset", pref.bleed_bottom),
+        ("DocumentBleedInsideOrLeftOffset", pref.bleed_inside_or_left),
+        (
+            "DocumentBleedOutsideOrRightOffset",
+            pref.bleed_outside_or_right,
+        ),
+        ("SlugTopOffset", pref.slug_top),
+        ("SlugBottomOffset", pref.slug_bottom),
+        ("SlugInsideOrLeftOffset", pref.slug_inside_or_left),
+        ("SlugRightOrOutsideOffset", pref.slug_right_or_outside),
+    ];
+    let set: Vec<(&str, f32)> = values.into_iter().filter(|(_, v)| v.abs() > 1e-4).collect();
+    let Some((width, height)) = page_size else {
+        return Ok(original.to_vec());
+    };
+    if set.is_empty() || named(original) || designmap.is_some_and(named) {
+        return Ok(original.to_vec());
+    }
+    let mut attrs = vec![
+        ("PageHeight", crate::rewrite::format_f32(height)),
+        ("PageWidth", crate::rewrite::format_f32(width)),
+        ("FacingPages", "true".to_string()),
+    ];
+    attrs.extend(
+        set.iter()
+            .map(|(n, v)| (*n, crate::rewrite::format_f32(*v))),
+    );
+    attrs.extend(uniform_flags(pref).map(|(n, v)| (n, v.to_string())));
+
+    let mut reader = Reader::from_reader(original);
+    let config = reader.config_mut();
+    config.expand_empty_elements = false;
+    config.trim_text(false);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Empty(ref e) if e.name().as_ref() == ROOT => {
+                writer.write_event(Event::Start(e.to_owned()))?;
+                emit_empty_with_attrs(&mut writer, "DocumentPreference", &attrs)?;
+                writer.write_event(Event::End(BytesEnd::new("idPkg:Preferences")))?;
+            }
+            Event::End(ref e) if e.name().as_ref() == ROOT => {
+                emit_empty_with_attrs(&mut writer, "DocumentPreference", &attrs)?;
+                writer.write_event(Event::End(e.to_owned()))?;
+            }
+            other => writer.write_event(other)?,
+        }
+        buf.clear();
+    }
+    Ok(writer.into_inner().into_inner())
+}
+
 /// The document's bleed and slug written onto the `<DocumentPreference>`
 /// the part already carries — in `Resources/Preferences.xml`, where
 /// InDesign keeps it, or in `designmap.xml`, where the engine's older
@@ -264,21 +376,32 @@ pub fn patch_document_preference(
     if !needs {
         return Ok(original.to_vec());
     }
+    // The uniform-size flags follow the values written (see `uniform`).
+    let flags = uniform_flags(pref);
     let rewrite = |e: &BytesStart| -> BytesStart<'static> {
         let mut out = BytesStart::new(String::from_utf8_lossy(e.name().as_ref()).into_owned());
         let mut written: Vec<&[u8]> = Vec::new();
         for a in e.attributes().flatten() {
-            match wanted.iter().find(|(name, _)| a.key.as_ref() == *name) {
-                Some((name, v)) => {
-                    out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
-                    written.push(name);
-                }
-                None => out.push_attribute((a.key.as_ref(), a.value.as_ref())),
+            if let Some((name, v)) = wanted.iter().find(|(name, _)| a.key.as_ref() == *name) {
+                out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+                written.push(name);
+            } else if let Some((name, v)) =
+                flags.iter().find(|(n, _)| a.key.as_ref() == n.as_bytes())
+            {
+                out.push_attribute((*name, *v));
+                written.push(name.as_bytes());
+            } else {
+                out.push_attribute((a.key.as_ref(), a.value.as_ref()));
             }
         }
         for (name, v) in &wanted {
             if !written.contains(name) && v.abs() > 1e-4 {
                 out.push_attribute((*name, crate::rewrite::format_f32(*v).as_bytes()));
+            }
+        }
+        for (name, v) in &flags {
+            if !written.contains(&name.as_bytes()) && *v == "false" {
+                out.push_attribute((*name, *v));
             }
         }
         out
@@ -308,6 +431,47 @@ pub fn patch_document_preference(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bleed(top: f32) -> paged_model::DocumentPreference {
+        paged_model::DocumentPreference {
+            bleed_top: top,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_package_without_the_preference_gains_one_for_its_bleed() {
+        let src = r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><ViewPreference/></idPkg:Preferences>"#;
+        let out = String::from_utf8(
+            insert_document_preference(src.as_bytes(), None, &bleed(9.0), Some((595.276, 841.89)))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            r#"<idPkg:Preferences xmlns:idPkg="x" DOMVersion="20.0"><ViewPreference/><DocumentPreference PageHeight="841.89" PageWidth="595.276" FacingPages="true" DocumentBleedTopOffset="9" DocumentBleedUniformSize="false" DocumentSlugUniformSize="true"/></idPkg:Preferences>"#
+        );
+    }
+
+    #[test]
+    fn the_preference_is_not_inserted_twice_nor_without_a_reason() {
+        let src = br#"<idPkg:Preferences xmlns:idPkg="x"><DocumentPreference PageWidth="612"/></idPkg:Preferences>"#;
+        let size = Some((612.0, 792.0));
+        assert_eq!(
+            insert_document_preference(src, None, &bleed(9.0), size).unwrap(),
+            src.to_vec()
+        );
+        let bare = br#"<idPkg:Preferences xmlns:idPkg="x"/>"#;
+        let dm = br#"<Document><DocumentPreference PageWidth="612"/></Document>"#;
+        assert_eq!(
+            insert_document_preference(bare, Some(dm), &bleed(9.0), size).unwrap(),
+            bare.to_vec()
+        );
+        assert_eq!(
+            insert_document_preference(bare, None, &bleed(0.0), size).unwrap(),
+            bare.to_vec()
+        );
+    }
 
     const EMPTY: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><idPkg:Preferences xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="20.0"/>"#;
 

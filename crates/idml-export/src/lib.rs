@@ -829,12 +829,34 @@ pub(crate) fn write_package(
                 source,
             },
         )?;
-        // The bleed and slug, where InDesign keeps them.
+        // The bleed and slug, where InDesign keeps them — on the element
+        // the package has, or on one it gains for them.
         let new = preferences::patch_document_preference(&new, &doc.designmap.document_preference)
             .map_err(|source| WriteError::Rewrite {
                 entry: PREFERENCES_SRC.to_string(),
                 source,
             })?;
+        let designmap = entry_bytes(&mut src, "designmap.xml")?;
+        let page_size = doc
+            .spreads
+            .first()
+            .and_then(|s| s.spread.pages.first())
+            .map(|p| {
+                (
+                    p.bounds.right - p.bounds.left,
+                    p.bounds.bottom - p.bounds.top,
+                )
+            });
+        let new = preferences::insert_document_preference(
+            &new,
+            designmap.as_deref(),
+            &doc.designmap.document_preference,
+            page_size,
+        )
+        .map_err(|source| WriteError::Rewrite {
+            entry: PREFERENCES_SRC.to_string(),
+            source,
+        })?;
         if new != orig.as_slice() {
             patched.insert(PREFERENCES_SRC.to_string(), new);
         }
