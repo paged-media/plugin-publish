@@ -8,22 +8,22 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 107323,
+      "covered": 107873,
       "total": 633952,
-      "value": 0.169292
+      "value": 0.17016
     },
     "impactImport": {
-      "covered": 23475,
+      "covered": 23485,
       "total": 54667,
-      "value": 0.429418
+      "value": 0.429601
     },
     "weightedExport": {
-      "covered": 77992,
+      "covered": 78270,
       "total": 633952,
-      "value": 0.123025
+      "value": 0.123464
     },
     "misplacedReads": 30,
-    "unseenReads": 288,
+    "unseenReads": 289,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -224,6 +224,7 @@
     "Resources/Preferences|FootnoteOption@SeparatorText|attr",
     "Resources/Preferences|FootnoteOption@SpaceBetween|attr",
     "Resources/Preferences|FootnoteOption@Spacer|attr",
+    "Resources/Preferences|FootnoteOption@StartAt|attr",
     "Resources/Preferences|GridPreference@BaselineDivision|attr",
     "Resources/Preferences|GridPreference@BaselineGridRelativeOption|attr",
     "Resources/Preferences|GridPreference@BaselineGridShown|attr",
@@ -331,6 +332,7 @@
     "Resources/Styles|ParagraphStyle@DesiredWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@DropCapCharacters|attr",
     "Resources/Styles|ParagraphStyle@DropCapLines|attr",
+    "Resources/Styles|ParagraphStyle@DropcapDetail|attr",
     "Resources/Styles|ParagraphStyle@EmptyGrepStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyLineStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyNestedStyles|attr",
@@ -809,6 +811,7 @@
     "Spreads|TextPath@PathTypeAlignment|attr",
     "Spreads|TextPath@Self|attr",
     "Spreads|TextPath@StartBracket|attr",
+    "Spreads|TextPath@TextAlignment|attr",
     "Spreads|TextWrapPreference@Inverse|attr",
     "Spreads|TextWrapPreference@TextWrapMode|attr",
     "Stories|AnchoredObjectSetting@AnchorPoint|attr",
@@ -908,6 +911,7 @@
     "Stories|ParagraphStyleRange@Composer|attr",
     "Stories|ParagraphStyleRange@DropCapCharacters|attr",
     "Stories|ParagraphStyleRange@DropCapLines|attr",
+    "Stories|ParagraphStyleRange@DropcapDetail|attr",
     "Stories|ParagraphStyleRange@FirstLineIndent|attr",
     "Stories|ParagraphStyleRange@HyphenationZone|attr",
     "Stories|ParagraphStyleRange@Hyphenation|attr",
@@ -1330,6 +1334,7 @@
     "Resources/Styles|ParagraphStyle@DesiredWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@DropCapCharacters|attr",
     "Resources/Styles|ParagraphStyle@DropCapLines|attr",
+    "Resources/Styles|ParagraphStyle@DropcapDetail|attr",
     "Resources/Styles|ParagraphStyle@EmptyGrepStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyLineStyles|attr",
     "Resources/Styles|ParagraphStyle@EmptyNestedStyles|attr",
@@ -1677,9 +1682,9 @@
     "Spreads|TextPath@ParentStory|attr",
     "Spreads|TextPath@PathAlignment|attr",
     "Spreads|TextPath@PathEffect|attr",
-    "Spreads|TextPath@PathTypeAlignment|attr",
     "Spreads|TextPath@Self|attr",
     "Spreads|TextPath@StartBracket|attr",
+    "Spreads|TextPath@TextAlignment|attr",
     "Spreads|TextWrapPreference@ApplyToMasterPageOnly|attr",
     "Spreads|TextWrapPreference@Inverse|attr",
     "Spreads|TextWrapPreference@TextWrapMode|attr",
@@ -1747,6 +1752,7 @@
     "Stories|ParagraphStyleRange@Composer|attr",
     "Stories|ParagraphStyleRange@DropCapCharacters|attr",
     "Stories|ParagraphStyleRange@DropCapLines|attr",
+    "Stories|ParagraphStyleRange@DropcapDetail|attr",
     "Stories|ParagraphStyleRange@FirstLineIndent|attr",
     "Stories|ParagraphStyleRange@HyphenationZone|attr",
     "Stories|ParagraphStyleRange@Hyphenation|attr",

@@ -72,7 +72,7 @@ pub use styles::{
     ResolvedCharacter, ResolvedObject, ResolvedParagraph, ResolvedTable, StripeDef, StrokeStyleDef,
     StrokeStyleKind, StyleSheet, TOCStyleDef, TOCStyleEntryDef, TableStyleDef,
 };
-pub use util::{decode_aid_escapes, parse_tint};
+pub use util::{decode_aid_escapes, parse_flag, parse_tint};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {

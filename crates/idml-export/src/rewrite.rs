@@ -1949,9 +1949,19 @@ fn write_text_paths(
                 .unwrap_or_else(|| format!("{}tp{i}", crate::emit::sanitize_id(&tp.parent_story))),
         )];
         attrs.push(("ParentStory", crate::emit::sanitize_id(&tp.parent_story)));
+        // InDesign writes the glyph seat as `TextAlignment`, its values
+        // ending `TextAlignment`; a value an older Paged build read as
+        // `…PathType` is written in InDesign's spelling.
+        let text_alignment =
+            tp.path_type_alignment
+                .as_ref()
+                .map(|v| match v.strip_suffix("PathType") {
+                    Some(part) => format!("{part}TextAlignment"),
+                    None => v.clone(),
+                });
         for (k, v) in [
             ("PathAlignment", &tp.path_alignment),
-            ("PathTypeAlignment", &tp.path_type_alignment),
+            ("TextAlignment", &text_alignment),
             ("PathEffect", &tp.path_effect),
             ("FlipPathEffect", &tp.flip_path_effect),
         ] {
@@ -6110,17 +6120,68 @@ pub(crate) fn write_run_content(
     // annual's manuscript composed as nothing and its columns glued
     // together ("Largest single run (Q4)2,390 copies"). The reader keeps
     // accepting `<Tab/>` for parts written before this.
+    //
+    // The private-use characters the reader leaves for InDesign's markers
+    // go back to InDesign's spelling: a page number is `<?ACE 18?>` and a
+    // section marker `<?ACE 19?>` inside `<Content>` (InDesign 20.0.1). A
+    // footnote reference is written by its `<Footnote>` element, which the
+    // patch path carries through, so its character writes nothing.
     for ch in text.chars() {
         match ch {
             '\n' => {
                 flush(writer, &mut buf)?;
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             }
+            paged_model::FOOTNOTE_REFERENCE_MARKER => {}
+            paged_model::AUTO_PAGE_NUMBER_MARKER
+            | paged_model::NEXT_PAGE_NUMBER_MARKER
+            | paged_model::PREVIOUS_PAGE_NUMBER_MARKER
+            | paged_model::SECTION_MARKER => {
+                let ace = if ch == paged_model::SECTION_MARKER {
+                    "ACE 19"
+                } else {
+                    "ACE 18"
+                };
+                writer.write_event(Event::Start(BytesStart::new("Content")))?;
+                if !buf.is_empty() {
+                    writer.write_event(Event::Text(BytesText::new(&buf)))?;
+                    buf.clear();
+                }
+                writer.write_event(Event::PI(quick_xml::events::BytesPI::new(ace)))?;
+                writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Content")))?;
+            }
             _ => buf.push(ch),
         }
     }
     flush(writer, &mut buf)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod marker_content_tests {
+    use super::*;
+
+    fn written(text: &str) -> String {
+        let mut w = Writer::new(Cursor::new(Vec::new()));
+        write_run_content(&mut w, text).unwrap();
+        String::from_utf8(w.into_inner().into_inner()).unwrap()
+    }
+
+    /// The reader's marker characters never reach `<Content>` as text: a page
+    /// number and a section marker are InDesign's processing instructions,
+    /// and a footnote reference is left to its `<Footnote>` element.
+    #[test]
+    fn marker_characters_are_written_in_indesigns_spelling() {
+        let page = format!("Page {} of", paged_model::AUTO_PAGE_NUMBER_MARKER);
+        assert_eq!(
+            written(&page),
+            "<Content>Page <?ACE 18?></Content><Content> of</Content>"
+        );
+        let section = format!("{}", paged_model::SECTION_MARKER);
+        assert_eq!(written(&section), "<Content><?ACE 19?></Content>");
+        let note = format!("cited{} here", paged_model::FOOTNOTE_REFERENCE_MARKER);
+        assert_eq!(written(&note), "<Content>cited here</Content>");
+    }
 }
 
 /// The model paragraph the `<ParagraphStyleRange>` at `pos` produced,
@@ -6408,8 +6469,7 @@ pub(crate) fn span_column_patch(
 /// The `<ParagraphStyleRange>` attributes the model owns — every
 /// paragraph override InDesign reads from the range (the key set
 /// `emit::paragraph_attrs` writes). A key the model does not own passes
-/// through verbatim (`DropcapDetail` in InDesign's own lowercase-c
-/// spelling, …).
+/// through verbatim.
 pub(crate) fn paragraph_attr_patch(
     key: &[u8],
     raw: &[u8],
@@ -6430,7 +6490,11 @@ pub(crate) fn paragraph_attr_patch(
         b"SpaceAfter" => Some(preserving_f32_patch(raw, p.space_after)),
         b"DropCapCharacters" => Some(preserving_int_patch(raw, p.drop_cap_characters as i64)),
         b"DropCapLines" => Some(preserving_int_patch(raw, p.drop_cap_lines as i64)),
-        b"DropCapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
+        // InDesign spells it `DropcapDetail`. The camel-cased key is what
+        // older Paged builds wrote: dropped, and the value written again in
+        // InDesign's spelling (`emit::paragraph_attrs`).
+        b"DropcapDetail" => Some(preserving_int_patch(raw, p.drop_cap_detail as i64)),
+        b"DropCapDetail" => Some(Patch::Remove),
         b"Hyphenation" => Some(opt_bool_patch(p.hyphenation)),
         // The rest of InDesign's hyphenation panel. These used to fall
         // through to the pass-through arm; now that the importer reads
@@ -6770,6 +6834,34 @@ mod tests {
             !out.contains("SpaceAfter"),
             "a cleared override is dropped: {out}"
         );
+    }
+
+    #[test]
+    fn drop_cap_detail_keeps_indesigns_spelling() {
+        // InDesign writes `DropcapDetail` (lowercase c). An unedited save
+        // keeps it byte for byte; an edit rewrites it in place, never adding
+        // a second, camel-cased copy.
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropcapDetail="1"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(story.paragraphs[0].drop_cap_detail, 1);
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+        story.paragraphs[0].drop_cap_detail = 3;
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"DropcapDetail="3""#), "{out}");
+        assert!(!out.contains("DropCapDetail"), "no camel-cased copy: {out}");
+
+        // A file an older Paged wrote, camel-cased: read, and saved in
+        // InDesign's spelling.
+        let legacy = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropCapDetail="2"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let story = idml_import::parse_story(legacy).unwrap();
+        assert_eq!(story.paragraphs[0].drop_cap_detail, 2);
+        let out = String::from_utf8(rewrite_story(legacy, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"DropcapDetail="2""#), "{out}");
+        assert!(!out.contains("DropCapDetail"), "{out}");
     }
 
     #[test]

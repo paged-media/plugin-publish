@@ -53,7 +53,8 @@ pub use paged_model::{
 };
 
 pub use paged_model::{
-    AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER, PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
+    AUTO_PAGE_NUMBER_MARKER, FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER,
+    PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
 };
 
 pub use paged_model::Story;
@@ -116,6 +117,9 @@ struct TableContext {
     outer_paragraph: Option<Paragraph>,
     outer_run: Option<CharacterRun>,
     outer_cell: Option<TableCell>,
+    /// Where the table stands in its host paragraph's text (see
+    /// `Paragraph::table_anchor`), taken at `<Table>`.
+    anchor: u32,
 }
 
 /// Where the runs a single source `<CharacterStyleRange>` produced live
@@ -678,7 +682,11 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             drop_cap_lines: attr(&e, b"DropCapLines")
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
-                            drop_cap_detail: attr(&e, b"DropCapDetail")
+                            // InDesign spells it with a lowercase c
+                            // (`DropcapDetail`, every corpus file); the
+                            // camel-cased form is what Paged wrote before.
+                            drop_cap_detail: attr(&e, b"DropcapDetail")
+                                .or_else(|| attr(&e, b"DropCapDetail"))
                                 .and_then(|s| s.parse().ok())
                                 .unwrap_or(0),
                             hyphenation: attr(&e, b"Hyphenation")
@@ -752,14 +760,20 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         });
                     }
                     b"Table" => {
-                        // A break held from the run before the table is
-                        // the seam between the text and the table — the
-                        // model's "runs, then table" paragraph — not text
-                        // in the run, and not the first cell's either
-                        // (where it used to land: a DOCX table's first
-                        // cell gained a leading newline on every round
-                        // trip, measured 2026-09-06).
-                        pending_breaks = 0;
+                        // The table is a character of its host paragraph
+                        // (InDesign's story holds one where the table
+                        // stands): record its place, as an anchored
+                        // object's. A paragraph mark held before it is
+                        // text of the host — `text<Br/><Table/>` is two
+                        // paragraphs to InDesign, the table opening the
+                        // second (asked of InDesign 20.0.1,
+                        // `table-inline-text`) — so it goes into the host
+                        // run here, and never reaches the first cell
+                        // (where a held break once landed: a DOCX table's
+                        // first cell gained a leading newline on every
+                        // round trip, measured 2026-09-06).
+                        let anchor =
+                            anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
                         // Tables nest inside a CharacterStyleRange; the
                         // run that hosts the table is typically
                         // contentless, so we let it pass through as-is.
@@ -773,6 +787,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             outer_paragraph: None,
                             outer_run: None,
                             outer_cell: current_cell.take(),
+                            anchor,
                             table: Table {
                                 self_id: attr(&e, b"Self"),
                                 header_row_count: attr(&e, b"HeaderRowCount")
@@ -888,6 +903,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         // the frame holding this line (core bee1e5d1).
                         let anchor =
                             anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
+                        // The reference is a character of the host text,
+                        // as in InDesign's story (its U+0004): the range
+                        // around it formats it — InDesign writes the
+                        // reference's superscript, and the marker style,
+                        // on a range of its own (InDesign 20.0.1,
+                        // `footnote-references`).
+                        if let Some(run) = current_run.as_mut() {
+                            run.text.push(FOOTNOTE_REFERENCE_MARKER);
+                        }
                         footnote_stack.push(FootnoteContext {
                             footnote: Footnote {
                                 self_id: attr(&e, b"Self"),
@@ -1014,7 +1038,8 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             strikethru: attr(&e, b"StrikeThru")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             leading: attr(&e, b"Leading").and_then(|s| s.parse::<f32>().ok()),
-                            ruby_flag: attr(&e, b"RubyFlag").and_then(|s| s.parse::<bool>().ok()),
+                            ruby_flag: attr(&e, b"RubyFlag")
+                                .and_then(|s| crate::util::parse_flag(&s)),
                             ruby_type: attr(&e, b"RubyType"),
                             ruby_string: attr(&e, b"RubyString"),
                             kenten_kind: attr(&e, b"KentenKind"),
@@ -1433,6 +1458,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         if let Some(ctx) = table_stack.pop() {
                             if let Some(p) = current_paragraph.as_mut() {
                                 p.table = Some(ctx.table);
+                                p.table_anchor = Some(ctx.anchor);
                             }
                             if ctx.outer_cell.is_some() {
                                 current_cell = ctx.outer_cell;
@@ -1811,6 +1837,12 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             });
                         } else if body_str == "ACE 19" {
                             run.text.push(SECTION_MARKER);
+                        } else if body_str == "ACE 4" && !footnote_stack.is_empty() {
+                            // The note's own number, opening its text
+                            // (the separator follows as text): the
+                            // note's reference character, as in the host
+                            // text (InDesign 20.0.1, `footnote-references`).
+                            run.text.push(FOOTNOTE_REFERENCE_MARKER);
                         }
                     }
                 }
@@ -2830,18 +2862,24 @@ mod tests {
     #[test]
     fn parses_drop_cap_attributes_on_paragraph_style_range() {
         let xml = br#"<Story>
-          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropCapDetail="0">
+          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="3" DropcapDetail="3">
             <CharacterStyleRange><Content>The quick brown fox</Content></CharacterStyleRange>
           </ParagraphStyleRange>
           <ParagraphStyleRange>
             <CharacterStyleRange><Content>No drop cap here.</Content></CharacterStyleRange>
           </ParagraphStyleRange>
+          <ParagraphStyleRange DropCapCharacters="1" DropCapLines="2" DropCapDetail="2">
+            <CharacterStyleRange><Content>Written by an older Paged.</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
         </Story>"#;
         let s = parse_story(xml).unwrap();
-        assert_eq!(s.paragraphs.len(), 2);
+        assert_eq!(s.paragraphs.len(), 3);
         assert_eq!(s.paragraphs[0].drop_cap_characters, 1);
         assert_eq!(s.paragraphs[0].drop_cap_lines, 3);
-        assert_eq!(s.paragraphs[0].drop_cap_detail, 0);
+        // InDesign's spelling, lowercase c.
+        assert_eq!(s.paragraphs[0].drop_cap_detail, 3);
+        // The camel-cased spelling older Paged builds wrote still reads.
+        assert_eq!(s.paragraphs[2].drop_cap_detail, 2);
         // No drop cap on the second paragraph — fields default to 0.
         assert_eq!(s.paragraphs[1].drop_cap_characters, 0);
         assert_eq!(s.paragraphs[1].drop_cap_lines, 0);
@@ -3484,8 +3522,8 @@ mod tests {
         let xml = br#"<Story Self="u1">
           <ParagraphStyleRange>
             <CharacterStyleRange
-                RubyFlag="true"
-                RubyType="PerCharacter"
+                RubyFlag="1"
+                RubyType="PerCharacterRuby"
                 RubyString="furigana"
                 KentenKind="SesameDot"
                 KentenCharacter=""
@@ -3496,8 +3534,9 @@ mod tests {
         </Story>"#;
         let s = parse_story(xml).unwrap();
         let r = &s.paragraphs[0].runs[0];
+        // InDesign writes the flag as a number and the type with its suffix.
         assert_eq!(r.ruby_flag, Some(true));
-        assert_eq!(r.ruby_type.as_deref(), Some("PerCharacter"));
+        assert_eq!(r.ruby_type.as_deref(), Some("PerCharacterRuby"));
         assert_eq!(r.ruby_string.as_deref(), Some("furigana"));
         assert_eq!(r.kenten_kind.as_deref(), Some("SesameDot"));
         assert_eq!(r.kenten_font_size, Some(50.0));
