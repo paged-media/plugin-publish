@@ -18,9 +18,9 @@
       "value": 0.429601
     },
     "weightedExport": {
-      "covered": 78270,
+      "covered": 81793,
       "total": 633952,
-      "value": 0.123464
+      "value": 0.129021
     },
     "misplacedReads": 30,
     "unseenReads": 289,
@@ -1278,6 +1278,19 @@
     "Resources/Graphic|GradientStop@StopColor|attr",
     "Resources/Graphic|StrokeStyle@Name|attr",
     "Resources/Graphic|StrokeStyle@Self|attr",
+    "Resources/Preferences|DocumentPreference@DocumentBleedBottomOffset|attr",
+    "Resources/Preferences|DocumentPreference@DocumentBleedInsideOrLeftOffset|attr",
+    "Resources/Preferences|DocumentPreference@DocumentBleedOutsideOrRightOffset|attr",
+    "Resources/Preferences|DocumentPreference@DocumentBleedTopOffset|attr",
+    "Resources/Preferences|DocumentPreference@DocumentBleedUniformSize|attr",
+    "Resources/Preferences|DocumentPreference@DocumentSlugUniformSize|attr",
+    "Resources/Preferences|DocumentPreference@FacingPages|attr",
+    "Resources/Preferences|DocumentPreference@PageHeight|attr",
+    "Resources/Preferences|DocumentPreference@PageWidth|attr",
+    "Resources/Preferences|DocumentPreference@SlugBottomOffset|attr",
+    "Resources/Preferences|DocumentPreference@SlugInsideOrLeftOffset|attr",
+    "Resources/Preferences|DocumentPreference@SlugRightOrOutsideOffset|attr",
+    "Resources/Preferences|DocumentPreference@SlugTopOffset|attr",
     "Resources/Preferences|TextDefault@FontStyle|attr",
     "Resources/Preferences|TextDefault@PointSize|attr",
     "Resources/Preferences|TextPreference@UseOpticalSize|attr",
