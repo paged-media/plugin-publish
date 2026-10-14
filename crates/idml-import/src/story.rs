@@ -1003,6 +1003,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             left_edge_stroke_type: attr(&e, b"LeftEdgeStrokeType"),
                             right_edge_stroke_type: attr(&e, b"RightEdgeStrokeType"),
                             fill_color: attr(&e, b"FillColor"),
+                            fill_tint: parse_tint_attr(&e, b"FillTint"),
                             first_baseline_offset: attr(&e, b"FirstBaselineOffset"),
                             minimum_first_baseline_offset: attr(&e, b"MinimumFirstBaselineOffset")
                                 .and_then(|s| s.parse().ok()),

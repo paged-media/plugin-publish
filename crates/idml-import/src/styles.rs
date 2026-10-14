@@ -1148,6 +1148,11 @@ fn parse_cell_style(e: &quick_xml::events::BytesStart) -> Option<CellStyleDef> {
         first_baseline_offset: attr(e, b"FirstBaselineOffset"),
         minimum_first_baseline_offset: attr(e, b"MinimumFirstBaselineOffset")
             .and_then(|s| s.parse().ok()),
+        fill_tint: parse_tint_attr(e, b"FillTint"),
+        top_edge_stroke_tint: parse_tint_attr(e, b"TopEdgeStrokeTint"),
+        bottom_edge_stroke_tint: parse_tint_attr(e, b"BottomEdgeStrokeTint"),
+        left_edge_stroke_tint: parse_tint_attr(e, b"LeftEdgeStrokeTint"),
+        right_edge_stroke_tint: parse_tint_attr(e, b"RightEdgeStrokeTint"),
     })
 }
 
