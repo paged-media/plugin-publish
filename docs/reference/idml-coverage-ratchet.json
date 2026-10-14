@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 115967,
+      "covered": 117191,
       "total": 633952,
-      "value": 0.182927
+      "value": 0.184858
     },
     "impactImport": {
-      "covered": 25314,
+      "covered": 25317,
       "total": 54667,
-      "value": 0.463058
+      "value": 0.463113
     },
     "weightedExport": {
       "covered": 85584,
@@ -177,6 +177,7 @@
     "MasterSpreads|TextFramePreference@AutoSizingReferencePoint|attr",
     "MasterSpreads|TextFramePreference@AutoSizingType|attr",
     "MasterSpreads|TextFramePreference@FirstBaselineOffset|attr",
+    "MasterSpreads|TextFramePreference@IgnoreWrap|attr",
     "MasterSpreads|TextFramePreference@MinimumFirstBaselineOffset|attr",
     "MasterSpreads|TextFramePreference@MinimumHeightForAutoSizing|attr",
     "MasterSpreads|TextFramePreference@MinimumWidthForAutoSizing|attr",
@@ -185,8 +186,10 @@
     "MasterSpreads|TextFramePreference@UseMinimumHeightForAutoSizing|attr",
     "MasterSpreads|TextFramePreference@VerticalBalanceColumns|attr",
     "MasterSpreads|TextFramePreference@VerticalJustification|attr",
+    "MasterSpreads|TextWrapPreference@ApplyToMasterPageOnly|attr",
     "MasterSpreads|TextWrapPreference@Inverse|attr",
     "MasterSpreads|TextWrapPreference@TextWrapMode|attr",
+    "MasterSpreads|TextWrapPreference@TextWrapSide|attr",
     "Resources/Graphic|Color@AlternateColorValue|attr",
     "Resources/Graphic|Color@AlternateSpace|attr",
     "Resources/Graphic|Color@ColorValue|attr",
@@ -538,8 +541,10 @@
     "Resources/Styles|TextFramePreference@TextColumnCount|attr",
     "Resources/Styles|TextFramePreference@TextColumnGutter|attr",
     "Resources/Styles|TextFramePreference@VerticalJustification|attr",
+    "Resources/Styles|TextWrapPreference@ApplyToMasterPageOnly|attr",
     "Resources/Styles|TextWrapPreference@Inverse|attr",
     "Resources/Styles|TextWrapPreference@TextWrapMode|attr",
+    "Resources/Styles|TextWrapPreference@TextWrapSide|attr",
     "Resources/Styles|WavyStrokeStyle@Name|attr",
     "Resources/Styles|WavyStrokeStyle@Self|attr",
     "Resources/Styles|WavyStrokeStyle@Wavelength|attr",
@@ -831,6 +836,7 @@
     "Spreads|TextFramePreference@AutoSizingReferencePoint|attr",
     "Spreads|TextFramePreference@AutoSizingType|attr",
     "Spreads|TextFramePreference@FirstBaselineOffset|attr",
+    "Spreads|TextFramePreference@IgnoreWrap|attr",
     "Spreads|TextFramePreference@InsetSpacing|attr",
     "Spreads|TextFramePreference@MinimumFirstBaselineOffset|attr",
     "Spreads|TextFramePreference@MinimumHeightForAutoSizing|attr",
@@ -849,8 +855,10 @@
     "Spreads|TextPath@Self|attr",
     "Spreads|TextPath@StartBracket|attr",
     "Spreads|TextPath@TextAlignment|attr",
+    "Spreads|TextWrapPreference@ApplyToMasterPageOnly|attr",
     "Spreads|TextWrapPreference@Inverse|attr",
     "Spreads|TextWrapPreference@TextWrapMode|attr",
+    "Spreads|TextWrapPreference@TextWrapSide|attr",
     "Stories|AnchoredObjectSetting@AnchorPoint|attr",
     "Stories|AnchoredObjectSetting@AnchorXoffset|attr",
     "Stories|AnchoredObjectSetting@AnchorYoffset|attr",

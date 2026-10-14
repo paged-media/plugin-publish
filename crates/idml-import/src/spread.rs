@@ -54,7 +54,7 @@ pub use paged_model::{
     FeatherParams, FrameEffects, FrameFittingOption, GradientFeatherParams, GradientFeatherStop,
     GraphicLine, InnerGlowParams, InnerShadowParams, OuterGlowParams, Oval, PathAnchor, Polygon,
     Rectangle, SatinParams, TargetTransparency, TextFrame, TextPath, TextWrap, TextWrapMode,
-    TransparencyPreference,
+    TextWrapSide, TransparencyPreference,
 };
 
 // N5 — these pure model types now live in `paged-model`; re-exported here
@@ -245,17 +245,38 @@ fn apply_text_wrap(out: &mut Spread, kind: CurrentFrameKind, wrap: Option<TextWr
     }
 }
 
+/// A single closed contour of four corner anchors (handles on their
+/// anchors) on two x and two y values: the box a rectangle's bounds
+/// already describe.
+fn is_plain_box(anchors: &[PathAnchor], subpath_starts: &[usize], subpath_open: &[bool]) -> bool {
+    if anchors.len() != 4 || subpath_starts.len() > 1 || subpath_open.iter().any(|&o| o) {
+        return false;
+    }
+    let eq = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    let corner = |a: &PathAnchor| {
+        eq(a.left.0, a.anchor.0)
+            && eq(a.left.1, a.anchor.1)
+            && eq(a.right.0, a.anchor.0)
+            && eq(a.right.1, a.anchor.1)
+    };
+    if !anchors.iter().all(corner) {
+        return false;
+    }
+    let mut xs: Vec<f32> = anchors.iter().map(|a| a.anchor.0).collect();
+    let mut ys: Vec<f32> = anchors.iter().map(|a| a.anchor.1).collect();
+    xs.sort_by(f32::total_cmp);
+    ys.sort_by(f32::total_cmp);
+    eq(xs[0], xs[1]) && eq(xs[2], xs[3]) && eq(ys[0], ys[1]) && eq(ys[2], ys[3])
+}
+
 fn set_text_wrap_offsets(out: &mut Spread, kind: CurrentFrameKind, offsets: [f32; 4]) {
     let take = |w: &mut Option<TextWrap>| {
         if let Some(existing) = w.as_mut() {
             existing.offsets = offsets;
         } else {
             *w = Some(TextWrap {
-                mode: TextWrapMode::None,
                 offsets,
-                invert: None,
-                contour_type: None,
-                include_inside_edges: None,
+                ..TextWrap::NONE
             });
         }
     };
@@ -284,11 +305,9 @@ fn set_text_wrap_contour(
             existing.include_inside_edges = include_inside_edges;
         } else {
             *w = Some(TextWrap {
-                mode: TextWrapMode::None,
-                offsets: [0.0; 4],
-                invert: None,
                 contour_type,
                 include_inside_edges,
+                ..TextWrap::NONE
             });
         }
     };
@@ -996,14 +1015,15 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     out.text_frames[i].subpath_open = subpath_open;
                 }
                 CurrentFrameKind::Rect(i) if i < out.rectangles.len() => {
-                    // Q-11: only stash when the
-                    // outline is non-rectangular
-                    // (>4 anchors). A plain 4-corner
-                    // AABB is the existing default
-                    // and skipping the stash here
-                    // keeps `from_rectangle`'s
-                    // legacy `Geometry::Rect` path.
-                    if cf.anchors.len() > 4 {
+                    // Stash the path unless it is the plain
+                    // axis-aligned box the bounds already
+                    // describe. InDesign draws a
+                    // `<Rectangle>`'s path whatever it is: an
+                    // oval's four curved anchors, a triangle's
+                    // three (core `text-wrap-sides`). Keeping
+                    // only paths of more than four anchors
+                    // (Q-11) drew both as boxes.
+                    if !is_plain_box(&cf.anchors, &subpath_starts, &subpath_open) {
                         out.rectangles[i].anchors = cf.anchors;
                         out.rectangles[i].subpath_starts = subpath_starts;
                         out.rectangles[i].subpath_open = subpath_open;
@@ -2033,6 +2053,11 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         let invert = attr(&e, b"Inverse")
                             .or_else(|| attr(&e, b"Inverted"))
                             .and_then(|s| s.parse::<bool>().ok());
+                        let side = attr(&e, b"TextWrapSide")
+                            .as_deref()
+                            .and_then(TextWrapSide::from_idml);
+                        let apply_to_master_page_only =
+                            attr(&e, b"ApplyToMasterPageOnly").and_then(|s| s.parse::<bool>().ok());
                         let kind = cf.kind;
                         let prior_offsets = current_text_wrap_offsets(&out, kind);
                         // W2.5 — preserve any contour info already
@@ -2049,6 +2074,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                 invert,
                                 contour_type: prior_contour,
                                 include_inside_edges: prior_inside,
+                                side,
+                                apply_to_master_page_only,
                             }),
                         );
                         cf.in_text_wrap = true;
@@ -2093,6 +2120,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         current_frame.as_ref().map(|cf| cf.kind)
                     {
                         let f = &mut out.text_frames[i];
+                        f.ignore_wrap =
+                            attr(&e, b"IgnoreWrap").and_then(|s| s.parse::<bool>().ok());
                         if let Some(vj) = attr(&e, b"VerticalJustification")
                             .as_deref()
                             .and_then(VerticalJustification::from_idml)

@@ -118,8 +118,14 @@ fn write_text_wrap(
         "TextWrapPreference",
         &[
             ("Inverse", w.invert.unwrap_or(false).to_string()),
-            ("ApplyToMasterPageOnly", "false".to_string()),
-            ("TextWrapSide", "BothSides".to_string()),
+            (
+                "ApplyToMasterPageOnly",
+                w.apply_to_master_page_only.unwrap_or(false).to_string(),
+            ),
+            (
+                "TextWrapSide",
+                w.side.map_or("BothSides", |s| s.as_idml()).to_string(),
+            ),
             ("TextWrapMode", mode.to_string()),
         ],
     )?;
@@ -373,6 +379,7 @@ mod tests {
                 invert: Some(true),
                 contour_type: None,
                 include_inside_edges: None,
+                ..TextWrap::NONE
             },
         );
         let src = r#"<Spread Self="s1"><Rectangle Self="r1" ItemTransform="1 0 0 1 0 0"><Properties><PathGeometry/></Properties></Rectangle><Rectangle Self="r2"><Properties><PathGeometry/></Properties></Rectangle><Rectangle Self="r3" ItemTransform="1 0 0 1 0 0"/></Spread>"#;
@@ -393,6 +400,7 @@ mod tests {
                 invert: None,
                 contour_type: Some(ContourOptionType::SameAsClipping),
                 include_inside_edges: Some(true),
+                ..TextWrap::NONE
             },
         );
         let src = r#"<Spread Self="s1"><Rectangle Self="p1"/></Spread>"#;
@@ -431,6 +439,7 @@ mod tests {
                 invert: None,
                 contour_type: None,
                 include_inside_edges: None,
+                ..TextWrap::NONE
             },
         );
         let spelled = r#"<Spread Self="s1"><Rectangle Self="p1"><Properties><PathGeometry/></Properties><TextWrapPreference Inverse="false" TextWrapMode="BoundingBoxTextWrap"><Properties><TextWrapOffset Top="6" Left="12" Bottom="6" Right="12"/></Properties></TextWrapPreference></Rectangle></Spread>"#;
