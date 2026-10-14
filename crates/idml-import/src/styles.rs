@@ -1270,6 +1270,11 @@ pub fn read_object_style_text_frames(
                         .and_then(|s| s.parse::<bool>().ok()),
                     contour_type: None,
                     include_inside_edges: None,
+                    side: attr(&e, b"TextWrapSide")
+                        .as_deref()
+                        .and_then(paged_model::TextWrapSide::from_idml),
+                    apply_to_master_page_only: attr(&e, b"ApplyToMasterPageOnly")
+                        .and_then(|s| s.parse::<bool>().ok()),
                 };
                 if let Some(s) = style.as_deref().and_then(|id| styles.get_mut(id)) {
                     s.text_wrap = Some(wrap);
