@@ -480,6 +480,7 @@ pub(crate) fn write_table(
         a.push(("TextRightInset", rewrite::format_f32(cell.text_right_inset)));
         push_opt_str(&mut a, "AppliedCellStyle", &cell.applied_cell_style);
         push_opt_str(&mut a, "FillColor", &cell.fill_color);
+        push_opt_f32(&mut a, "FillTint", cell.fill_tint);
         push_opt_str(&mut a, "TopEdgeStrokeType", &cell.top_edge_stroke_type);
         push_opt_str(
             &mut a,

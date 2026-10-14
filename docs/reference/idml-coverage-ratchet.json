@@ -8,19 +8,19 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 117191,
+      "covered": 117206,
       "total": 633952,
-      "value": 0.184858
+      "value": 0.184882
     },
     "impactImport": {
-      "covered": 25317,
+      "covered": 25326,
       "total": 54667,
-      "value": 0.463113
+      "value": 0.463278
     },
     "weightedExport": {
-      "covered": 85584,
+      "covered": 85589,
       "total": 633952,
-      "value": 0.135001
+      "value": 0.135009
     },
     "misplacedReads": 30,
     "unseenReads": 298,
@@ -266,18 +266,23 @@
     "Resources/Styles|CellStyle@BasedOn|attr",
     "Resources/Styles|CellStyle@BasedOn|properties-child",
     "Resources/Styles|CellStyle@BottomEdgeStrokeColor|attr",
+    "Resources/Styles|CellStyle@BottomEdgeStrokeTint|attr",
     "Resources/Styles|CellStyle@BottomEdgeStrokeType|attr",
     "Resources/Styles|CellStyle@BottomEdgeStrokeWeight|attr",
     "Resources/Styles|CellStyle@FillColor|attr",
+    "Resources/Styles|CellStyle@FillTint|attr",
     "Resources/Styles|CellStyle@LeftEdgeStrokeColor|attr",
+    "Resources/Styles|CellStyle@LeftEdgeStrokeTint|attr",
     "Resources/Styles|CellStyle@LeftEdgeStrokeType|attr",
     "Resources/Styles|CellStyle@LeftEdgeStrokeWeight|attr",
     "Resources/Styles|CellStyle@Name|attr",
     "Resources/Styles|CellStyle@RightEdgeStrokeColor|attr",
+    "Resources/Styles|CellStyle@RightEdgeStrokeTint|attr",
     "Resources/Styles|CellStyle@RightEdgeStrokeType|attr",
     "Resources/Styles|CellStyle@RightEdgeStrokeWeight|attr",
     "Resources/Styles|CellStyle@Self|attr",
     "Resources/Styles|CellStyle@TopEdgeStrokeColor|attr",
+    "Resources/Styles|CellStyle@TopEdgeStrokeTint|attr",
     "Resources/Styles|CellStyle@TopEdgeStrokeType|attr",
     "Resources/Styles|CellStyle@TopEdgeStrokeWeight|attr",
     "Resources/Styles|CellStyle@VerticalJustification|attr",
@@ -877,6 +882,7 @@
     "Stories|Cell@ColumnSpan|attr",
     "Stories|Cell@DiagonalLineInFront|attr",
     "Stories|Cell@FillColor|attr",
+    "Stories|Cell@FillTint|attr",
     "Stories|Cell@LeftEdgeStrokeColor|attr",
     "Stories|Cell@LeftEdgeStrokeTint|attr",
     "Stories|Cell@LeftEdgeStrokeType|attr",
@@ -1783,6 +1789,7 @@
     "Stories|Cell@CellType|attr",
     "Stories|Cell@ColumnSpan|attr",
     "Stories|Cell@FillColor|attr",
+    "Stories|Cell@FillTint|attr",
     "Stories|Cell@LeftEdgeStrokeColor|attr",
     "Stories|Cell@LeftEdgeStrokeTint|attr",
     "Stories|Cell@LeftEdgeStrokeType|attr",
