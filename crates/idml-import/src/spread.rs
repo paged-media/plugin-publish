@@ -2293,7 +2293,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     out.rectangles[i].image_link = Some(uri);
                                 }
                             }
-                            if e.name().as_ref() == b"Image" {
+                            // A placed graphic's own `ItemTransform` maps its content box
+                            // into the frame: an `<Image>`'s pixels, and as much a `<PDF>`'s,
+                            // an `<EPS>`'s or an `<ImportedPage>`'s points (core ADR 154).
+                            if is_image_element {
                                 if let Some(m) =
                                     attr(&e, b"ItemTransform").and_then(|s| parse_matrix(&s))
                                 {
@@ -2301,6 +2304,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                         out.rectangles[i].image_item_transform = Some(m);
                                     }
                                 }
+                            }
+                            if e.name().as_ref() == b"Image" {
                                 let host = out.rectangles[i].self_id.clone();
                                 record_image_metadata(&mut out, host, &e);
                             }
@@ -2317,7 +2322,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     out.polygons[i].image_link = Some(uri);
                                 }
                             }
-                            if e.name().as_ref() == b"Image" {
+                            if is_image_element {
                                 if let Some(m) =
                                     attr(&e, b"ItemTransform").and_then(|s| parse_matrix(&s))
                                 {
@@ -2325,6 +2330,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                         out.polygons[i].image_item_transform = Some(m);
                                     }
                                 }
+                            }
+                            if e.name().as_ref() == b"Image" {
                                 let host = out.polygons[i].self_id.clone();
                                 record_image_metadata(&mut out, host, &e);
                             }
@@ -2341,7 +2348,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                     out.ovals[i].image_link = Some(uri);
                                 }
                             }
-                            if e.name().as_ref() == b"Image" {
+                            if is_image_element {
                                 if let Some(m) =
                                     attr(&e, b"ItemTransform").and_then(|s| parse_matrix(&s))
                                 {
@@ -2349,6 +2356,8 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                                         out.ovals[i].image_item_transform = Some(m);
                                     }
                                 }
+                            }
+                            if e.name().as_ref() == b"Image" {
                                 let host = out.ovals[i].self_id.clone();
                                 record_image_metadata(&mut out, host, &e);
                             }
@@ -4794,6 +4803,50 @@ mod tests {
         assert!(s.polygons[1].image_item_transform.is_none());
         // Rectangles in the same spread keep working.
         assert_eq!(s.rectangles.len(), 0);
+    }
+
+    #[test]
+    fn a_placed_pdf_eps_or_page_keeps_its_item_transform() {
+        // Not only an `<Image>`: a `<PDF>`, an `<EPS>` and an
+        // `<ImportedPage>` are placed into their frame by their own
+        // `ItemTransform` (core ADR 154), in every frame kind.
+        let xml =
+            br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <Rectangle Self="r1" GeometricBounds="0 0 120 200">
+              <PDF Self="pdf1" ItemTransform="0.5 0 0 0.5 -40 -20">
+                <Link Self="l1" LinkResourceURI="file:/tmp/art.pdf"/>
+              </PDF>
+            </Rectangle>
+            <Oval Self="o1" GeometricBounds="0 0 100 100">
+              <EPS Self="eps1" ItemTransform="1 0 0 1 5 6">
+                <Link Self="l2" LinkResourceURI="file:/tmp/art.eps"/>
+              </EPS>
+            </Oval>
+            <Polygon Self="p1" GeometricBounds="0 0 100 100">
+              <ImportedPage Self="ip1" ItemTransform="2 0 0 2 0 0">
+                <Link Self="l3" LinkResourceURI="file:/tmp/doc.indd"/>
+              </ImportedPage>
+            </Polygon>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        assert_eq!(
+            s.rectangles[0].image_item_transform,
+            Some([0.5, 0.0, 0.0, 0.5, -40.0, -20.0])
+        );
+        assert_eq!(
+            s.rectangles[0].image_link.as_deref(),
+            Some("file:/tmp/art.pdf")
+        );
+        assert_eq!(
+            s.ovals[0].image_item_transform,
+            Some([1.0, 0.0, 0.0, 1.0, 5.0, 6.0])
+        );
+        assert_eq!(
+            s.polygons[0].image_item_transform,
+            Some([2.0, 0.0, 0.0, 2.0, 0.0, 0.0])
+        );
     }
 
     #[test]

@@ -1250,6 +1250,10 @@ keys = [
 ]
 
 [[unseen]]
+reason = "The frame walker's placed-graphic ItemTransform read (core ADR 154) is credited to every element its arm handles, <Link> included; the code skips <Link>, and InDesign writes no ItemTransform there."
+keys = ["Link@ItemTransform"]
+
+[[unseen]]
 reason = "Running headers and text variables: one reader serves every variable type and is credited with each type's attributes. No corpus document has a character-style running header or text around a variable."
 elements = ["MatchCharacterStylePreference"]
 keys = [
