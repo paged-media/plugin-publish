@@ -48,8 +48,8 @@ pub use paged_model::{
 };
 
 pub use paged_model::{
-    Composer, Justification, OtfFeatures, SpanColumnType, SpanColumns, SpanSplitColumnCount,
-    StartParagraph, TabStop,
+    BalanceRaggedLines, Composer, Justification, LineSetting, OtfFeatures, SingleWordJustification,
+    SpanColumnType, SpanColumns, SpanSplitColumnCount, StartParagraph, TabStop,
 };
 
 pub use paged_model::{
@@ -756,6 +756,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 outside_gutter: attr(&e, b"SplitColumnOutsideGutter")
                                     .and_then(|s| s.parse().ok()),
                             },
+                            // Auto leading, a lone word on a justified
+                            // line, the last line's indent; balance is a
+                            // typed `<Properties>` child (below; ADR 153).
+                            line_setting: crate::util::line_setting_attrs(&e),
                             // Align to baseline grid, over the style's.
                             grid_alignment: attr(&e, b"GridAlignment")
                                 .and_then(|s| paged_model::GridAlignment::from_idml(&s)),
@@ -1067,6 +1071,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             underline: attr(&e, b"Underline").and_then(|s| s.parse::<bool>().ok()),
                             strikethru: attr(&e, b"StrikeThru")
                                 .and_then(|s| s.parse::<bool>().ok()),
+                            no_break: attr(&e, b"NoBreak").and_then(|s| s.parse::<bool>().ok()),
                             leading: attr(&e, b"Leading").and_then(|s| s.parse::<f32>().ok()),
                             ruby_flag: attr(&e, b"RubyFlag")
                                 .and_then(|s| crate::util::parse_flag(&s)),
@@ -1302,6 +1307,14 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             }
                             // `type="short"` 2 or `type="enumeration"` All;
                             // InDesign ignores the attribute spelling.
+                            // An enumeration child, never an attribute:
+                            // InDesign ignores `BalanceRaggedLines="true"`.
+                            (2, b"BalanceRaggedLines") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    p.line_setting.balance =
+                                        paged_model::BalanceRaggedLines::from_idml(&value);
+                                }
+                            }
                             (2, b"SpanSplitColumnCount") => {
                                 if let Some(p) = current_paragraph.as_mut() {
                                     p.span_columns.count =

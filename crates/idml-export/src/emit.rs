@@ -724,6 +724,7 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     if let Some(n) = p.keep_last_lines {
         out.push(("KeepLastLines", n.to_string()));
     }
+    line_setting_attrs(&mut out, &p.line_setting);
     // NOT here: `NumberingFormat` and `AppliedNumberingList`. InDesign
     // ignores both as attributes and reads them only as typed
     // `<Properties>` children (measured 2026-09-06) —
@@ -770,6 +771,25 @@ pub(crate) fn grid_alignment_attrs(
     }
 }
 
+/// A range's or a paragraph style's line setting, as attributes:
+/// `AutoLeading`, `SingleWordJustification`, `LastLineIndent` (core ADR
+/// 153). `<BalanceRaggedLines>` is a typed `<Properties>` child
+/// ([`write_balance_ragged_lines`]); InDesign ignores the attribute.
+pub(crate) fn line_setting_attrs(
+    out: &mut Vec<(&'static str, String)>,
+    ls: &idml_import::LineSetting,
+) {
+    if let Some(v) = ls.auto_leading {
+        out.push(("AutoLeading", rewrite::format_f32(v)));
+    }
+    if let Some(w) = ls.single_word {
+        out.push(("SingleWordJustification", w.as_idml().to_string()));
+    }
+    if let Some(v) = ls.last_line_indent {
+        out.push(("LastLineIndent", rewrite::format_f32(v)));
+    }
+}
+
 /// The span / split columns attributes of a range or a paragraph style.
 /// `SpanSplitColumnCount` is not among them: InDesign reads it only as a
 /// typed `<Properties>` child ([`write_span_split_column_count`]).
@@ -795,7 +815,7 @@ pub(crate) fn span_column_attrs(
 
 /// Whether a paragraph carries any `<Properties>` child: tab stops, a
 /// bullet character, a numbering format, a numbering list, a marker
-/// character style or a span / split column count.
+/// character style, a span / split column count or balanced ragged lines.
 pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
     !p.tab_list.is_empty()
         || p.bullet_character.is_some()
@@ -804,6 +824,7 @@ pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
         || p.bullets_character_style.is_some()
         || p.bullets_and_numbering_digits_character_style.is_some()
         || p.span_columns.count.is_some()
+        || p.line_setting.balance.is_some()
 }
 
 /// The paragraph's `<Properties>` block — its tab stops, bullet
@@ -849,6 +870,9 @@ pub(crate) fn emit_paragraph_properties(
     if let Some(c) = p.span_columns.count {
         write_span_split_column_count(writer, c)?;
     }
+    if let Some(b) = p.line_setting.balance {
+        write_balance_ragged_lines(writer, b)?;
+    }
     writer.write_event(Event::End(BytesEnd::new("Properties")))?;
     Ok(())
 }
@@ -865,6 +889,20 @@ pub(crate) fn write_span_split_column_count(
         idml_import::SpanSplitColumnCount::Count(_) => "short",
     };
     write_typed_text(writer, "SpanSplitColumnCount", ty, &count.as_idml())
+}
+
+/// `<BalanceRaggedLines type="enumeration">FullyBalanced</…>` —
+/// InDesign's own spelling (core ADR 153); the attribute is ignored.
+pub(crate) fn write_balance_ragged_lines(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    balance: idml_import::BalanceRaggedLines,
+) -> Result<(), quick_xml::Error> {
+    write_typed_text(
+        writer,
+        "BalanceRaggedLines",
+        "enumeration",
+        balance.as_idml(),
+    )
 }
 
 /// `<NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat>` —
@@ -1024,10 +1062,11 @@ pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String
             out.push((k, rewrite::format_f32(v)));
         }
     }
-    let bool_attrs: [(&'static str, Option<bool>); 3] = [
+    let bool_attrs: [(&'static str, Option<bool>); 4] = [
         ("Underline", r.underline),
         ("StrikeThru", r.strikethru),
         ("Ligatures", r.ligatures_on),
+        ("NoBreak", r.no_break),
     ];
     for (k, v) in bool_attrs {
         if let Some(v) = v {

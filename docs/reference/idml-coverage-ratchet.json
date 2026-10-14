@@ -8,22 +8,22 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 117213,
+      "covered": 118028,
       "total": 633952,
-      "value": 0.184893
+      "value": 0.186178
     },
     "impactImport": {
-      "covered": 25332,
+      "covered": 25336,
       "total": 54667,
-      "value": 0.463387
+      "value": 0.463461
     },
     "weightedExport": {
-      "covered": 85589,
+      "covered": 86404,
       "total": 633952,
-      "value": 0.135009
+      "value": 0.136294
     },
     "misplacedReads": 30,
-    "unseenReads": 300,
+    "unseenReads": 305,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -357,6 +357,7 @@
     "Resources/Styles|ParagraphStyle@AppliedLanguage|attr",
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|attr",
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|properties-child",
+    "Resources/Styles|ParagraphStyle@AutoLeading|attr",
     "Resources/Styles|ParagraphStyle@BasedOn|attr",
     "Resources/Styles|ParagraphStyle@BasedOn|properties-child",
     "Resources/Styles|ParagraphStyle@BaselineShift|attr",
@@ -399,6 +400,7 @@
     "Resources/Styles|ParagraphStyle@KeepWithNext|attr",
     "Resources/Styles|ParagraphStyle@KerningMethod|attr",
     "Resources/Styles|ParagraphStyle@KinsokuType|attr",
+    "Resources/Styles|ParagraphStyle@LastLineIndent|attr",
     "Resources/Styles|ParagraphStyle@Leading|properties-child",
     "Resources/Styles|ParagraphStyle@LeftIndent|attr",
     "Resources/Styles|ParagraphStyle@Ligatures|attr",
@@ -473,6 +475,7 @@
     "Resources/Styles|ParagraphStyle@RuleBelowWidth|attr",
     "Resources/Styles|ParagraphStyle@RuleBelow|attr",
     "Resources/Styles|ParagraphStyle@Self|attr",
+    "Resources/Styles|ParagraphStyle@SingleWordJustification|attr",
     "Resources/Styles|ParagraphStyle@Skew|attr",
     "Resources/Styles|ParagraphStyle@SpaceAfter|attr",
     "Resources/Styles|ParagraphStyle@SpaceBefore|attr",
@@ -974,6 +977,7 @@
     "Stories|ParagraphStyleRange@Justification|attr",
     "Stories|ParagraphStyleRange@KeepWithNext|attr",
     "Stories|ParagraphStyleRange@KinsokuType|attr",
+    "Stories|ParagraphStyleRange@LastLineIndent|attr",
     "Stories|ParagraphStyleRange@LeftIndent|attr",
     "Stories|ParagraphStyleRange@MaximumGlyphScaling|attr",
     "Stories|ParagraphStyleRange@MaximumLetterSpacing|attr",
@@ -1410,6 +1414,7 @@
     "Resources/Styles|ParagraphStyle@AppliedLanguage|attr",
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|attr",
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|properties-child",
+    "Resources/Styles|ParagraphStyle@AutoLeading|attr",
     "Resources/Styles|ParagraphStyle@BasedOn|properties-child",
     "Resources/Styles|ParagraphStyle@BaselineShift|attr",
     "Resources/Styles|ParagraphStyle@BulletsAndNumberingListType|attr",
@@ -1438,6 +1443,7 @@
     "Resources/Styles|ParagraphStyle@Justification|attr",
     "Resources/Styles|ParagraphStyle@KerningMethod|attr",
     "Resources/Styles|ParagraphStyle@KinsokuType|attr",
+    "Resources/Styles|ParagraphStyle@LastLineIndent|attr",
     "Resources/Styles|ParagraphStyle@Leading|properties-child",
     "Resources/Styles|ParagraphStyle@LeftIndent|attr",
     "Resources/Styles|ParagraphStyle@Ligatures|attr",
@@ -1471,6 +1477,7 @@
     "Resources/Styles|ParagraphStyle@Position|attr",
     "Resources/Styles|ParagraphStyle@RightIndent|attr",
     "Resources/Styles|ParagraphStyle@Self|attr",
+    "Resources/Styles|ParagraphStyle@SingleWordJustification|attr",
     "Resources/Styles|ParagraphStyle@Skew|attr",
     "Resources/Styles|ParagraphStyle@SpaceAfter|attr",
     "Resources/Styles|ParagraphStyle@SpaceBefore|attr",
@@ -1855,6 +1862,7 @@
     "Stories|ParagraphStyleRange@Hyphenation|attr",
     "Stories|ParagraphStyleRange@Justification|attr",
     "Stories|ParagraphStyleRange@KeepWithNext|attr",
+    "Stories|ParagraphStyleRange@LastLineIndent|attr",
     "Stories|ParagraphStyleRange@LeftIndent|attr",
     "Stories|ParagraphStyleRange@MaximumGlyphScaling|attr",
     "Stories|ParagraphStyleRange@MaximumLetterSpacing|attr",

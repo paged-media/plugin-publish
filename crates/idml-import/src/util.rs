@@ -179,6 +179,19 @@ pub fn parse_flag(raw: &str) -> Option<bool> {
     }
 }
 
+/// A paragraph's (or paragraph style's) line-setting attributes:
+/// `AutoLeading`, `SingleWordJustification`, `LastLineIndent` (core ADR
+/// 153). `<BalanceRaggedLines>` is a typed child, read by the callers.
+pub(crate) fn line_setting_attrs(e: &quick_xml::events::BytesStart) -> paged_model::LineSetting {
+    paged_model::LineSetting {
+        auto_leading: attr(e, b"AutoLeading").and_then(|s| s.parse().ok()),
+        single_word: attr(e, b"SingleWordJustification")
+            .and_then(|s| paged_model::SingleWordJustification::from_idml(&s)),
+        last_line_indent: attr(e, b"LastLineIndent").and_then(|s| s.parse().ok()),
+        balance: None,
+    }
+}
+
 pub(crate) fn parse_tint_attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<f32> {
     parse_tint(&attr(e, key)?)
 }

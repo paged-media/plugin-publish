@@ -6605,6 +6605,9 @@ pub(crate) fn paragraph_attr_patch(
         b"Composer" => Some(composer_patch(raw, &p.composer)),
         b"KeepLinesTogether" => Some(opt_bool_patch(p.keep_lines_together)),
         b"KeepWithNext" => Some(opt_u32_patch(raw, p.keep_with_next)),
+        b"AutoLeading" | b"SingleWordJustification" | b"LastLineIndent" => {
+            line_setting_patch(key, raw, &p.line_setting)
+        }
         b"StartParagraph" => Some(opt_string_patch(
             &p.start_paragraph.map(|s| s.as_idml().to_string()),
         )),
@@ -6701,6 +6704,7 @@ fn character_attr_patch(key: &[u8], raw: &[u8], r: &CharacterRun) -> Option<Patc
         b"Underline" => Some(opt_bool_patch(r.underline)),
         b"StrikeThru" => Some(opt_bool_patch(r.strikethru)),
         b"Ligatures" => Some(opt_bool_patch(r.ligatures_on)),
+        b"NoBreak" => Some(opt_bool_patch(r.no_break)),
         _ => None,
     }
 }
@@ -6720,7 +6724,40 @@ fn character_extras(r: &CharacterRun) -> Vec<(&'static str, String)> {
     if let Some(s) = &r.character_style {
         out.push(("AppliedCharacterStyle", s.clone()));
     }
+    // A property path sets it (core ADR 153); InDesign writes it only
+    // where it is on.
+    if let Some(b) = r.no_break {
+        out.push(("NoBreak", b.to_string()));
+    }
     out
+}
+
+/// A range's or a paragraph style's `AutoLeading`,
+/// `SingleWordJustification` or `LastLineIndent` against the model
+/// (core ADR 153); a source spelling of the model's value keeps its
+/// bytes.
+pub(crate) fn line_setting_patch(
+    key: &[u8],
+    raw: Option<&str>,
+    ls: &idml_import::LineSetting,
+) -> Option<Patch> {
+    Some(match key {
+        b"AutoLeading" => preserving_f32_patch(raw, ls.auto_leading),
+        b"LastLineIndent" => preserving_f32_patch(raw, ls.last_line_indent),
+        b"SingleWordJustification" => match ls.single_word {
+            Some(w) if raw == Some(w.as_idml()) => Patch::Keep,
+            Some(w) => Patch::Set(w.as_idml().to_string()),
+            // A spelling the parser could not read keeps its bytes.
+            None if raw
+                .and_then(idml_import::SingleWordJustification::from_idml)
+                .is_none() =>
+            {
+                Patch::Keep
+            }
+            None => Patch::Remove,
+        },
+        _ => return None,
+    })
 }
 
 pub(crate) fn opt_i32_patch(raw: Option<&str>, v: Option<i32>) -> Patch {
@@ -6978,6 +7015,47 @@ mod tests {
             !out.contains("SpaceAfter"),
             "a cleared override is dropped: {out}"
         );
+    }
+
+    #[test]
+    fn line_setting_and_no_break_round_trip_on_the_range() {
+        // Core ADR 153: AutoLeading, SingleWordJustification and
+        // LastLineIndent as attributes of the range, NoBreak on the run.
+        // An unedited save keeps the bytes; an edit rewrites in place or
+        // appends, and a cleared value is dropped.
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AutoLeading="150" SingleWordJustification="CenterAlign" LastLineIndent="24"><CharacterStyleRange NoBreak="true"><Content>a b</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>c</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        let ls = &story.paragraphs[0].line_setting;
+        assert_eq!(ls.auto_leading, Some(150.0));
+        assert_eq!(
+            ls.single_word,
+            Some(idml_import::SingleWordJustification::CenterAlign)
+        );
+        assert_eq!(ls.last_line_indent, Some(24.0));
+        assert_eq!(story.paragraphs[0].runs[0].no_break, Some(true));
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+
+        story.paragraphs[0].line_setting.auto_leading = Some(100.0);
+        story.paragraphs[0].line_setting.last_line_indent = None;
+        story.paragraphs[0].runs[0].no_break = None;
+        story.paragraphs[1].line_setting.single_word =
+            Some(idml_import::SingleWordJustification::RightAlign);
+        story.paragraphs[1].runs[0].no_break = Some(true);
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"AutoLeading="100""#), "{out}");
+        assert!(!out.contains("LastLineIndent"), "{out}");
+        assert!(
+            out.contains(r#"SingleWordJustification="RightAlign""#),
+            "{out}"
+        );
+        assert_eq!(out.matches("NoBreak=").count(), 1, "{out}");
+        let back = idml_import::parse_story(out.as_bytes()).unwrap();
+        assert_eq!(back.paragraphs[0].runs[0].no_break, None);
+        assert_eq!(back.paragraphs[1].runs[0].no_break, Some(true));
     }
 
     #[test]

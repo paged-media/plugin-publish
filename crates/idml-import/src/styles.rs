@@ -209,6 +209,9 @@ enum CurrentProperty {
     /// `<SpanSplitColumnCount type="short">2</…>` (or `enumeration` All)
     /// — InDesign's only spelling. Paragraph-only.
     SpanSplitColumnCount,
+    /// `<BalanceRaggedLines type="enumeration">FullyBalanced</…>` —
+    /// InDesign's only spelling (ADR 153). Paragraph-only.
+    BalanceRaggedLines,
     /// `<BulletsCharacterStyle type="object">CharacterStyle/X</…>` — the
     /// only spelling InDesign reads (`list-overrides` o14/o15, 2026-10-01).
     /// Paragraph-only.
@@ -411,6 +414,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 {
                     pending_property = Some(CurrentProperty::SpanSplitColumnCount);
                 }
+                b"BalanceRaggedLines" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
+                    pending_property = Some(CurrentProperty::BalanceRaggedLines);
+                }
                 b"BulletsCharacterStyle"
                     if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
                 {
@@ -510,6 +516,10 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                             p.span_columns.count =
                                                 paged_model::SpanSplitColumnCount::from_idml(&text);
                                         }
+                                        CurrentProperty::BalanceRaggedLines => {
+                                            p.line_setting.balance =
+                                                paged_model::BalanceRaggedLines::from_idml(&text);
+                                        }
                                         // The child beats an attribute of
                                         // ours: InDesign ignores the latter.
                                         CurrentProperty::BulletsCharacterStyle => {
@@ -560,6 +570,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         | CurrentProperty::NumberingFormat
                                         | CurrentProperty::AppliedNumberingList
                                         | CurrentProperty::SpanSplitColumnCount
+                                        | CurrentProperty::BalanceRaggedLines
                                         | CurrentProperty::BulletsCharacterStyle
                                         | CurrentProperty::NumberingCharacterStyle
                                         | CurrentProperty::BulletsTextAfter => {}
@@ -933,6 +944,7 @@ fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterS
         tracking: attr(e, b"Tracking").and_then(|s| s.parse().ok()),
         underline: attr(e, b"Underline").and_then(|s| s.parse().ok()),
         strikethru: attr(e, b"StrikeThru").and_then(|s| s.parse().ok()),
+        no_break: attr(e, b"NoBreak").and_then(|s| s.parse().ok()),
         overprint_fill: attr(e, b"OverprintFill").and_then(|s| s.parse().ok()),
         overprint_stroke: attr(e, b"OverprintStroke").and_then(|s| s.parse().ok()),
         ruby_flag: attr(e, b"RubyFlag").and_then(|s| crate::util::parse_flag(&s)),
@@ -1536,6 +1548,7 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
             inside_gutter: attr(e, b"SplitColumnInsideGutter").and_then(|s| s.parse().ok()),
             outside_gutter: attr(e, b"SplitColumnOutsideGutter").and_then(|s| s.parse().ok()),
         },
+        line_setting: crate::util::line_setting_attrs(e),
         // Align to baseline grid: real documents set it on the body
         // style, not on each range.
         grid_alignment: attr(e, b"GridAlignment")

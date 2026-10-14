@@ -39,12 +39,13 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::styles::{ParagraphStyleDef, StyleSheet};
-use idml_import::{Paragraph, SpanSplitColumnCount, Story, TabStop};
+use idml_import::{BalanceRaggedLines, Paragraph, SpanSplitColumnCount, Story, TabStop};
 
 use crate::emit::{
-    paragraph_has_properties, write_applied_numbering_list, write_bullet_char,
-    write_bullets_character_style, write_numbering_character_style, write_numbering_expression,
-    write_numbering_format, write_span_split_column_count, write_tab_list,
+    paragraph_has_properties, write_applied_numbering_list, write_balance_ragged_lines,
+    write_bullet_char, write_bullets_character_style, write_numbering_character_style,
+    write_numbering_expression, write_numbering_format, write_span_split_column_count,
+    write_tab_list,
 };
 use crate::rewrite::resolve_paragraph;
 
@@ -67,6 +68,8 @@ pub(crate) struct Owner<'a> {
     pub(crate) digits_style: Option<&'a str>,
     /// `SpanSplitColumnCount`.
     pub(crate) count: Option<SpanSplitColumnCount>,
+    /// `BalanceRaggedLines` (core ADR 153).
+    pub(crate) balance: Option<BalanceRaggedLines>,
 }
 
 impl<'a> Owner<'a> {
@@ -80,6 +83,7 @@ impl<'a> Owner<'a> {
             bullet_style: p.bullets_character_style.as_deref(),
             digits_style: p.bullets_and_numbering_digits_character_style.as_deref(),
             count: p.span_columns.count,
+            balance: p.line_setting.balance,
         }
     }
 
@@ -93,6 +97,7 @@ impl<'a> Owner<'a> {
             bullet_style: s.bullets_character_style.as_deref(),
             digits_style: s.bullets_and_numbering_digits_character_style.as_deref(),
             count: s.span_columns.count,
+            balance: s.line_setting.balance,
         }
     }
 
@@ -105,6 +110,7 @@ impl<'a> Owner<'a> {
             || self.bullet_style.is_some()
             || self.digits_style.is_some()
             || self.count.is_some()
+            || self.balance.is_some()
     }
 
     /// Every child, in InDesign's order, for a freshly written element.
@@ -136,6 +142,9 @@ impl<'a> Owner<'a> {
         if let Some(c) = self.count {
             write_span_split_column_count(writer, c)?;
         }
+        if let Some(b) = self.balance {
+            write_balance_ragged_lines(writer, b)?;
+        }
         Ok(())
     }
 }
@@ -158,6 +167,7 @@ struct Open<'a> {
     bullet_style_done: bool,
     digits_style_done: bool,
     count_done: bool,
+    balance_done: bool,
 }
 
 impl<'a> Open<'a> {
@@ -175,6 +185,7 @@ impl<'a> Open<'a> {
             bullet_style_done: false,
             digits_style_done: false,
             count_done: false,
+            balance_done: false,
         }
     }
     fn owes_tabs(&self) -> bool {
@@ -209,8 +220,12 @@ impl<'a> Open<'a> {
     fn owes_count(&self) -> bool {
         !self.count_done && self.owner.as_ref().is_some_and(|o| o.count.is_some())
     }
+    fn owes_balance(&self) -> bool {
+        !self.balance_done && self.owner.as_ref().is_some_and(|o| o.balance.is_some())
+    }
     fn owes_any(&self) -> bool {
         self.owes_count()
+            || self.owes_balance()
             || self.owes_tabs()
             || self.owes_bullet()
             || self.owes_format()
@@ -280,6 +295,7 @@ fn source_has_any(original: &[u8]) -> bool {
         || contains(original, b"<BulletsCharacterStyle")
         || contains(original, b"<NumberingCharacterStyle")
         || contains(original, b"<BulletsTextAfter")
+        || contains(original, b"<BalanceRaggedLines")
 }
 
 /// A story's ranges, matched to the model by provenance.
@@ -348,6 +364,7 @@ fn is_owned_child(name: &[u8]) -> bool {
             | b"BulletsCharacterStyle"
             | b"NumberingCharacterStyle"
             | b"BulletsTextAfter"
+            | b"BalanceRaggedLines"
     )
 }
 
@@ -408,6 +425,10 @@ fn spell_with<'m>(
                         b"SpanSplitColumnCount" => {
                             let count = SpanSplitColumnCount::from_idml(&subtree_text(&inner));
                             settle_count(&mut writer, o, Some((&start, &inner)), count)?;
+                        }
+                        b"BalanceRaggedLines" => {
+                            let text = subtree_text(&inner);
+                            settle_balance(&mut writer, o, Some((&start, &inner)), &text)?;
                         }
                         other => {
                             let which = TextChild::of(other);
@@ -471,6 +492,9 @@ fn spell_with<'m>(
                         }
                         b"SpanSplitColumnCount" => {
                             settle_count(&mut writer, o, Some((&e.borrow(), &[])), None)?;
+                        }
+                        b"BalanceRaggedLines" => {
+                            settle_balance(&mut writer, o, Some((&e.borrow(), &[])), "")?;
                         }
                         other => {
                             let which = TextChild::of(other);
@@ -742,6 +766,35 @@ fn settle_count(
     }
 }
 
+/// A source `<BalanceRaggedLines>` (or none) against the model, like
+/// [`settle_count`]. A spelling the parser cannot read (an old boolean
+/// `true` / `false`) keeps its bytes while the model says nothing.
+fn settle_balance(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    o: &mut Open<'_>,
+    source: Option<(&BytesStart<'_>, &[Event<'static>])>,
+    source_text: &str,
+) -> Result<(), quick_xml::Error> {
+    o.balance_done = true;
+    let source_balance = BalanceRaggedLines::from_idml(source_text);
+    let Some(p) = o.owner.as_ref() else {
+        if let Some((start, inner)) = source {
+            write_events(writer, start, inner)?;
+        }
+        return Ok(());
+    };
+    match (p.balance, source) {
+        (Some(b), Some((start, inner))) if source_balance == Some(b) => {
+            write_events(writer, start, inner)
+        }
+        (Some(b), _) => write_balance_ragged_lines(writer, b),
+        (None, Some((start, inner))) if source_balance.is_none() => {
+            write_events(writer, start, inner)
+        }
+        (None, _) => Ok(()),
+    }
+}
+
 /// A source `<NumberingFormat>` / `<AppliedNumberingList>` /
 /// `<NumberingExpression>` (or none) against the model, like
 /// [`settle_tabs`]. A "no list" spelling the parser reads as `None`
@@ -824,6 +877,9 @@ fn write_missing_children(
     }
     if o.owes_count() {
         settle_count(writer, o, None, None)?;
+    }
+    if o.owes_balance() {
+        settle_balance(writer, o, None, "")?;
     }
     Ok(())
 }
@@ -930,6 +986,48 @@ mod tests {
             out.contains(r#"<ParagraphStyleRange SpanColumnType="SpanColumns"><Properties><SpanSplitColumnCount type="short">3</SpanSplitColumnCount></Properties><CharacterStyleRange>"#),
             "{out}"
         );
+    }
+
+    /// Balanced ragged lines, as InDesign spells them: a typed child
+    /// (core ADR 153). Kept, changed, added and cleared like the count;
+    /// a spelling the parser cannot read keeps its bytes.
+    const BALANCED: &[u8] = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange AutoLeading="150"><Properties><BalanceRaggedLines type="enumeration">FullyBalanced</BalanceRaggedLines></Properties><CharacterStyleRange><Content>B</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+
+    #[test]
+    fn balanced_ragged_lines_round_trip_as_a_child() {
+        let s = story(BALANCED);
+        assert_eq!(
+            s.paragraphs[0].line_setting.balance,
+            Some(BalanceRaggedLines::FullyBalanced)
+        );
+        assert_eq!(spell(BALANCED, &s).unwrap(), BALANCED, "unmutated");
+
+        let mut s = story(BALANCED);
+        s.paragraphs[0].line_setting.balance = Some(BalanceRaggedLines::NoBalancing);
+        let out = String::from_utf8(spell(BALANCED, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Properties><BalanceRaggedLines type="enumeration">NoBalancing</BalanceRaggedLines></Properties>"#),
+            "{out}"
+        );
+
+        let mut s = story(BALANCED);
+        s.paragraphs[0].line_setting.balance = None;
+        let out = String::from_utf8(spell(BALANCED, &s).unwrap()).unwrap();
+        assert!(!out.contains("BalanceRaggedLines"), "{out}");
+
+        let plain = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>B</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut s = story(plain);
+        s.paragraphs[0].line_setting.balance = Some(BalanceRaggedLines::FullyBalanced);
+        let out = String::from_utf8(spell(plain, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyleRange><Properties><BalanceRaggedLines type="enumeration">FullyBalanced</BalanceRaggedLines></Properties><CharacterStyleRange>"#),
+            "{out}"
+        );
+
+        let old = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><Properties><BalanceRaggedLines type="boolean">true</BalanceRaggedLines></Properties><CharacterStyleRange><Content>B</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let s = story(old);
+        assert_eq!(s.paragraphs[0].line_setting.balance, None);
+        assert_eq!(spell(old, &s).unwrap(), old, "an unread spelling is kept");
     }
 
     /// A numbered range as InDesign spells its local list overrides
