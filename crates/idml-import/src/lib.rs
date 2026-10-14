@@ -59,11 +59,11 @@ pub use spread::{
 };
 pub use story::{
     parse_story, parse_story_with_provenance, story_text_anchors, AnchoredFrame, AnchoredFrameKind,
-    AnchoredObjectSetting, CellDiagonal, CharacterRun, Composer, Justification, OtfFeatures,
-    Paragraph, PlaceholderField, RunSlot, SpanColumnType, SpanColumns, SpanSplitColumnCount,
-    StartParagraph, Story, StoryProvenance, TabStop, Table, TableBorder, TableCell, TableColumn,
-    TableLineStrokes, TableRow, AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER,
-    PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
+    AnchoredObjectSetting, BalanceRaggedLines, CellDiagonal, CharacterRun, Composer, Justification,
+    LineSetting, OtfFeatures, Paragraph, PlaceholderField, RunSlot, SingleWordJustification,
+    SpanColumnType, SpanColumns, SpanSplitColumnCount, StartParagraph, Story, StoryProvenance,
+    TabStop, Table, TableBorder, TableCell, TableColumn, TableLineStrokes, TableRow,
+    AUTO_PAGE_NUMBER_MARKER, NEXT_PAGE_NUMBER_MARKER, PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
 };
 pub use styles::{
     parse_conditions, parse_stylesheet, CellStyleDef, CharacterStyleDef, ConditionDef,

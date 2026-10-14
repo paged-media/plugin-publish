@@ -1320,3 +1320,18 @@ keys = [
   "CellStyle@FirstBaselineOffset",
   "CellStyle@MinimumFirstBaselineOffset",
 ]
+
+[[unseen]]
+reason = "A paragraph's line setting where a range overrides its style (core ADR 153): InDesign 20.0.1 opened core `paragraph-attrs` with AutoLeading, SingleWordJustification and a typed <BalanceRaggedLines> on the <ParagraphStyleRange> and set each as stated. The census documents leave all three to their paragraph styles, which are read."
+keys = [
+  "ParagraphStyleRange@AutoLeading",
+  "ParagraphStyleRange@SingleWordJustification",
+  "ParagraphStyleRange@BalanceRaggedLines",
+]
+
+[[unseen]]
+reason = "NoBreak on a range or a character style (core ADR 153, `paragraph-attrs` E2: InDesign 20.0.1 keeps \"New York City\" on one line when its range says NoBreak=\"true\"). Every census document writes NoBreak=\"false\" on its paragraph styles only."
+keys = [
+  "CharacterStyleRange@NoBreak",
+  "CharacterStyle@NoBreak",
+]
