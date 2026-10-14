@@ -1143,6 +1143,11 @@ fn parse_cell_style(e: &quick_xml::events::BytesStart) -> Option<CellStyleDef> {
         bottom_edge_stroke_type: attr(e, b"BottomEdgeStrokeType"),
         left_edge_stroke_type: attr(e, b"LeftEdgeStrokeType"),
         right_edge_stroke_type: attr(e, b"RightEdgeStrokeType"),
+        // InDesign keeps a cell's first-baseline policy on its style rather
+        // than on each <Cell> (core `table-cell-baseline` page 2).
+        first_baseline_offset: attr(e, b"FirstBaselineOffset"),
+        minimum_first_baseline_offset: attr(e, b"MinimumFirstBaselineOffset")
+            .and_then(|s| s.parse().ok()),
     })
 }
 
@@ -1608,6 +1613,27 @@ mod tests {
                     FontStyle="Bold"/>
   </RootParagraphStyleGroup>
 </idPkg:Styles>"#;
+
+    /// InDesign keeps a cell's first-baseline policy on its cell style
+    /// (core `table-cell-baseline` page 2); the reader takes it there, and
+    /// the BasedOn cascade carries it to a child style.
+    #[test]
+    fn a_cell_styles_first_baseline_policy_is_read_and_cascades() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x">
+          <RootCellStyleGroup>
+            <CellStyle Self="CellStyle/Cap" Name="Cap"
+                       FirstBaselineOffset="CapHeight" MinimumFirstBaselineOffset="30"/>
+            <CellStyle Self="CellStyle/Child" Name="Child" BasedOn="CellStyle/Cap"/>
+          </RootCellStyleGroup>
+        </idPkg:Styles>"#;
+        let sheet = parse_stylesheet(xml).unwrap();
+        let cap = &sheet.cell_styles["CellStyle/Cap"];
+        assert_eq!(cap.first_baseline_offset.as_deref(), Some("CapHeight"));
+        assert_eq!(cap.minimum_first_baseline_offset, Some(30.0));
+        let child = sheet.resolve_cell("CellStyle/Child");
+        assert_eq!(child.first_baseline_offset.as_deref(), Some("CapHeight"));
+        assert_eq!(child.minimum_first_baseline_offset, Some(30.0));
+    }
 
     #[test]
     fn span_and_split_columns_parse_and_cascade_on_styles() {
