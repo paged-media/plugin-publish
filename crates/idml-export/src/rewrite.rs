@@ -198,18 +198,17 @@
 //!   the B-18 paste-into lane and the C-19 group lane, not two. It is
 //!   REPARENTING only: a pure z-order move (C-23) relocates the original
 //!   bytes and loses nothing.
-//! * **Group DISSOLVE and `SetGroupTransform`.** Two group lanes C-19
-//!   deliberately left alone. A `<Group>` whose model entry disappeared
-//!   keeps its element, and its members keep their legacy in-place
+//! * **Group DISSOLVE.** A group lane C-19 deliberately left alone. A
+//!   `<Group>` whose model entry disappeared keeps its element, and its
+//!   members keep their legacy in-place
 //!   treatment — including members the model has REMOVED, which is the
 //!   pre-existing "inside a group, a structural remove doesn't save"
 //!   rule. Concretely: bake → save → reopen → release → save leaves the
 //!   old wrapper and its derived layers in the file. Fixing it means
 //!   deciding what a dissolve does to z-order, which is a lane of its
-//!   own. And a `<Group>`'s own `ItemTransform` is never patched from
-//!   the model, so a `SetGroupTransform` does not save back; the member
-//!   flush therefore re-bases against the SOURCE group transform, which
-//!   is the element the members are actually written inside of.
+//!   own. (A `<Group>`'s own `ItemTransform` IS patched from the model,
+//!   so a `SetGroupTransform` saves back; members re-base against the
+//!   group transform as written.)
 //! * **Opacity / blend on a SOURCE item.** `<BlendingSetting Opacity /
 //!   BlendMode>` is an ELEMENT, not an attribute, so the attribute-patch
 //!   lane can't reach it: changing the opacity of an item that already
@@ -2171,6 +2170,94 @@ fn compose_opt(a: Option<[f32; 6]>, b: Option<[f32; 6]>) -> Option<[f32; 6]> {
     }
 }
 
+const IDENTITY_MATRIX: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// The `ItemTransform` a source `<Group>` the model knows is written
+/// with (`None` inside = identity), or `None` when it cannot be derived
+/// and the source attribute passes through.
+///
+/// The model stores a group's transform RELATIVE TO THE GROUP HOLDING IT,
+/// as IDML does. When the group sits in the file inside the group the
+/// model nests it in (or both at the top level), that value is written as
+/// is. When the two differ — the model released the group from a wrapper
+/// the file still carries, a dissolve that does not save back — the
+/// group's spread-space transform is re-based against what it is written
+/// inside of (`accum`), the same recovery a member gets.
+fn group_transform_on_disk(
+    spread: &Spread,
+    e: &BytesStart,
+    enclosing: Option<&str>,
+    accum: Option<[f32; 6]>,
+) -> Option<Option<[f32; 6]>> {
+    let self_id = attr_value(e, b"Self")?;
+    let gi = spread
+        .groups
+        .iter()
+        .position(|g| g.self_id.as_deref() == Some(self_id.as_str()))?;
+    let parent_of = |i: usize| {
+        spread
+            .groups
+            .iter()
+            .position(|g| g.members.contains(&idml_import::FrameRef::Group(i)))
+    };
+    let own = spread.groups[gi].item_transform;
+    let model_parent = parent_of(gi);
+    if model_parent.and_then(|p| spread.groups[p].self_id.as_deref()) == enclosing {
+        return Some(own);
+    }
+    // The model's frame for the group: its ancestors' transforms composed,
+    // outermost first, then its own.
+    let mut frame: Option<[f32; 6]> = None;
+    let mut cur = model_parent;
+    for _ in 0..spread.groups.len() {
+        let Some(p) = cur else { break };
+        frame = compose_opt(spread.groups[p].item_transform, frame);
+        cur = parent_of(p);
+    }
+    let composed = compose_opt(frame, own).or(Some(IDENTITY_MATRIX));
+    recover_member_transform(accum, composed)
+}
+
+/// Does the source spelling `raw` of a group's `ItemTransform` already
+/// say `on_disk`? A spelling the parser could not read, it read as the
+/// identity, so it says the identity and is left alone while the model
+/// keeps that.
+fn group_transform_is_source(raw: Option<&str>, on_disk: Option<[f32; 6]>) -> bool {
+    match raw.map(parse_matrix) {
+        Some(Some(m)) => identity_as_none(Some(m)) == identity_as_none(on_disk),
+        Some(None) => identity_as_none(on_disk).is_none(),
+        None => false,
+    }
+}
+
+/// The patch for a group's `ItemTransform` attribute: the source bytes
+/// when they already say `on_disk`, else the model's matrix.
+fn group_transform_patch(raw: &[u8], on_disk: Option<[f32; 6]>) -> Patch {
+    if group_transform_is_source(std::str::from_utf8(raw).ok(), on_disk) {
+        Patch::Keep
+    } else {
+        Patch::Set(format_matrix(&on_disk.unwrap_or(IDENTITY_MATRIX)))
+    }
+}
+
+/// The matrix a group's members are written relative to: the source's
+/// when the group keeps its spelling (or the model does not own it), else
+/// the model's. The model's full value rather than its printed rounding,
+/// so a member that kept its place relative to the group keeps its bytes
+/// too; the group's own print precision is the only rounding the round
+/// trip sees.
+fn written_group_transform(
+    raw: Option<&str>,
+    on_disk: Option<Option<[f32; 6]>>,
+) -> Option<[f32; 6]> {
+    let source = raw.and_then(parse_matrix);
+    match on_disk {
+        None => source,
+        Some(t) if group_transform_is_source(raw, t) => source,
+        Some(t) => t,
+    }
+}
+
 /// Emit ONE page item the source XML never carried, resolved through its
 /// `FrameRef`. `parent_accum` is the COMPOSED (spread-space) transform of
 /// everything the item is nested under — a B-18 container, a chain of
@@ -3173,6 +3260,9 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
     // for an id-less group — see `group_owner`). The innermost entry is
     // the SOURCE-side answer to "which group is this item in?".
     let mut group_ids: Vec<Option<String>> = Vec::new();
+    // `Self` per open SOURCE group, whether or not the model still knows
+    // it — what a group's own `ItemTransform` is written relative to.
+    let mut source_group_ids: Vec<Option<String>> = Vec::new();
 
     // ---- plugin-metadata Label patching state ----
     // Element-name stack (depth tracking) + the innermost open page
@@ -3448,6 +3538,16 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         }
                     }
                 };
+                let group_on_disk = if e.name().as_ref() == b"Group" {
+                    group_transform_on_disk(
+                        spread,
+                        &e,
+                        source_group_ids.last().cloned().flatten().as_deref(),
+                        group_accum.flatten(),
+                    )
+                } else {
+                    None
+                };
                 let patched = patch_spread_item(
                     &e,
                     spread,
@@ -3458,6 +3558,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     &spread.graphic_lines,
                     &spread.groups,
                     group_accum,
+                    group_on_disk,
                 )?;
                 match patched {
                     Some(start) => writer.write_event(Event::Start(start))?,
@@ -3465,8 +3566,13 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                 }
                 if name_owned == b"Group" {
                     group_depth += 1;
-                    group_xforms
-                        .push(attr_value(&e, b"ItemTransform").and_then(|s| parse_matrix(&s)));
+                    // The transform the group is WRITTEN with — its
+                    // members are written relative to that.
+                    group_xforms.push(written_group_transform(
+                        attr_value(&e, b"ItemTransform").as_deref(),
+                        group_on_disk,
+                    ));
+                    source_group_ids.push(attr_value(&e, b"Self"));
                     // C-19: a group the MODEL still knows takes part in
                     // the membership triage; anything else (no `Self`,
                     // or dissolved out of the model) stays opaque and
@@ -3483,6 +3589,12 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         seen_ids.insert(id);
                     }
                     group_ids.push(gid);
+                }
+                // A button or a multi-state object is a group of its
+                // states to the parser: what a group inside one is
+                // relative to.
+                if matches!(name_owned.as_slice(), b"Button" | b"MultiStateObject") {
+                    source_group_ids.push(attr_value(&e, b"Self"));
                 }
                 if ITEM_KINDS.contains(&name_owned.as_slice()) {
                     let self_id = attr_value(&e, b"Self");
@@ -3664,6 +3776,16 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         }
                     }
                 };
+                let group_on_disk = if e.name().as_ref() == b"Group" {
+                    group_transform_on_disk(
+                        spread,
+                        &e,
+                        source_group_ids.last().cloned().flatten().as_deref(),
+                        group_accum.flatten(),
+                    )
+                } else {
+                    None
+                };
                 let patched = patch_spread_item(
                     &e,
                     spread,
@@ -3674,6 +3796,7 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                     &spread.graphic_lines,
                     &spread.groups,
                     group_accum,
+                    group_on_disk,
                 )?;
                 // A labelled item serialised as an EMPTY tag must grow
                 // children — expand to Start + Properties/Label + End.
@@ -3887,10 +4010,14 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         }
                     }
                 }
+                if matches!(name_owned.as_slice(), b"Button" | b"MultiStateObject") {
+                    source_group_ids.pop();
+                }
                 if name_owned == b"Group" {
                     group_depth = group_depth.saturating_sub(1);
                     let own_xform = group_xforms.pop().flatten();
                     let gid = group_ids.pop().flatten();
+                    source_group_ids.pop();
                     // C-19: an EXISTING group that gained members (a
                     // nested `CreateGroup`, or an item moved into it)
                     // flushes the missing ones just before its close —
@@ -3903,12 +4030,9 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                             .iter()
                             .find(|g| g.self_id.as_deref() == Some(gid))
                         {
-                            // Members re-base against the SOURCE group's
-                            // composed transform — that is the element
-                            // they are being written inside of. (The
-                            // group's own `<Group ItemTransform>` is not
-                            // patched from the model; a `SetGroupTransform`
-                            // save-back is a separate lane.)
+                            // Members re-base against the group's
+                            // composed transform as WRITTEN — that is the
+                            // element they are being written inside of.
                             let accum =
                                 compose_opt(accumulate_group_xforms(&group_xforms), own_xform);
                             let present = present_in_group.get(gid);
@@ -4119,6 +4243,7 @@ fn patch_spread_item(
     graphic_lines: &[idml_import::GraphicLine],
     groups: &[idml_import::Group],
     group_accum: Option<Option<[f32; 6]>>,
+    group_on_disk: Option<Option<[f32; 6]>>,
 ) -> Result<Option<BytesStart<'static>>, quick_xml::Error> {
     let patched = patch_spread_item_attrs(
         e,
@@ -4130,6 +4255,7 @@ fn patch_spread_item(
         graphic_lines,
         groups,
         group_accum,
+        group_on_disk,
     )?;
     match patched {
         Some(start) => patch_item_name(patch_item_state(start, spread)?, spread).map(Some),
@@ -4224,6 +4350,7 @@ fn patch_spread_item_attrs(
     graphic_lines: &[idml_import::GraphicLine],
     groups: &[idml_import::Group],
     group_accum: Option<Option<[f32; 6]>>,
+    group_on_disk: Option<Option<[f32; 6]>>,
 ) -> Result<Option<BytesStart<'static>>, quick_xml::Error> {
     let name = e.name();
     let self_id = attr_value(e, b"Self");
@@ -4463,12 +4590,12 @@ fn patch_spread_item_attrs(
                 }),
             )
         }
-        // C-18 — a `<Group>` gets a corner-ONLY patch lane. It is not a
-        // `VectorItem`: it has no bounds, fill, stroke or arrowheads, and
-        // its own `ItemTransform` is deliberately NOT patched from the
-        // model (a `SetGroupTransform` save-back is a separate lane —
-        // see the known-losses list). So the lookup answers only for the
-        // ten corner keys; everything else passes through verbatim.
+        // C-18 — a `<Group>` is not a `VectorItem`: it has no bounds,
+        // fill, stroke or arrowheads. Its lookup answers for the ten
+        // corner keys and its own `ItemTransform` (`group_on_disk`, the
+        // model's transform relative to what the group is written inside
+        // of); everything else passes through verbatim, and a transform
+        // the model did not change keeps its source spelling.
         b"Group" => {
             let Some(g) = groups
                 .iter()
@@ -4479,11 +4606,12 @@ fn patch_spread_item_attrs(
             let corners = corner_attrs_of(g.corner_radius, &g.corner_option, &g.corners);
             let mut extras = corner_attr_extras(&corners);
             // A group written without an `ItemTransform` (an older
-            // export of ours) gets the identity spelled: InDesign does
-            // not read an absent one as identity — see
-            // `TransformPlan::extra`. InDesign's own groups carry it.
+            // export of ours) gets one spelled: InDesign does not read an
+            // absent one as identity — see `TransformPlan::extra`.
+            // InDesign's own groups carry it.
             if attr_value(e, b"ItemTransform").is_none() {
-                extras.push(("ItemTransform", "1 0 0 1 0 0".to_string()));
+                let t = group_on_disk.flatten().unwrap_or(IDENTITY_MATRIX);
+                extras.push(("ItemTransform", format_matrix(&t)));
             }
             // A group without `ItemLayer` lands on the document's first
             // layer in InDesign and drags its members there (see
@@ -4494,7 +4622,14 @@ fn patch_spread_item_attrs(
                     extras.push(("ItemLayer", layer.to_string()));
                 }
             }
-            let start = patch_start(e, |k, raw| corner_attr_patch(k, raw, &corners), &extras)?;
+            let start = patch_start(
+                e,
+                |k, raw| match (k, group_on_disk) {
+                    (b"ItemTransform", Some(t)) => Some(group_transform_patch(raw, t)),
+                    _ => corner_attr_patch(k, raw, &corners),
+                },
+                &extras,
+            )?;
             Ok(Some(start.into_owned()))
         }
         _ => Ok(None),
@@ -7915,22 +8050,21 @@ mod tests {
         );
     }
 
-    /// C-18 — a `<Group>`'s corner-only patch lane must not start
-    /// patching anything else. In particular its own `ItemTransform` is
-    /// a documented known loss (a `SetGroupTransform` save-back is a
-    /// separate lane), so a model transform that differs from the source
-    /// must NOT be written.
+    /// C-18 — a `<Group>`'s patch lane writes its corners and its own
+    /// `ItemTransform` (a `SetGroupTransform` saves back) and nothing
+    /// else: the element keeps every other attribute as it was.
     #[test]
-    fn c18_group_patch_lane_touches_corners_only() {
+    fn c18_group_patch_lane_touches_corners_and_its_transform_only() {
         let mut s = c18_parsed();
         s.groups[0].item_transform = Some([2.0, 0.0, 0.0, 2.0, 99.0, 99.0]);
         s.groups[0].corner_radius = Some(1.5);
         let out = rewrite_spread(C18_SPREAD, &s).expect("rewrite");
         let out = String::from_utf8(out).unwrap();
-        assert!(out.contains(r#"CornerRadius="1.5""#), "corner: {out}");
         assert!(
-            out.contains(r#"<Group Self="g9" ItemTransform="1 0 0 1 0 0""#),
-            "the group's own transform must pass through verbatim: {out}"
+            out.contains(
+                r#"<Group Self="g9" ItemTransform="2 0 0 2 99 99" CornerOption="RoundedCorner" CornerRadius="1.5" TopLeftCornerOption="RoundedCorner">"#
+            ),
+            "the transform and the corner are written in place: {out}"
         );
     }
 
