@@ -1309,3 +1309,10 @@ keys = [
 [[unseen]]
 reason = "InDesign writes it on a <ParagraphStyleRange> whose paragraph aligns only its first line to the baseline grid by itself rather than through its style (asked of InDesign 20.0.1, 2026-10-14: a paragraph given gridAlignFirstLineOnly in its DOM exports GridAlignFirstLineOnly=\"true\" GridAlignment=\"AlignBaseline\" on its range); the census documents set it only on styles."
 keys = ["ParagraphStyleRange@GridAlignFirstLineOnly"]
+
+[[unseen]]
+reason = "InDesign keeps a cell's first-baseline policy on its cell style rather than repeating it on each <Cell> (core table-cell-baseline page 2, exported by InDesign 20.0.1, 2026-10-12: its reference sets cap-height, x-height, fixed and minimum-30 first lines from cell styles alone); no census document has a cell style that sets one."
+keys = [
+  "CellStyle@FirstBaselineOffset",
+  "CellStyle@MinimumFirstBaselineOffset",
+]
