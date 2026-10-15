@@ -650,6 +650,18 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 }
             }
             Event::Empty(e) => match e.name().as_ref() {
+                // A paragraph style's restart policy: an empty
+                // `<Properties>` child carrying attributes (core ADR 158).
+                b"NumberingRestartPolicies"
+                    if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
+                {
+                    if let Some(p) = current_paragraph_style
+                        .as_deref()
+                        .and_then(|id| out.paragraph_styles.get_mut(id))
+                    {
+                        p.list_level.restart_policy = crate::util::restart_policy(&e);
+                    }
+                }
                 b"CharacterStyle" => {
                     if let Some(s) = parse_character_style(&e) {
                         out.character_styles.insert(s.self_id.clone(), s);
@@ -1622,6 +1634,7 @@ fn parse_paragraph_style(e: &quick_xml::events::BytesStart) -> Option<ParagraphS
             outside_gutter: attr(e, b"SplitColumnOutsideGutter").and_then(|s| s.parse().ok()),
         },
         line_setting: crate::util::line_setting_attrs(e),
+        list_level: crate::util::list_level_attrs(e),
         // Align to baseline grid: real documents set it on the body
         // style, not on each range.
         grid_alignment: attr(e, b"GridAlignment")
@@ -2338,6 +2351,39 @@ mod tests {
         // Both were folded in once; the depth limiter prevents looping.
         assert_eq!(r.point_size, Some(10.0));
         assert_eq!(r.font_style.as_deref(), Some("Bold"));
+    }
+
+    #[test]
+    fn parses_a_paragraph_styles_list_level() {
+        // Core ADR 158: the level and whether its restart policy applies
+        // as attributes, the policy as an empty `<Properties>` child, as
+        // `numbering-multilevel` spells them for InDesign.
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/L2" NumberingLevel="2" NumberingApplyRestartPolicy="true"><Properties><NumberingFormat type="string">a, b, c, d...</NumberingFormat><NumberingRestartPolicies RestartPolicy="RangeOfPreviousLevels" LowerLevel="1" UpperLevel="1"/></Properties></ParagraphStyle>
+            <ParagraphStyle Self="ParagraphStyle/Keep" NumberingLevel="3" NumberingApplyRestartPolicy="false"/>
+          </RootParagraphStyleGroup>
+        </idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let l2 = s.paragraph_styles.get("ParagraphStyle/L2").unwrap();
+        assert_eq!(
+            l2.list_level,
+            paged_model::ListLevel {
+                level: Some(2),
+                apply_restart: Some(true),
+                restart_policy: Some(paged_model::RestartPolicy {
+                    kind: paged_model::RestartPolicyKind::RangeOfPreviousLevels,
+                    lower: 1,
+                    upper: 1,
+                }),
+            }
+        );
+        assert_eq!(l2.numbering_format.as_deref(), Some("a, b, c, d..."));
+        let keep = s.paragraph_styles.get("ParagraphStyle/Keep").unwrap();
+        assert_eq!(keep.list_level.level, Some(3));
+        assert_eq!(keep.list_level.apply_restart, Some(false));
+        assert_eq!(keep.list_level.restart_policy, None);
     }
 
     #[test]

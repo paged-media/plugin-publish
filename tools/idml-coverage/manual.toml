@@ -84,6 +84,20 @@ item = "parse_designmap"
 children = ["PageNumberStyle"]
 elements = ["Section"]
 
+# A multi-level list's restart policy: an empty child whose attributes
+# carry the policy (core ADR 158), on a style and on a range.
+[[properties_child]]
+file = "crates/idml-import/src/styles.rs"
+item = "parse_stylesheet"
+children = ["NumberingRestartPolicies"]
+elements = ["ParagraphStyle"]
+
+[[properties_child]]
+file = "crates/idml-import/src/story.rs"
+item = "parse_story_with_provenance"
+children = ["NumberingRestartPolicies"]
+elements = ["ParagraphStyleRange"]
+
 # An object style's text-frame insets: a typed list in the <Properties> of
 # its <TextFramePreference>.
 [[properties_child]]
@@ -431,6 +445,20 @@ properties_child = true
 file = "crates/idml-export/src/emit.rs"
 item = "write_span_split_column_count"
 attributes = ["SpanSplitColumnCount"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_balance_ragged_lines"
+attributes = ["BalanceRaggedLines"]
+elements = ["ParagraphStyleRange", "ParagraphStyle"]
+properties_child = true
+
+[[export]]
+file = "crates/idml-export/src/emit.rs"
+item = "write_restart_policy"
+attributes = ["NumberingRestartPolicies"]
 elements = ["ParagraphStyleRange", "ParagraphStyle"]
 properties_child = true
 
@@ -1366,6 +1394,18 @@ keys = [
   "ParagraphStyleRange@AutoLeading",
   "ParagraphStyleRange@SingleWordJustification",
   "ParagraphStyleRange@BalanceRaggedLines",
+]
+
+[[unseen]]
+reason = "Inside a <Properties> value: the census records <NumberingRestartPolicies> as a Properties child of ParagraphStyle and TextDefault (271 documents each) and does not descend into it, so the RestartPolicy, LowerLevel and UpperLevel attributes it carries are never counted (core ADR 158)."
+elements = ["NumberingRestartPolicies"]
+
+[[unseen]]
+reason = "A range that sets its own level in a multi-level list (core ADR 158). The census documents set NumberingLevel (always 1), NumberingApplyRestartPolicy (always true) and <NumberingRestartPolicies> only on paragraph styles and TextDefault; a range carries the same paragraph attributes as its style, and this read lets a local override count."
+keys = [
+  "ParagraphStyleRange@NumberingLevel",
+  "ParagraphStyleRange@NumberingApplyRestartPolicy",
+  "ParagraphStyleRange@NumberingRestartPolicies",
 ]
 
 [[unseen]]

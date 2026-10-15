@@ -13,13 +13,13 @@
 use idml_import::styles::{CharacterStyleDef, ParagraphStyleDef};
 
 use crate::emit::{
-    grid_alignment_attrs, line_setting_attrs, paragraph_rule_attrs, span_column_attrs, RULE_ABOVE,
-    RULE_BELOW,
+    grid_alignment_attrs, line_setting_attrs, list_level_attrs, paragraph_rule_attrs,
+    span_column_attrs, RULE_ABOVE, RULE_BELOW,
 };
 use crate::rewrite::{
-    composer_patch, format_f32, grid_alignment_patch, line_setting_patch, numbering_list_patch,
-    opt_bool_patch, opt_i32_patch, opt_string_patch, opt_u32_patch, paragraph_rule_patch,
-    preserving_f32_patch, preserving_tint_patch, span_column_patch, Patch,
+    composer_patch, format_f32, grid_alignment_patch, line_setting_patch, list_level_patch,
+    numbering_list_patch, opt_bool_patch, opt_i32_patch, opt_string_patch, opt_u32_patch,
+    paragraph_rule_patch, preserving_f32_patch, preserving_tint_patch, span_column_patch, Patch,
 };
 
 fn push_strs(out: &mut Vec<(&'static str, String)>, attrs: &[(&'static str, &Option<String>)]) {
@@ -202,6 +202,7 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
     );
     span_column_attrs(&mut out, &s.span_columns);
     line_setting_attrs(&mut out, &s.line_setting);
+    list_level_attrs(&mut out, &s.list_level);
     grid_alignment_attrs(&mut out, s.grid_alignment, s.grid_align_first_line_only);
     paragraph_rule_attrs(&mut out, &RULE_ABOVE, &s.rule_above);
     paragraph_rule_attrs(&mut out, &RULE_BELOW, &s.rule_below);
@@ -379,6 +380,7 @@ pub(crate) fn paragraph_style_attr_patch(
         b"MojikumiSet" => Some(opt_string_patch(&s.mojikumi_set)),
         _ => span_column_patch(key, raw, &s.span_columns)
             .or_else(|| line_setting_patch(key, raw, &s.line_setting))
+            .or_else(|| list_level_patch(key, raw, &s.list_level))
             .or_else(|| {
                 grid_alignment_patch(key, raw, s.grid_alignment, s.grid_align_first_line_only)
             })
@@ -447,6 +449,45 @@ pub(crate) fn character_style_attr_patch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_level_is_a_style_attribute() {
+        // Core ADR 158: a paragraph style's NumberingLevel and
+        // NumberingApplyRestartPolicy; the policy is a `<Properties>`
+        // child, not here.
+        let p = ParagraphStyleDef {
+            self_id: "ParagraphStyle/P".into(),
+            list_level: idml_import::ListLevel {
+                level: Some(2),
+                apply_restart: Some(false),
+                restart_policy: Some(idml_import::RestartPolicy {
+                    kind: idml_import::RestartPolicyKind::AnyPreviousLevel,
+                    lower: 0,
+                    upper: 0,
+                }),
+            },
+            ..Default::default()
+        };
+        let attrs = paragraph_style_attrs(&p);
+        for (k, v) in [
+            ("NumberingLevel", "2"),
+            ("NumberingApplyRestartPolicy", "false"),
+        ] {
+            assert!(
+                attrs.iter().any(|(a, b)| *a == k && b == v),
+                "{k}: {attrs:?}"
+            );
+        }
+        assert!(!attrs.iter().any(|(a, _)| *a == "NumberingRestartPolicies"));
+        assert!(matches!(
+            paragraph_style_attr_patch(b"NumberingLevel", b"2", &p),
+            Some(Patch::Keep)
+        ));
+        assert!(matches!(
+            paragraph_style_attr_patch(b"NumberingApplyRestartPolicy", b"true", &p),
+            Some(Patch::Set(v)) if v == "false"
+        ));
+    }
 
     #[test]
     fn line_setting_and_no_break_are_style_attributes() {

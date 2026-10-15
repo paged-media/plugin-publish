@@ -6743,6 +6743,9 @@ pub(crate) fn paragraph_attr_patch(
         b"AutoLeading" | b"SingleWordJustification" | b"LastLineIndent" => {
             line_setting_patch(key, raw, &p.line_setting)
         }
+        b"NumberingLevel" | b"NumberingApplyRestartPolicy" => {
+            list_level_patch(key, raw, &p.list_level)
+        }
         b"StartParagraph" => Some(opt_string_patch(
             &p.start_paragraph.map(|s| s.as_idml().to_string()),
         )),
@@ -6891,6 +6894,31 @@ pub(crate) fn line_setting_patch(
             }
             None => Patch::Remove,
         },
+        _ => return None,
+    })
+}
+
+/// A range's or a paragraph style's `NumberingLevel` or
+/// `NumberingApplyRestartPolicy` against the model (core ADR 158); a
+/// source spelling of the model's value keeps its bytes, and one the
+/// parser could not read is kept while the model says nothing.
+pub(crate) fn list_level_patch(
+    key: &[u8],
+    raw: Option<&str>,
+    ll: &idml_import::ListLevel,
+) -> Option<Patch> {
+    Some(match key {
+        b"NumberingLevel" => match ll.level {
+            None if raw.and_then(|s| s.trim().parse::<u32>().ok()).is_none() => Patch::Keep,
+            v => opt_u32_patch(raw, v),
+        },
+        b"NumberingApplyRestartPolicy" => {
+            match (raw.map(|s| s.trim().parse::<bool>()), ll.apply_restart) {
+                (Some(Ok(r)), Some(m)) if r == m => Patch::Keep,
+                (Some(Err(_)), None) | (None, None) => Patch::Keep,
+                (_, v) => opt_bool_patch(v),
+            }
+        }
         _ => return None,
     })
 }
@@ -7150,6 +7178,33 @@ mod tests {
             !out.contains("SpaceAfter"),
             "a cleared override is dropped: {out}"
         );
+    }
+
+    #[test]
+    fn list_level_round_trips_on_the_range() {
+        // Core ADR 158: NumberingLevel and NumberingApplyRestartPolicy as
+        // attributes of the range. An unedited save keeps the bytes; an
+        // edit rewrites in place or appends, and a cleared value is
+        // dropped.
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange NumberingLevel="2" NumberingApplyRestartPolicy="false"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>c</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut story = idml_import::parse_story(src).unwrap();
+        assert_eq!(story.paragraphs[0].list_level.level, Some(2));
+        assert_eq!(story.paragraphs[0].list_level.apply_restart, Some(false));
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+
+        story.paragraphs[0].list_level.level = Some(3);
+        story.paragraphs[0].list_level.apply_restart = None;
+        story.paragraphs[1].list_level.level = Some(4);
+        let out = String::from_utf8(rewrite_story(src, &story).unwrap()).unwrap();
+        assert!(out.contains(r#"NumberingLevel="3""#), "{out}");
+        assert!(!out.contains("NumberingApplyRestartPolicy"), "{out}");
+        let back = idml_import::parse_story(out.as_bytes()).unwrap();
+        assert_eq!(back.paragraphs[0].list_level.level, Some(3));
+        assert_eq!(back.paragraphs[1].list_level.level, Some(4));
     }
 
     #[test]
