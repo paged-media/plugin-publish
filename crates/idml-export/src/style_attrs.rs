@@ -1,4 +1,5 @@
-//! The attributes of a `<ParagraphStyle>` / `<CharacterStyle>` — the
+//! The attributes of a `<ParagraphStyle>` / `<CharacterStyle>` /
+//! `<ObjectStyle>` — the
 //! definition InDesign reads, spelled once for the emitter (a style the
 //! source lacks) and the patch lane (a style it has). A style minted or
 //! edited by mutation used to reach the part with its name, size,
@@ -10,16 +11,17 @@
 //! AppliedNumberingList, NumberingExpression) are not attributes and are
 //! spelled by their own passes (`based_on`, `face`, `paragraph_props`).
 
-use idml_import::styles::{CharacterStyleDef, ParagraphStyleDef};
+use idml_import::styles::{CharacterStyleDef, ObjectStyleDef, ParagraphStyleDef};
 
 use crate::emit::{
     grid_alignment_attrs, line_setting_attrs, list_level_attrs, paragraph_rule_attrs,
     span_column_attrs, RULE_ABOVE, RULE_BELOW,
 };
 use crate::rewrite::{
-    composer_patch, format_f32, grid_alignment_patch, line_setting_patch, list_level_patch,
-    numbering_list_patch, opt_bool_patch, opt_i32_patch, opt_string_patch, opt_u32_patch,
-    paragraph_rule_patch, preserving_f32_patch, preserving_tint_patch, span_column_patch, Patch,
+    composer_patch, corner_attr_extras, corner_attr_patch, corner_attrs_of, format_f32,
+    grid_alignment_patch, line_setting_patch, list_level_patch, numbering_list_patch,
+    opt_bool_patch, opt_i32_patch, opt_string_patch, opt_u32_patch, paragraph_rule_patch,
+    preserving_f32_patch, preserving_tint_patch, span_column_patch, Patch,
 };
 
 fn push_strs(out: &mut Vec<(&'static str, String)>, attrs: &[(&'static str, &Option<String>)]) {
@@ -443,6 +445,50 @@ pub(crate) fn character_style_attr_patch(
         b"KentenPosition" => Some(opt_string_patch(&s.marks.kenten_position)),
         b"KentenAlignment" => Some(opt_string_patch(&s.marks.kenten_alignment)),
         _ => None,
+    }
+}
+
+/// Every attribute an `<ObjectStyle>` carries, from the model: fill,
+/// stroke, and the corners — the all-corner pair and the four per-corner
+/// attributes, which are the ones InDesign reads (ADR 149). The `Enable…`
+/// switches have no setter and are not written for a new style.
+pub(crate) fn object_style_attrs(s: &ObjectStyleDef) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    push_strs(&mut out, &[("Name", &s.name), ("FillColor", &s.fill_color)]);
+    push_f32s(&mut out, &[("FillTint", s.fill_tint)]);
+    push_strs(&mut out, &[("StrokeColor", &s.stroke_color)]);
+    push_f32s(
+        &mut out,
+        &[
+            ("StrokeTint", s.stroke_tint),
+            ("StrokeWeight", s.stroke_weight),
+        ],
+    );
+    out.extend(corner_attr_extras(&corner_attrs_of(
+        s.corner_radius,
+        &s.corner_option,
+        &s.corners,
+    )));
+    out
+}
+
+/// The `<ObjectStyle>` attributes the model owns. An edited source style
+/// used to pass through with its source attributes, so a fill, stroke or
+/// corner set on it was lost on save.
+pub(crate) fn object_style_attr_patch(key: &[u8], raw: &[u8], s: &ObjectStyleDef) -> Option<Patch> {
+    let text = std::str::from_utf8(raw).ok();
+    match key {
+        b"Name" => Some(opt_string_patch(&s.name)),
+        b"FillColor" => Some(swatch_patch(text, &s.fill_color)),
+        b"FillTint" => Some(preserving_tint_patch(text, s.fill_tint)),
+        b"StrokeColor" => Some(swatch_patch(text, &s.stroke_color)),
+        b"StrokeTint" => Some(preserving_tint_patch(text, s.stroke_tint)),
+        b"StrokeWeight" => Some(preserving_f32_patch(text, s.stroke_weight)),
+        _ => corner_attr_patch(
+            key,
+            raw,
+            &corner_attrs_of(s.corner_radius, &s.corner_option, &s.corners),
+        ),
     }
 }
 
