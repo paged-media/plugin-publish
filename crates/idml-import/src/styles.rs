@@ -1275,6 +1275,7 @@ fn parse_object_style(e: &quick_xml::events::BytesStart) -> Option<ObjectStyleDe
         stroke_weight,
         corner_radius: attr(e, b"CornerRadius").and_then(|s| s.parse().ok()),
         corner_option: attr(e, b"CornerOption"),
+        corners: crate::spread::read_corners(e),
         enable: ObjectStyleCategories {
             fill: flag(e, b"EnableFill"),
             stroke: flag(e, b"EnableStroke"),
@@ -3130,6 +3131,38 @@ mod tests {
 #[cfg(test)]
 mod object_style_text_frame_tests {
     use super::*;
+
+    /// An object style's corners in InDesign 20.0.1's spelling: the four
+    /// per-corner attributes (which InDesign reads) beside the pair (which
+    /// it writes and ignores), and a style with only the pair.
+    #[test]
+    fn an_object_styles_four_corners_read_beside_its_pair() {
+        let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootObjectStyleGroup>
+<ObjectStyle Self="ObjectStyle/Corners" Name="Corners" TopLeftCornerOption="RoundedCorner" TopRightCornerOption="BevelCorner" BottomLeftCornerOption="RoundedCorner" BottomRightCornerOption="None" TopLeftCornerRadius="20" TopRightCornerRadius="8" BottomLeftCornerRadius="20" CornerRadius="20" CornerOption="RoundedCorner"/>
+<ObjectStyle Self="ObjectStyle/Pair" Name="Pair" CornerRadius="20" CornerOption="RoundedCorner"/>
+</RootObjectStyleGroup></idPkg:Styles>"#;
+        let sheet = parse_stylesheet(xml).expect("styles");
+        let c = &sheet.object_styles["ObjectStyle/Corners"];
+        let spec = |option, radius| CornerSpec {
+            option: Some(option),
+            radius,
+        };
+        assert_eq!(
+            c.corners,
+            [
+                spec(CornerOption::Rounded, Some(20.0)),
+                spec(CornerOption::Bevel, Some(8.0)),
+                spec(CornerOption::None, None),
+                spec(CornerOption::Rounded, Some(20.0)),
+            ]
+        );
+        assert_eq!(
+            (c.corner_option.as_deref(), c.corner_radius),
+            (Some("RoundedCorner"), Some(20.0))
+        );
+        let pair = &sheet.object_styles["ObjectStyle/Pair"];
+        assert!(CornerSpec::all_unset(&pair.corners));
+    }
 
     /// InDesign 20.0.1's own spelling of an object style's text-frame
     /// options: the flags on the style, the options on its

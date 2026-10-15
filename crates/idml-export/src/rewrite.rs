@@ -4725,13 +4725,13 @@ struct Fill {
 /// B-23 — the corner vocabulary IDML writes on a page item, lifted out
 /// of the model so one patch routine covers Rectangle and Polygon.
 /// `corners` is `[top_left, top_right, bottom_right, bottom_left]`.
-struct CornerAttrs {
+pub(crate) struct CornerAttrs {
     corner_radius: Option<f32>,
     corner_option: Option<String>,
     corners: [idml_import::CornerSpec; 4],
 }
 
-fn corner_attrs_of(
+pub(crate) fn corner_attrs_of(
     corner_radius: Option<f32>,
     corner_option: &Option<String>,
     corners: &[idml_import::CornerSpec; 4],
@@ -4773,7 +4773,7 @@ const PER_CORNER_KEYS: [(&str, &str); 4] = [
 /// rounds to 4 decimals and the option enum loses the exact source
 /// spelling, so re-emitting an UNMUTATED value would corrupt an
 /// otherwise byte-identical round-trip).
-fn corner_attr_patch(key: &[u8], raw: &[u8], c: &CornerAttrs) -> Option<Patch> {
+pub(crate) fn corner_attr_patch(key: &[u8], raw: &[u8], c: &CornerAttrs) -> Option<Patch> {
     let raw = std::str::from_utf8(raw).ok();
     if key == b"CornerRadius" {
         return Some(preserving_f32_patch(raw, c.corner_radius));
@@ -4797,7 +4797,7 @@ fn corner_attr_patch(key: &[u8], raw: &[u8], c: &CornerAttrs) -> Option<Patch> {
 /// Corner attributes to append when the model carries a value the source
 /// element didn't have (a corner written onto a frame that never had the
 /// attribute). Unmutated frames append nothing.
-fn corner_attr_extras(c: &CornerAttrs) -> Vec<(&'static str, String)> {
+pub(crate) fn corner_attr_extras(c: &CornerAttrs) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     if let Some(s) = &c.corner_option {
         out.push(("CornerOption", s.clone()));

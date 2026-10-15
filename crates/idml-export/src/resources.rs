@@ -508,30 +508,7 @@ fn write_object_style(
     s: &ObjectStyleDef,
 ) -> Result<(), quick_xml::Error> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", s.self_id.clone())];
-    if let Some(n) = &s.name {
-        attrs.push(("Name", n.clone()));
-    }
-    if let Some(c) = &s.fill_color {
-        attrs.push(("FillColor", c.clone()));
-    }
-    if let Some(t) = s.fill_tint {
-        attrs.push(("FillTint", format_f32(t)));
-    }
-    if let Some(c) = &s.stroke_color {
-        attrs.push(("StrokeColor", c.clone()));
-    }
-    if let Some(t) = s.stroke_tint {
-        attrs.push(("StrokeTint", format_f32(t)));
-    }
-    if let Some(w) = s.stroke_weight {
-        attrs.push(("StrokeWeight", format_f32(w)));
-    }
-    if let Some(o) = &s.corner_option {
-        attrs.push(("CornerOption", o.clone()));
-    }
-    if let Some(r) = s.corner_radius {
-        attrs.push(("CornerRadius", format_f32(r)));
-    }
+    attrs.extend(crate::style_attrs::object_style_attrs(s));
     emit_style_element(
         writer,
         "ObjectStyle",
@@ -811,6 +788,16 @@ pub fn patch_styles_defined_elsewhere(
                                     crate::style_attrs::character_style_attr_patch(k, raw, def)
                                 },
                                 &crate::style_attrs::character_style_attrs(def),
+                            )
+                        })
+                        .transpose()?,
+                    b"ObjectStyle" => attr_value(e, b"Self")
+                        .and_then(|id| styles.object_styles.get(&id))
+                        .map(|def| {
+                            crate::rewrite::patch_start(
+                                e,
+                                |k, raw| crate::style_attrs::object_style_attr_patch(k, raw, def),
+                                &crate::style_attrs::object_style_attrs(def),
                             )
                         })
                         .transpose()?,
@@ -1436,5 +1423,61 @@ mod tests {
         let group_close = s.find("</RootObjectStyleGroup>").expect("group close");
         let def_at = s.find(r#"Self="ObjectStyle/u0""#).expect("emitted");
         assert!(def_at < group_close, "must land inside the group: {s}");
+    }
+
+    fn four(option: idml_import::CornerOption, radius: f32) -> [idml_import::CornerSpec; 4] {
+        [idml_import::CornerSpec {
+            option: Some(option),
+            radius: Some(radius),
+        }; 4]
+    }
+
+    /// An edited source object style is written back. It used to pass
+    /// through with its source attributes, so the edit was lost on save.
+    /// Its corners go out as the four per-corner attributes, the ones
+    /// InDesign reads, beside the pair.
+    #[test]
+    fn an_edited_source_object_style_is_written_back() {
+        let mut styles = sheet();
+        let def = styles
+            .object_styles
+            .get_mut("ObjectStyle/Callout")
+            .expect("Callout");
+        def.fill_tint = Some(40.0);
+        def.corner_option = Some("BevelCorner".into());
+        def.corners = four(idml_import::CornerOption::Bevel, 6.0);
+
+        let out = patch_styles(STYLES_XML, &styles).expect("patch");
+        let s = String::from_utf8(out.clone()).expect("utf8");
+        assert!(s.contains(r#"FillTint="40""#), "{s}");
+        assert!(s.contains(r#"TopLeftCornerOption="BevelCorner""#), "{s}");
+        assert!(
+            s.contains(r#"StrokeColor="Color/Paper" StrokeTint="55" StrokeWeight="1.5""#),
+            "the untouched attributes keep their bytes: {s}"
+        );
+        let back = idml_import::parse_stylesheet(&out).expect("re-parse");
+        let def = &back.object_styles["ObjectStyle/Callout"];
+        assert_eq!(def.fill_tint, Some(40.0));
+        assert_eq!(def.corner_option.as_deref(), Some("BevelCorner"));
+        assert_eq!(def.corners, four(idml_import::CornerOption::Bevel, 6.0));
+    }
+
+    /// A new object style writes its four corners, or InDesign would open
+    /// it square whatever its `CornerOption` says.
+    #[test]
+    fn a_new_object_style_writes_its_four_corners() {
+        let mut styles = sheet();
+        let mut def = created_object_style("ObjectStyle/u0", "Rounded", None);
+        def.corner_option = Some("RoundedCorner".into());
+        def.corner_radius = Some(8.0);
+        def.corners = four(idml_import::CornerOption::Rounded, 8.0);
+        styles.object_styles.insert(def.self_id.clone(), def);
+
+        let out = patch_styles(STYLES_XML, &styles).expect("patch");
+        let back = idml_import::parse_stylesheet(&out).expect("re-parse");
+        assert_eq!(
+            back.object_styles["ObjectStyle/u0"].corners,
+            four(idml_import::CornerOption::Rounded, 8.0)
+        );
     }
 }

@@ -504,6 +504,13 @@ struct CornerAttrs {
     corners: [CornerSpec; 4],
 }
 
+/// The four per-corner specs alone, `[top_left, top_right, bottom_right,
+/// bottom_left]` — what an `<ObjectStyle>` passes to its items (InDesign
+/// reads a style's corners from these, not its `CornerOption` pair).
+pub(crate) fn read_corners(e: &quick_xml::events::BytesStart) -> [CornerSpec; 4] {
+    read_corner_attrs(e).corners
+}
+
 fn read_corner_attrs(e: &quick_xml::events::BytesStart) -> CornerAttrs {
     // Order: [top_left, top_right, bottom_right, bottom_left] —
     // matches the clockwise-from-top-left walk Rectangle::corners
