@@ -394,6 +394,31 @@ attributes = [
 ]
 elements = ["ParagraphStyleRange", "ParagraphStyle"]
 
+# Core ADR 162 — the document's footnote options, patched onto
+# `<FootnoteOption>`: attributes, and the enumerations as typed children.
+[[export]]
+file = "crates/idml-export/src/footnote_option.rs"
+item = "attributes"
+attributes = [
+  "StartAt",
+  "Prefix",
+  "Suffix",
+  "EnableStraddling",
+  "NoSplitting",
+  "SpaceBetween",
+  "Spacer",
+  "RuleOn",
+  "ContinuingRuleOn",
+]
+elements = ["FootnoteOption"]
+
+[[export]]
+file = "crates/idml-export/src/footnote_option.rs"
+item = "children"
+attributes = ["FootnoteNumberingStyle", "RestartNumbering", "ShowPrefixSuffix"]
+elements = ["FootnoteOption"]
+properties_child = true
+
 # R-11 — the global light, patched onto `<TransparencyPreference>` through a
 # table of byte-string keys.
 [[export]]
@@ -929,6 +954,11 @@ parts = ["Resources/Styles"]
 file = "crates/idml-export/src/paragraph_props.rs"
 name = "spell_styles"
 parts = ["Resources/Styles"]
+
+[[part_entry]]
+file = "crates/idml-export/src/footnote_option.rs"
+name = "patch_footnote_option"
+parts = ["Resources/Preferences"]
 
 [[part_entry]]
 file = "crates/idml-export/src/table_regions.rs"

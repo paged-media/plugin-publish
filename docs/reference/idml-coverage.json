@@ -16,17 +16,17 @@
     "documents": 305
   },
   "counts": {
-    "rows": 1430,
+    "rows": 1433,
     "elements": 123,
     "attributes": 701,
     "imported": 1310,
-    "exported": 932,
-    "importedAndExported": 812,
-    "importOnly": 498,
-    "exportOnly": 120,
-    "propertiesChild": 57,
+    "exported": 944,
+    "importedAndExported": 821,
+    "importOnly": 489,
+    "exportOnly": 123,
+    "propertiesChild": 60,
     "importerReadSites": 993,
-    "exporterWriteSites": 939,
+    "exporterWriteSites": 951,
     "unresolved": 0,
     "partRows": 4150,
     "misplaced": 30,
@@ -44,9 +44,9 @@
       "value": 0.464668
     },
     "weightedExport": {
-      "covered": 87488,
+      "covered": 90554,
       "total": 633952,
-      "value": 0.138004
+      "value": 0.14284
     },
     "misplacedReads": 30,
     "unseenReads": 340,
@@ -1121,6 +1121,7 @@
       "exported": true,
       "importParts": [],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -1147,6 +1148,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -8759,17 +8761,22 @@
       "importerField": "ContinuingRule.on",
       "coarseType": "bool",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 552
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 80
+      }
     },
     {
       "element": "FootnoteOption",
@@ -8816,17 +8823,22 @@
       "importerField": "FootnoteOptions.enable_straddling",
       "coarseType": "bool",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 546
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 67
+      }
     },
     {
       "element": "FootnoteOption",
@@ -8849,22 +8861,48 @@
     },
     {
       "element": "FootnoteOption",
+      "attribute": "FootnoteNumberingStyle",
+      "kind": "properties-child",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 102
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 102
+      }
+    },
+    {
+      "element": "FootnoteOption",
       "attribute": "NoSplitting",
       "kind": "attr",
       "importerField": "FootnoteOptions.no_splitting",
       "coarseType": "bool",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 550
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 72
+      }
     },
     {
       "element": "FootnoteOption",
@@ -8873,17 +8911,22 @@
       "importerField": "FootnoteOptions.prefix",
       "coarseType": "string",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 540
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 64
+      }
     },
     {
       "element": "FootnoteOption",
@@ -8903,6 +8946,27 @@
         "line": 543
       },
       "exportSource": null
+    },
+    {
+      "element": "FootnoteOption",
+      "attribute": "RestartNumbering",
+      "kind": "properties-child",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 108
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 108
+      }
     },
     {
       "element": "FootnoteOption",
@@ -8987,17 +9051,22 @@
       "importerField": "FootnoteOptions.rule_on",
       "coarseType": "bool",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 523
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 78
+      }
     },
     {
       "element": "FootnoteOption",
@@ -9077,22 +9146,48 @@
     },
     {
       "element": "FootnoteOption",
+      "attribute": "ShowPrefixSuffix",
+      "kind": "properties-child",
+      "importerField": null,
+      "coarseType": null,
+      "imported": false,
+      "exported": true,
+      "importParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
+      "source": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 114
+      },
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 114
+      }
+    },
+    {
+      "element": "FootnoteOption",
       "attribute": "SpaceBetween",
       "kind": "attr",
       "importerField": "FootnoteOptions.space_between",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 532
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 76
+      }
     },
     {
       "element": "FootnoteOption",
@@ -9101,17 +9196,22 @@
       "importerField": "FootnoteOptions.spacer",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 531
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 77
+      }
     },
     {
       "element": "FootnoteOption",
@@ -9120,17 +9220,22 @@
       "importerField": "FootnoteOptions.start_at",
       "coarseType": "number",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 533
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 60
+      }
     },
     {
       "element": "FootnoteOption",
@@ -9139,17 +9244,22 @@
       "importerField": "FootnoteOptions.suffix",
       "coarseType": "string",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Resources/Preferences",
         "designmap"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Resources/Preferences"
+      ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 541
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/footnote_option.rs",
+        "line": 65
+      }
     },
     {
       "element": "FrameFittingOption",
@@ -14975,6 +15085,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -15001,6 +15112,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -15027,6 +15139,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -17361,6 +17474,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -17409,6 +17523,7 @@
       "exported": true,
       "importParts": [],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -17573,6 +17688,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -18873,6 +18989,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -18946,6 +19063,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -18995,6 +19113,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -19046,6 +19165,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -20665,6 +20785,7 @@
         "Resources/Styles"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -20828,6 +20949,7 @@
       "exported": true,
       "importParts": [],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -20850,6 +20972,7 @@
       "exported": true,
       "importParts": [],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -20872,6 +20995,7 @@
       "exported": true,
       "importParts": [],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -20894,6 +21018,7 @@
       "exported": true,
       "importParts": [],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -21085,6 +21210,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -21158,6 +21284,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -21205,6 +21332,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -22183,6 +22311,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -22253,6 +22382,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -22277,6 +22407,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -22327,6 +22458,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -22985,6 +23117,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -23080,6 +23213,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -23104,6 +23238,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -23128,6 +23263,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -23152,6 +23288,7 @@
         "Stories"
       ],
       "exportParts": [
+        "Resources/Preferences",
         "Resources/Styles",
         "Stories"
       ],
@@ -35053,22 +35190,22 @@
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleLeftIndent","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleLineWeight","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleOffset","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleOn","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleOn","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleOverprint","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleTint","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleType","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleWidth","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"EnableStraddling","kind":"attr","docCount":85,"nonModalDocs":17,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"EnableStraddling","kind":"attr","docCount":85,"nonModalDocs":17,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"EosPlacement","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteFirstBaselineOffset","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteMarkerStyle","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteMinimumFirstBaselineOffset","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteNumberingStyle","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteNumberingStyle","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteTextStyle","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"MarkerPositioning","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"NoSplitting","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Prefix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RestartNumbering","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"NoSplitting","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Prefix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RestartNumbering","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":true,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"RuleColor","kind":"attr","docCount":1,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleColor","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleGapColor","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
@@ -35080,7 +35217,7 @@
     {"part":"designmap","element":"FootnoteOption","attribute":"RuleLineWeight","kind":"attr","docCount":1,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleOffset","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"RuleOffset","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleOn","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleOn","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"RuleOn","kind":"attr","docCount":1,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleOverprint","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleTint","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
@@ -35089,13 +35226,13 @@
     {"part":"designmap","element":"FootnoteOption","attribute":"RuleWidth","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"SeparatorText","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"SeparatorText","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ShowPrefixSuffix","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"SpaceBetween","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ShowPrefixSuffix","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"SpaceBetween","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"SpaceBetween","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Spacer","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Spacer","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"Spacer","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"StartAt","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Suffix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"StartAt","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Suffix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"MasterSpreads","element":"FrameFittingOption","attribute":"AutoFit","kind":"attr","docCount":18,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FrameFittingOption","attribute":"AutoFit","kind":"attr","docCount":270,"nonModalDocs":1,"imported":false,"exported":false,"readElsewhere":true},
     {"part":"Resources/Styles","element":"FrameFittingOption","attribute":"AutoFit","kind":"attr","docCount":270,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":true},
