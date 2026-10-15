@@ -2123,6 +2123,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         f.ignore_wrap =
                             attr(&e, b"IgnoreWrap").and_then(|s| s.parse::<bool>().ok());
                         f.column_rule = column_rule_attrs(&e);
+                        f.footnotes = frame_footnote_attrs(&e);
                         if let Some(vj) = attr(&e, b"VerticalJustification")
                             .as_deref()
                             .and_then(VerticalJustification::from_idml)
@@ -3237,6 +3238,19 @@ fn compose_matrix(a: &[f32; 6], b: &[f32; 6]) -> [f32; 6] {
 /// ADR 155): `Some` only when `ColumnRuleOverride="true"` switches them
 /// on. InDesign writes every `ColumnRule*` attribute on every frame,
 /// switched on or not.
+/// A frame's own footnote layout on `<TextFramePreference>` (core ADR
+/// 159): `FootnotesEnableOverrides` and the span and spacing it brings.
+fn frame_footnote_attrs(e: &quick_xml::events::BytesStart) -> paged_model::FrameFootnotes {
+    let num = |key: &[u8]| attr(e, key).and_then(|s| s.trim().parse::<f32>().ok());
+    let flag = |key: &[u8]| attr(e, key).and_then(|s| s.trim().parse::<bool>().ok());
+    paged_model::FrameFootnotes {
+        enable_overrides: flag(b"FootnotesEnableOverrides"),
+        span_across_columns: flag(b"FootnotesSpanAcrossColumns"),
+        space_between: num(b"FootnotesSpaceBetween"),
+        minimum_spacing: num(b"FootnotesMinimumSpacing"),
+    }
+}
+
 fn column_rule_attrs(e: &quick_xml::events::BytesStart) -> Option<paged_model::ColumnRule> {
     let flag = |k: &[u8]| attr(e, k).and_then(|s| s.parse::<bool>().ok());
     if flag(b"ColumnRuleOverride") != Some(true) {
@@ -4828,6 +4842,43 @@ mod tests {
         assert!(s.polygons[1].image_item_transform.is_none());
         // Rectangles in the same spread keep working.
         assert_eq!(s.rectangles.len(), 0);
+    }
+
+    #[test]
+    fn a_frames_footnote_override_is_read() {
+        // Core ADR 160: InDesign writes the override and the span, and
+        // leaves the spacing to its frame defaults (6 pt, 12 pt).
+        let xml = br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="span" ParentStory="u1" GeometricBounds="0 0 100 100">
+              <TextFramePreference FootnotesEnableOverrides="true" FootnotesSpanAcrossColumns="true" TextColumnCount="2"/>
+            </TextFrame>
+            <TextFrame Self="spaced" ParentStory="u2" GeometricBounds="0 0 100 100">
+              <TextFramePreference FootnotesEnableOverrides="true" FootnotesSpanAcrossColumns="false" FootnotesSpaceBetween="3" FootnotesMinimumSpacing="18"/>
+            </TextFrame>
+            <TextFrame Self="plain" ParentStory="u3" GeometricBounds="0 0 100 100">
+              <TextFramePreference TextColumnCount="2"/>
+            </TextFrame>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        let doc = paged_model::FootnoteOptions {
+            enable_straddling: Some(true),
+            ..Default::default()
+        };
+        let span = s.text_frames[0].footnotes;
+        assert_eq!(span.enable_overrides, Some(true));
+        assert!(span.spans(&doc));
+        assert_eq!(span.space_between(0.0), 6.0);
+        assert_eq!(span.minimum_spacing(0.0), 12.0);
+        let spaced = s.text_frames[1].footnotes;
+        assert!(!spaced.spans(&doc));
+        assert_eq!(spaced.space_between(0.0), 3.0);
+        assert_eq!(spaced.minimum_spacing(0.0), 18.0);
+        let plain = s.text_frames[2].footnotes;
+        assert!(plain.is_unset());
+        assert!(plain.spans(&doc), "the document's straddling applies");
+        assert_eq!(plain.space_between(2.0), 2.0);
     }
 
     #[test]
