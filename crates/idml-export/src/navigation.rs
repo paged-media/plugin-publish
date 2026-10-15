@@ -154,14 +154,10 @@ fn write_xref_format(
     Ok(())
 }
 
+/// InDesign's spelling of a page-numbering style (`PageNumberStyle`);
+/// the model owns the table (core ADR 157).
 pub(crate) fn numbering_style_idml(s: NumberingStyle) -> &'static str {
-    match s {
-        NumberingStyle::Arabic => "Arabic",
-        NumberingStyle::UpperRoman => "UpperRoman",
-        NumberingStyle::LowerRoman => "LowerRoman",
-        NumberingStyle::UpperAlpha => "UpperLetters",
-        NumberingStyle::LowerAlpha => "LowerLetters",
-    }
+    s.as_idml()
 }
 
 fn is_nav_name(name: &[u8]) -> bool {
