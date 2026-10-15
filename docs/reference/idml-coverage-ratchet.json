@@ -18,9 +18,9 @@
       "value": 0.464668
     },
     "weightedExport": {
-      "covered": 90554,
+      "covered": 90555,
       "total": 633952,
-      "value": 0.14284
+      "value": 0.142842
     },
     "misplacedReads": 30,
     "unseenReads": 340,
@@ -1905,6 +1905,7 @@
     "Stories|Column@Name|attr",
     "Stories|Column@Self|attr",
     "Stories|Column@SingleColumnWidth|attr",
+    "Stories|Footnote@Self|attr",
     "Stories|HyperlinkTextSource@Hidden|attr",
     "Stories|HyperlinkTextSource@Name|attr",
     "Stories|HyperlinkTextSource@Self|attr",
