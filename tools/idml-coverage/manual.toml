@@ -1013,6 +1013,13 @@ keys = [
 ]
 
 [[unseen]]
+reason = "Proportional metrics (palt), read in InDesign 20.0.1's spelling (core tools/indesign-export/kana-spacing-probe: Metrics kerning sets them anyway; with kerning off this sets them alone). Census documents set it only on paragraph styles."
+keys = [
+  "CharacterStyle@OTFProportionalMetrics",
+  "CharacterStyleRange@OTFProportionalMetrics",
+]
+
+[[unseen]]
 reason = "The engine's older tab-stop record. InDesign writes <TabList><ListItem type=\"record\">, which is read as well (ParagraphStyleRange@TabList/ListItem/*)."
 elements = ["TabStop"]
 

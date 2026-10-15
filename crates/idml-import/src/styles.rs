@@ -3237,7 +3237,7 @@ mod tests {
     #[test]
     fn a_paragraph_style_reads_ligatures_kerning_and_opentype() {
         let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
-          <ParagraphStyle Self="ParagraphStyle/OTF" Name="OTF" Ligatures="false" KerningMethod="$ID/Optical" OTFFigureStyle="ProportionalOldstyle" OTFOrdinal="true" OTFFraction="true" OTFDiscretionaryLigature="true" OTFTitling="true" OTFSlashedZero="true" OTFStylisticSets="5" OTFHistorical="true" OTFContextualAlternate="false" OTFSwash="true" OTFStylisticAlternate="true"/>
+          <ParagraphStyle Self="ParagraphStyle/OTF" Name="OTF" Ligatures="false" KerningMethod="$ID/Optical" OTFFigureStyle="ProportionalOldstyle" OTFOrdinal="true" OTFFraction="true" OTFDiscretionaryLigature="true" OTFTitling="true" OTFSlashedZero="true" OTFStylisticSets="5" OTFHistorical="true" OTFContextualAlternate="false" OTFSwash="true" OTFStylisticAlternate="true" OTFProportionalMetrics="true"/>
           <ParagraphStyle Self="ParagraphStyle/Child" Name="Child" OTFSwash="false"><Properties><BasedOn type="object">ParagraphStyle/OTF</BasedOn></Properties></ParagraphStyle>
         </RootParagraphStyleGroup></idPkg:Styles>"#;
         let s = parse_stylesheet(xml).unwrap();
@@ -3245,6 +3245,7 @@ mod tests {
         assert_eq!(p.ligatures_on, Some(false));
         assert_eq!(p.kerning_method.as_deref(), Some("$ID/Optical"));
         assert_eq!(p.otf.historical, Some(true));
+        assert_eq!(p.otf.proportional_metrics, Some(true));
         assert_eq!(p.otf.stylistic_alternate, Some(true));
         assert_eq!(p.otf.contextual_alternates, Some(false));
         assert_eq!(p.otf.figure_style.as_deref(), Some("ProportionalOldstyle"));

@@ -63,6 +63,7 @@ fn push_otf(out: &mut Vec<(&'static str, String)>, otf: &idml_import::OtfFeature
             ("OTFContextualAlternate", otf.contextual_alternates),
             ("OTFStylisticAlternate", otf.stylistic_alternate),
             ("OTFHistorical", otf.historical),
+            ("OTFProportionalMetrics", otf.proportional_metrics),
         ],
     );
     push_strs(out, &[("OTFFigureStyle", &otf.figure_style)]);

@@ -80,6 +80,7 @@ pub(crate) fn parse_otf_features(e: &quick_xml::events::BytesStart) -> OtfFeatur
         stylistic_sets: attr(e, b"OTFStylisticSets").and_then(|s| s.parse::<i32>().ok()),
         stylistic_alternate: b(b"OTFStylisticAlternate"),
         historical: b(b"OTFHistorical"),
+        proportional_metrics: b(b"OTFProportionalMetrics"),
     }
 }
 
