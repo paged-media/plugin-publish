@@ -84,6 +84,7 @@ mod effects;
 mod emit;
 pub mod face;
 pub mod fonts;
+mod footnote_option;
 mod frame_fitting;
 pub mod guides;
 pub mod images;
@@ -883,6 +884,21 @@ pub(crate) fn write_package(
         let new = preferences::patch_transparency_preference(
             &new,
             &doc.designmap.transparency_preference,
+        )
+        .map_err(|source| WriteError::Rewrite {
+            entry: PREFERENCES_SRC.to_string(),
+            source,
+        })?;
+        // Core ADR 162 — the document's footnote options.
+        // A package that spells it in the designmap (the generator's older
+        // spelling, still read) gains no second one here.
+        let elsewhere = designmap
+            .as_deref()
+            .is_some_and(|d| d.windows(15).any(|w| w == b"<FootnoteOption"));
+        let new = footnote_option::patch_footnote_option(
+            &new,
+            &doc.designmap.footnote_options,
+            !elsewhere,
         )
         .map_err(|source| WriteError::Rewrite {
             entry: PREFERENCES_SRC.to_string(),

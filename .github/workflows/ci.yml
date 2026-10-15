@@ -90,6 +90,11 @@ jobs:
       # Red results must still publish (the matrix wants the ✗), so the run
       # does not abort here — the gate at the end fails the build once the
       # artifacts are safely uploaded.
+      # idml-coverage reads `cargo metadata --offline`, which needs every crate
+      # of the graph on disk; rust-cache prunes the ones the build never
+      # compiles (zip's optional `arbitrary`), so fetch the whole graph first.
+      - name: fetch the dependency graph
+        run: cargo fetch
       - name: nextest → JUnit
         run: |
           set -uo pipefail
