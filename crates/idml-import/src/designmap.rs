@@ -535,6 +535,12 @@ fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
             // (see `read_footnote_option_properties`); an attribute is
             // read too.
             numbering_style: attr(e, b"FootnoteNumberingStyle"),
+            // Around the number, where `ShowPrefixSuffix` (a child) says
+            // (core L-01c).
+            prefix: attr(e, b"Prefix").filter(|s| !s.is_empty()),
+            suffix: attr(e, b"Suffix").filter(|s| !s.is_empty()),
+            show_prefix_suffix: attr(e, b"ShowPrefixSuffix"),
+            restart_numbering: attr(e, b"RestartNumbering"),
         };
     }
     // R-11 — `<TransparencyPreference>`: the document's global light,
@@ -596,7 +602,9 @@ pub fn parse_preferences_part(xml: &[u8], out: &mut DesignMap) -> Result<(), Par
 /// ```
 ///
 /// (InDesign 20.0.1's own export). Read after the element's attributes;
-/// a child wins over an attribute of the same name.
+/// a child wins over an attribute of the same name. `RestartNumbering`,
+/// `ShowPrefixSuffix` and `RuleColor` are children too: a rule colour
+/// written only as an attribute reads back Black in InDesign.
 fn read_footnote_option_properties(
     xml: &[u8],
     options: &mut FootnoteOptions,
@@ -611,7 +619,16 @@ fn read_footnote_option_properties(
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) if e.name().as_ref() == b"FootnoteOption" => in_option = true,
             Event::End(e) if e.name().as_ref() == b"FootnoteOption" => in_option = false,
-            Event::Start(e) if in_option && e.name().as_ref() == b"FootnoteNumberingStyle" => {
+            Event::Start(e)
+                if in_option
+                    && matches!(
+                        e.name().as_ref(),
+                        b"FootnoteNumberingStyle"
+                            | b"RestartNumbering"
+                            | b"ShowPrefixSuffix"
+                            | b"RuleColor"
+                    ) =>
+            {
                 field = Some(e.name().as_ref().to_vec());
                 text.clear();
             }
@@ -624,7 +641,13 @@ fn read_footnote_option_properties(
             Event::End(_) if field.is_some() => {
                 let value = text.trim();
                 if !value.is_empty() {
-                    options.numbering_style = Some(value.to_string());
+                    let slot = match field.as_deref() {
+                        Some(b"RestartNumbering") => &mut options.restart_numbering,
+                        Some(b"ShowPrefixSuffix") => &mut options.show_prefix_suffix,
+                        Some(b"RuleColor") => &mut options.rule_color,
+                        _ => &mut options.numbering_style,
+                    };
+                    *slot = Some(value.to_string());
                 }
                 field = None;
             }
@@ -1106,6 +1129,37 @@ mod document_preference_tests {
         assert_eq!(fo.separator_text.as_deref(), Some("^t"));
         assert_eq!(fo.spacer, Some(9.0));
         assert_eq!(fo.space_between, Some(3.0));
+    }
+
+    #[test]
+    fn footnote_numbering_options_are_read_in_indesigns_spelling() {
+        // InDesign 20.0.1's own Preferences.xml (a corpus pack's, trimmed):
+        // Prefix / Suffix as attributes, the enumerations and the rule
+        // colour as typed `<Properties>` children (core L-01c).
+        let xml = br#"<?xml version="1.0"?><idPkg:Preferences xmlns:idPkg="x">
+<FootnoteOption StartAt="1" Prefix="(" Suffix=")" SeparatorText="&#x9;" RuleOn="true">
+  <Properties>
+    <FootnoteNumberingStyle type="enumeration">LowerRoman</FootnoteNumberingStyle>
+    <RestartNumbering type="enumeration">PageRestart</RestartNumbering>
+    <ShowPrefixSuffix type="enumeration">PrefixSuffixReference</ShowPrefixSuffix>
+    <MarkerPositioning type="enumeration">SuperscriptMarker</MarkerPositioning>
+    <RuleColor type="object">Color/Red</RuleColor>
+  </Properties>
+</FootnoteOption></idPkg:Preferences>"#;
+        let mut dm = DesignMap::default();
+        parse_preferences_part(xml, &mut dm).expect("parse");
+        let fo = &dm.footnote_options;
+        assert_eq!(fo.prefix.as_deref(), Some("("));
+        assert_eq!(fo.suffix.as_deref(), Some(")"));
+        assert_eq!(fo.numbering_style.as_deref(), Some("LowerRoman"));
+        assert_eq!(fo.restart_numbering.as_deref(), Some("PageRestart"));
+        assert_eq!(
+            fo.show_prefix_suffix.as_deref(),
+            Some("PrefixSuffixReference")
+        );
+        assert_eq!(fo.rule_color.as_deref(), Some("Color/Red"));
+        assert_eq!(fo.reference_label(2), "(ii)");
+        assert_eq!(fo.text_label(2), "ii");
     }
 
     #[test]
