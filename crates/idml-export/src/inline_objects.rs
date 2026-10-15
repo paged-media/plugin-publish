@@ -37,11 +37,13 @@ use std::io::Cursor;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::Writer;
 
-use idml_import::{AnchoredFrame, AnchoredFrameKind, AnchoredObjectSetting, Paragraph};
+use idml_import::{
+    AnchoredFrame, AnchoredFrameKind, AnchoredObjectSetting, CharacterRun, Paragraph,
+};
 
 use crate::emit::{
-    character_run_attrs, emit_applied_font, sanitize_id, write_run_body, write_table,
-    NO_CHARACTER_STYLE,
+    character_run_attrs, emit_applied_font, page_number_pieces, sanitize_id, write_run_body,
+    write_table, NO_CHARACTER_STYLE,
 };
 use crate::rewrite::{emit_empty_with_attrs, emit_start_with_attrs, format_f32, write_run_content};
 
@@ -170,8 +172,9 @@ pub(crate) fn write_body(
 
     let mut next = 0usize;
     let mut pos = 0usize;
-    let last_run = p.runs.len().saturating_sub(1);
-    for (ri, r) in p.runs.iter().enumerate() {
+    let runs = flavour_pieces(p);
+    let last_run = runs.len().saturating_sub(1);
+    for (ri, (r, flavour)) in runs.iter().enumerate() {
         let chars: Vec<char> = r.text.chars().collect();
         let end = pos + chars.len();
         let is_last = ri == last_run;
@@ -183,8 +186,12 @@ pub(crate) fn write_body(
             here.push((inlines[next].0 - pos, &inlines[next].1));
             next += 1;
         }
+        let mut attrs = character_run_attrs(r);
+        if let Some(flavour) = flavour {
+            attrs.push(("PageNumberType", flavour.to_string()));
+        }
         let range = Range {
-            attrs: character_run_attrs(r),
+            attrs,
             run: r,
             source: r.hyperlink_source.as_deref(),
         };
@@ -238,11 +245,42 @@ pub(crate) fn write_body(
     Ok(())
 }
 
+/// `p`'s runs cut where InDesign cuts ranges at a next or previous page
+/// number (`emit::page_number_pieces`), each piece with the flavour its
+/// range names — the same cut the plain paragraph writer makes
+/// (`emit::write_run_ranges`), so a paragraph that also holds an object
+/// keeps its page numbers' flavours. A run's hyperlink source and
+/// placeholder stay on its first piece; a text variable is never cut.
+fn flavour_pieces(p: &Paragraph) -> Vec<(CharacterRun, Option<&'static str>)> {
+    let mut out = Vec::with_capacity(p.runs.len());
+    for r in &p.runs {
+        let pieces = if r.text_variable.is_some() {
+            Vec::new()
+        } else {
+            page_number_pieces(&r.text)
+        };
+        if pieces.iter().all(|(kind, _)| kind.is_none()) {
+            out.push((r.clone(), None));
+            continue;
+        }
+        for (i, (kind, text)) in pieces.into_iter().enumerate() {
+            let mut piece = r.clone();
+            piece.text = text.to_string();
+            if i > 0 {
+                piece.hyperlink_source = None;
+                piece.placeholder = None;
+            }
+            out.push((piece, kind));
+        }
+    }
+    out
+}
+
 /// The `<CharacterStyleRange>` a run is written in — reopened after a
 /// table cuts it.
 struct Range<'a> {
     attrs: Vec<(&'static str, String)>,
-    run: &'a idml_import::CharacterRun,
+    run: &'a CharacterRun,
     source: Option<&'a str>,
 }
 

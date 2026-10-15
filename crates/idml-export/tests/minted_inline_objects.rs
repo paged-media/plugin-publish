@@ -347,3 +347,33 @@ fn a_table_after_its_text_is_corrected_in_an_older_part() {
     let third = write_idml(&doc, &again).expect("third save");
     pkg::assert_same_entries(&again, &third);
 }
+
+/// A paragraph holding an anchored object AND a next / previous page
+/// number: the objects' path cuts the run's ranges at the markers too, so
+/// each flavour reads back as itself, and the object stays at its
+/// character.
+#[test]
+fn page_number_flavours_survive_beside_an_anchored_object() {
+    use idml_import::{NEXT_PAGE_NUMBER_MARKER as NEXT, PREVIOUS_PAGE_NUMBER_MARKER as PREV};
+    let line = format!("Box here, continued on page {NEXT} from {PREV}.");
+    let mut p = para(&[line.as_str()]);
+    p.anchored_frames = vec![rectangle("rb", 9.0, 9.0)];
+    p.anchored_frame_offsets = vec![8];
+    let (back, xml) = round_trip(Story {
+        paragraphs: vec![p.clone(), para(&["After."])],
+        ..Default::default()
+    });
+    assert!(
+        xml.contains(r#"PageNumberType="NextPageNumber""#)
+            && xml.contains(r#"PageNumberType="PreviousPageNumber""#),
+        "each flavour in a range that names it:\n{xml}"
+    );
+    let q = &back.paragraphs[0];
+    assert_eq!(
+        text(q),
+        text(&p),
+        "every marker reads back as its own flavour"
+    );
+    assert_eq!(q.anchored_frame_offsets, vec![8]);
+    assert_eq!(q.anchored_frames[0].self_id.as_deref(), Some("rb"));
+}
