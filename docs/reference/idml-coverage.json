@@ -16,27 +16,27 @@
     "documents": 305
   },
   "counts": {
-    "rows": 1374,
+    "rows": 1378,
     "elements": 122,
-    "attributes": 662,
-    "imported": 1255,
+    "attributes": 666,
+    "imported": 1259,
     "exported": 909,
     "importedAndExported": 790,
-    "importOnly": 465,
+    "importOnly": 469,
     "exportOnly": 119,
     "propertiesChild": 49,
-    "importerReadSites": 958,
+    "importerReadSites": 962,
     "exporterWriteSites": 902,
     "unresolved": 0,
     "partRows": 4150,
     "misplaced": 30,
-    "unseen": 305
+    "unseen": 307
   },
   "metrics": {
     "weightedImport": {
-      "covered": 118574,
+      "covered": 119116,
       "total": 633952,
-      "value": 0.187039
+      "value": 0.187894
     },
     "impactImport": {
       "covered": 25359,
@@ -49,7 +49,7 @@
       "value": 0.136294
     },
     "misplacedReads": 30,
-    "unseenReads": 305,
+    "unseenReads": 307,
     "unjustifiedUnseenReads": 0
   },
   "rows": [
@@ -2653,7 +2653,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 664
+        "line": 687
       },
       "exportSource": null
     },
@@ -2696,7 +2696,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -2719,7 +2719,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -5837,7 +5837,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -5860,7 +5860,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -6058,7 +6058,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -6081,7 +6081,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -7591,7 +7591,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -7614,7 +7614,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -8059,6 +8059,44 @@
     },
     {
       "element": "FootnoteOption",
+      "attribute": "Prefix",
+      "kind": "attr",
+      "importerField": "FootnoteOptions.prefix",
+      "coarseType": "string",
+      "imported": true,
+      "exported": false,
+      "importParts": [
+        "Resources/Preferences",
+        "designmap"
+      ],
+      "exportParts": [],
+      "source": {
+        "file": "crates/idml-import/src/designmap.rs",
+        "line": 540
+      },
+      "exportSource": null
+    },
+    {
+      "element": "FootnoteOption",
+      "attribute": "RestartNumbering",
+      "kind": "attr",
+      "importerField": "FootnoteOptions.restart_numbering",
+      "coarseType": "string",
+      "imported": true,
+      "exported": false,
+      "importParts": [
+        "Resources/Preferences",
+        "designmap"
+      ],
+      "exportParts": [],
+      "source": {
+        "file": "crates/idml-import/src/designmap.rs",
+        "line": 543
+      },
+      "exportSource": null
+    },
+    {
+      "element": "FootnoteOption",
       "attribute": "RuleColor",
       "kind": "attr",
       "importerField": "FootnoteOptions.rule_color",
@@ -8211,6 +8249,25 @@
     },
     {
       "element": "FootnoteOption",
+      "attribute": "ShowPrefixSuffix",
+      "kind": "attr",
+      "importerField": "FootnoteOptions.show_prefix_suffix",
+      "coarseType": "string",
+      "imported": true,
+      "exported": false,
+      "importParts": [
+        "Resources/Preferences",
+        "designmap"
+      ],
+      "exportParts": [],
+      "source": {
+        "file": "crates/idml-import/src/designmap.rs",
+        "line": 542
+      },
+      "exportSource": null
+    },
+    {
+      "element": "FootnoteOption",
       "attribute": "SpaceBetween",
       "kind": "attr",
       "importerField": "FootnoteOptions.space_between",
@@ -8263,6 +8320,25 @@
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
         "line": 533
+      },
+      "exportSource": null
+    },
+    {
+      "element": "FootnoteOption",
+      "attribute": "Suffix",
+      "kind": "attr",
+      "importerField": "FootnoteOptions.suffix",
+      "coarseType": "string",
+      "imported": true,
+      "exported": false,
+      "importParts": [
+        "Resources/Preferences",
+        "designmap"
+      ],
+      "exportParts": [],
+      "source": {
+        "file": "crates/idml-import/src/designmap.rs",
+        "line": 541
       },
       "exportSource": null
     },
@@ -9971,7 +10047,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 563
+        "line": 569
       },
       "exportSource": null
     },
@@ -9990,7 +10066,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 560
+        "line": 566
       },
       "exportSource": null
     },
@@ -10009,7 +10085,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 562
+        "line": 568
       },
       "exportSource": null
     },
@@ -10028,7 +10104,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 561
+        "line": 567
       },
       "exportSource": null
     },
@@ -10047,7 +10123,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 559
+        "line": 565
       },
       "exportSource": null
     },
@@ -10066,7 +10142,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 564
+        "line": 570
       },
       "exportSource": null
     },
@@ -10085,7 +10161,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 565
+        "line": 571
       },
       "exportSource": null
     },
@@ -13590,7 +13666,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -13613,7 +13689,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -13746,7 +13822,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -13769,7 +13845,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -16057,7 +16133,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -16080,7 +16156,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": {
         "file": "crates/idml-export/src/text_variables.rs",
@@ -29556,7 +29632,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 693
+        "line": 716
       },
       "exportSource": null
     },
@@ -29574,7 +29650,7 @@
       "exportParts": [],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 692
+        "line": 715
       },
       "exportSource": null
     },
@@ -30093,7 +30169,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 548
+        "line": 554
       },
       "exportSource": {
         "file": "crates/idml-export/src/preferences.rs",
@@ -30117,7 +30193,7 @@
       ],
       "source": {
         "file": "crates/idml-import/src/designmap.rs",
-        "line": 547
+        "line": 553
       },
       "exportSource": {
         "file": "crates/idml-export/src/preferences.rs",
@@ -31290,6 +31366,18 @@
     {
       "element": "FootnoteOption",
       "attribute": "FootnoteNumberingStyle",
+      "kind": "attr",
+      "reason": "Read as an XML attribute. InDesign writes these as <Properties> children, the only form the census finds; the attribute form is the engine's older spelling."
+    },
+    {
+      "element": "FootnoteOption",
+      "attribute": "RestartNumbering",
+      "kind": "attr",
+      "reason": "Read as an XML attribute. InDesign writes these as <Properties> children, the only form the census finds; the attribute form is the engine's older spelling."
+    },
+    {
+      "element": "FootnoteOption",
+      "attribute": "ShowPrefixSuffix",
       "kind": "attr",
       "reason": "Read as an XML attribute. InDesign writes these as <Properties> children, the only form the census finds; the attribute form is the engine's older spelling."
     },
@@ -33493,7 +33581,7 @@
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"FootnoteTextStyle","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"MarkerPositioning","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"NoSplitting","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Prefix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Prefix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RestartNumbering","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"RuleColor","kind":"attr","docCount":1,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"RuleColor","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
@@ -33521,7 +33609,7 @@
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Spacer","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"designmap","element":"FootnoteOption","attribute":"Spacer","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"StartAt","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
-    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Suffix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
+    {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"Suffix","kind":"attr","docCount":271,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"MasterSpreads","element":"FrameFittingOption","attribute":"AutoFit","kind":"attr","docCount":18,"nonModalDocs":0,"imported":true,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FrameFittingOption","attribute":"AutoFit","kind":"attr","docCount":270,"nonModalDocs":1,"imported":false,"exported":false,"readElsewhere":true},
     {"part":"Resources/Styles","element":"FrameFittingOption","attribute":"AutoFit","kind":"attr","docCount":270,"nonModalDocs":2,"imported":false,"exported":false,"readElsewhere":true},

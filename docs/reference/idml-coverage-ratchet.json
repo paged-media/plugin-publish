@@ -8,9 +8,9 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 118574,
+      "covered": 119116,
       "total": 633952,
-      "value": 0.187039
+      "value": 0.187894
     },
     "impactImport": {
       "covered": 25359,
@@ -23,7 +23,7 @@
       "value": 0.136294
     },
     "misplacedReads": 30,
-    "unseenReads": 305,
+    "unseenReads": 307,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -246,6 +246,7 @@
     "Resources/Preferences|DocumentPreference@SlugInsideOrLeftOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugRightOrOutsideOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugTopOffset|attr",
+    "Resources/Preferences|FootnoteOption@Prefix|attr",
     "Resources/Preferences|FootnoteOption@RuleLeftIndent|attr",
     "Resources/Preferences|FootnoteOption@RuleLineWeight|attr",
     "Resources/Preferences|FootnoteOption@RuleOffset|attr",
@@ -256,6 +257,7 @@
     "Resources/Preferences|FootnoteOption@SpaceBetween|attr",
     "Resources/Preferences|FootnoteOption@Spacer|attr",
     "Resources/Preferences|FootnoteOption@StartAt|attr",
+    "Resources/Preferences|FootnoteOption@Suffix|attr",
     "Resources/Preferences|GridPreference@BaselineDivision|attr",
     "Resources/Preferences|GridPreference@BaselineGridRelativeOption|attr",
     "Resources/Preferences|GridPreference@BaselineGridShown|attr",
