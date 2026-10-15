@@ -185,7 +185,31 @@ pub(crate) fn write_paragraphs(
     anchors: &[(String, Option<String>)],
     host_width: Option<f32>,
 ) -> Result<(), quick_xml::Error> {
-    let last_para = paragraphs.len().saturating_sub(1);
+    write_paragraphs_ending(writer, paragraphs, anchors, host_width, false)
+}
+
+/// [`write_paragraphs`] for paragraphs that more of the story follows:
+/// the last one ends with its mark too.
+pub(crate) fn write_paragraphs_before_more(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    paragraphs: &[idml_import::Paragraph],
+    host_width: Option<f32>,
+) -> Result<(), quick_xml::Error> {
+    write_paragraphs_ending(writer, paragraphs, &[], host_width, true)
+}
+
+fn write_paragraphs_ending(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    paragraphs: &[idml_import::Paragraph],
+    anchors: &[(String, Option<String>)],
+    host_width: Option<f32>,
+    last_marked: bool,
+) -> Result<(), quick_xml::Error> {
+    let last_para = if last_marked {
+        paragraphs.len()
+    } else {
+        paragraphs.len().saturating_sub(1)
+    };
     for (pi, p) in paragraphs.iter().enumerate() {
         rewrite::emit_start_with_attrs(writer, "ParagraphStyleRange", &paragraph_attrs(p))?;
         // `<Properties>` is the range's first child in InDesign's own

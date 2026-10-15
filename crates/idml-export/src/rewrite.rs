@@ -5290,11 +5290,17 @@ fn story_self_id(original: &[u8]) -> Option<String> {
 /// They have no source element: the writer emits each as a range of its
 /// own (see [`resolve_run_skipping_new`] and [`split_tail`]), and the
 /// source ranges around them keep resolving to the right model runs.
-fn new_variable_runs(model: &[Paragraph], source: &[Paragraph]) -> NewRuns {
+fn new_variable_runs(
+    model: &[Paragraph],
+    source: &[Paragraph],
+    align: &[Option<usize>],
+) -> NewRuns {
     let mut out = NewRuns::new();
-    for (i, mp) in model.iter().enumerate() {
-        let src: Vec<&str> = source
-            .get(i)
+    for (i, sp) in source.iter().enumerate() {
+        let Some(mp) = align.get(i).copied().flatten().and_then(|j| model.get(j)) else {
+            continue;
+        };
+        let src: Vec<&str> = Some(sp)
             .map(|sp| {
                 sp.runs
                     .iter()
@@ -5363,19 +5369,35 @@ fn rewrite_story_part(
     // `read_tables[i]`: the `Self` of the table the parser attached to
     // its `i`-th story paragraph — the one table of the range the model
     // was read with (a range holding two keeps the last).
-    let (provenance, provenance_ok, new_runs, read_tables) =
+    let has_footnotes = story.paragraphs.iter().any(|p| !p.footnotes.is_empty());
+    let (provenance, provenance_ok, parsed) =
         match idml_import::parse_story_with_provenance(original) {
-            Ok((parsed, p)) => {
-                let new_runs = new_variable_runs(&story.paragraphs, &parsed.paragraphs);
-                let read_tables: Vec<Option<String>> = parsed
-                    .paragraphs
-                    .iter()
-                    .map(|p| p.table.as_ref().and_then(|t| t.self_id.clone()))
-                    .collect();
-                (p, true, new_runs, read_tables)
-            }
-            Err(_) => (Default::default(), false, NewRuns::new(), Vec::new()),
+            Ok((parsed, p)) => (p, true, parsed),
+            Err(_) => (Default::default(), false, Story::default()),
         };
+    // `align[i]`: the model paragraph the source's `i`-th story paragraph
+    // is (see `align_paragraphs`). A story with footnotes keeps the
+    // positional pairing: it cannot take the whole-story fallback below.
+    let align: Vec<Option<usize>> = if has_footnotes {
+        (0..parsed.paragraphs.len())
+            .map(|i| (i < story.paragraphs.len()).then_some(i))
+            .collect()
+    } else {
+        align_paragraphs(&parsed.paragraphs, &story.paragraphs)
+    };
+    let model_index = |pos: u64| -> Option<usize> {
+        provenance
+            .paragraph_at(pos)
+            .and_then(|i| align.get(i).copied().flatten())
+    };
+    let new_runs = new_variable_runs(&story.paragraphs, &parsed.paragraphs, &align);
+    let read_tables: Vec<Option<String>> = parsed
+        .paragraphs
+        .iter()
+        .map(|p| p.table.as_ref().and_then(|t| t.self_id.clone()))
+        .collect();
+    // The parse's own cells: an empty cell paragraph is known by its parse.
+    let parsed_cells = collect_story_cells(&parsed);
     // How many story-level `<ParagraphStyleRange>`s the source carries —
     // so the LAST one is recognisable when the model appends paragraphs
     // after it (see the `</ParagraphStyleRange>` arm).
@@ -5447,8 +5469,13 @@ fn rewrite_story_part(
     // range went; the model is the truth, so the part is written fresh.
     // (A minted story does not serialise footnotes yet, so a story that
     // carries some keeps the positional lane rather than lose them.)
-    let has_footnotes = story.paragraphs.iter().any(|p| !p.footnotes.is_empty());
-    if provenance_ok && mapped_top > story.paragraphs.len() && !has_footnotes {
+    // A source paragraph no model paragraph is — one deleted, or two
+    // joined — leaves nothing to patch it against; the model is written
+    // whole.
+    if provenance_ok
+        && !has_footnotes
+        && (mapped_top > story.paragraphs.len() || align.iter().any(Option::is_none))
+    {
         return fresh_story_part(original, story, host_width);
     }
 
@@ -5503,6 +5530,17 @@ fn rewrite_story_part(
     // text is re-serialised across ranges (a next / previous page number,
     // see `write_page_number_pieces`) opens the later ones from it.
     let mut open_csr: Option<BytesStart<'static>> = None;
+    // The parse of the open paragraph, story-level and in the open cell
+    // (and the parsed cell itself): an EMPTY source paragraph is one whose
+    // parse holds no run (see `adopted_runs`).
+    let mut parsed_para: Option<&Paragraph> = None;
+    let mut parsed_cell: Option<&TableCell> = None;
+    let mut parsed_cell_para: Option<&Paragraph> = None;
+    // The open paragraph already gave its model runs a range.
+    let mut adopted = false;
+    // The model runs after the first that the open range adopted, written
+    // after it as ranges of their own.
+    let mut adopt_extras: Option<Vec<usize>> = None;
     // ---- what the SOURCE story lacks and the model has ----
     // The highest model paragraph index a story-level range resolved to:
     // model paragraphs beyond it have no source element (a table
@@ -5558,7 +5596,14 @@ fn rewrite_story_part(
     // Nested tables (a table in a cell's paragraph) nest `<Cell>`s, so
     // the cell-local state is a stack: each `<Cell>` open parks the
     // enclosing cell's state, each `</Cell>` restores it.
-    type CellFrame<'a> = (Option<&'a TableCell>, usize, Option<&'a Paragraph>);
+    type CellFrame<'a> = (
+        Option<&'a TableCell>,
+        usize,
+        Option<&'a Paragraph>,
+        Option<&'a TableCell>,
+        Option<&'a Paragraph>,
+        bool,
+    );
     let mut cell_stack: Vec<CellFrame> = Vec::new();
 
     loop {
@@ -5625,27 +5670,49 @@ fn rewrite_story_part(
                         // model counterpart (by `Self`) + reset the
                         // cell-local cursors. The start tag passes through
                         // verbatim (cell-level attributes patched elsewhere).
-                        cell_stack.push((current_cell, cell_depth, cell_para));
+                        cell_stack.push((
+                            current_cell,
+                            cell_depth,
+                            cell_para,
+                            parsed_cell,
+                            parsed_cell_para,
+                            adopted,
+                        ));
                         cell_depth = table_depth;
                         cell_para = None;
-                        current_cell =
-                            attr_value(&e, b"Self").and_then(|id| cells.get(id.as_str()).copied());
+                        parsed_cell_para = None;
+                        let id = attr_value(&e, b"Self");
+                        current_cell = id.as_deref().and_then(|id| cells.get(id).copied());
+                        parsed_cell = id.as_deref().and_then(|id| parsed_cells.get(id).copied());
                         writer.write_event(Event::Start(e.into_owned()))?;
                     }
                     b"ParagraphStyleRange" if table_depth == 0 => {
                         run_offset = 0;
                         table_in_para = false;
+                        adopted = false;
                         read_table = provenance
                             .paragraph_at(event_pos)
                             .and_then(|i| read_tables.get(i).cloned().flatten());
                         source_psr_seen += 1;
-                        if let Some(i) = provenance
-                            .paragraph_at(event_pos)
-                            .and_then(|i| model_paragraph_index(&story.paragraphs, i))
-                        {
-                            max_story_para = Some(max_story_para.map_or(i, |m| m.max(i)));
+                        let mapped = model_index(event_pos);
+                        if let Some(j) = mapped {
+                            // Model paragraphs the source has no range for,
+                            // before this one (a new paragraph, Enter in a
+                            // run): written here, each with its mark.
+                            let next = max_story_para.map_or(0, |m| m + 1);
+                            if j > next && !childless.contains(&event_pos) {
+                                crate::emit::write_paragraphs_before_more(
+                                    &mut writer,
+                                    &story.paragraphs[next..j],
+                                    host_width,
+                                )?;
+                            }
+                            max_story_para = Some(max_story_para.map_or(j, |m| m.max(j)));
                         }
-                        story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
+                        story_para = mapped.and_then(|j| story.paragraphs.get(j));
+                        parsed_para = provenance
+                            .paragraph_at(event_pos)
+                            .and_then(|i| parsed.paragraphs.get(i));
                         let start = patch_paragraph_range(&e, story_para)?;
                         if childless.contains(&event_pos) {
                             // Dropped; the paragraph before it keeps its
@@ -5659,7 +5726,10 @@ fn rewrite_story_part(
                     b"ParagraphStyleRange" if in_cell => {
                         prev_ended_with_br = false;
                         run_offset = 0;
+                        adopted = false;
                         cell_para = current_cell
+                            .and_then(|c| resolve_paragraph(&provenance, event_pos, &c.paragraphs));
+                        parsed_cell_para = parsed_cell
                             .and_then(|c| resolve_paragraph(&provenance, event_pos, &c.paragraphs));
                         let start = patch_paragraph_range(&e, cell_para)?;
                         writer.write_event(Event::Start(start))?;
@@ -5676,6 +5746,18 @@ fn rewrite_story_part(
                         )?;
                         csr_open = true;
                         body = RunBody::default();
+                        adopt_extras = None;
+                        if let Some((head, rest)) = adopted_runs(
+                            &provenance,
+                            event_pos,
+                            story_para,
+                            parsed_para,
+                            &mut adopted,
+                        ) {
+                            current_run = story_para.and_then(|p| p.runs.get(head));
+                            (current_run_split, current_first) = (false, Some(head));
+                            adopt_extras = Some(rest);
+                        }
                         let start = patch_character_range(&e, current_run)?;
                         open_csr = Some(start.clone());
                         writer.write_event(Event::Start(start))?;
@@ -5685,6 +5767,18 @@ fn rewrite_story_part(
                             resolve_run(&provenance, event_pos, cell_para, run_offset);
                         csr_open = true;
                         body = RunBody::default();
+                        adopt_extras = None;
+                        if let Some((head, rest)) = adopted_runs(
+                            &provenance,
+                            event_pos,
+                            cell_para,
+                            parsed_cell_para,
+                            &mut adopted,
+                        ) {
+                            current_run = cell_para.and_then(|p| p.runs.get(head));
+                            (current_run_split, current_first) = (false, Some(head));
+                            adopt_extras = Some(rest);
+                        }
                         let start = patch_character_range(&e, current_run)?;
                         open_csr = Some(start.clone());
                         writer.write_event(Event::Start(start))?;
@@ -5743,18 +5837,16 @@ fn rewrite_story_part(
                         }
                         run_offset = 0;
                         source_psr_seen += 1;
-                        if let Some(i) = provenance
-                            .paragraph_at(event_pos)
-                            .and_then(|i| model_paragraph_index(&story.paragraphs, i))
-                        {
-                            max_story_para = Some(max_story_para.map_or(i, |m| m.max(i)));
+                        let mapped = model_index(event_pos);
+                        if let Some(j) = mapped {
+                            max_story_para = Some(max_story_para.map_or(j, |m| m.max(j)));
                         }
                         // A self-closing paragraph range has no runs, so
                         // the parser dropped it and the map has no entry
                         // — it passes through verbatim. Still recorded
                         // as the open paragraph so a following range
                         // resolves against the right scope.
-                        story_para = resolve_paragraph(&provenance, event_pos, &story.paragraphs);
+                        story_para = mapped.and_then(|j| story.paragraphs.get(j));
                         let start = patch_paragraph_range(&e, story_para)?;
                         if !childless.contains(&event_pos) {
                             writer.write_event(Event::Empty(start))?;
@@ -5774,6 +5866,27 @@ fn rewrite_story_part(
                         current_first = None;
                         csr_open = false;
                         body = RunBody::default();
+                        if let Some((head, rest)) = adopted_runs(
+                            &provenance,
+                            event_pos,
+                            story_para,
+                            parsed_para,
+                            &mut adopted,
+                        ) {
+                            if let Some(para) = story_para {
+                                write_adopted_range(
+                                    &mut writer,
+                                    &e,
+                                    para,
+                                    head,
+                                    &rest,
+                                    open_sources == 0,
+                                )?;
+                                open_csr = None;
+                                buf.clear();
+                                continue;
+                            }
+                        }
                         let (run, _, _) =
                             resolve_run(&provenance, event_pos, story_para, run_offset);
                         let start = patch_character_range(&e, run)?;
@@ -5786,6 +5899,27 @@ fn rewrite_story_part(
                         current_first = None;
                         csr_open = false;
                         body = RunBody::default();
+                        if let Some((head, rest)) = adopted_runs(
+                            &provenance,
+                            event_pos,
+                            cell_para,
+                            parsed_cell_para,
+                            &mut adopted,
+                        ) {
+                            if let Some(para) = cell_para {
+                                write_adopted_range(
+                                    &mut writer,
+                                    &e,
+                                    para,
+                                    head,
+                                    &rest,
+                                    open_sources == 0,
+                                )?;
+                                open_csr = None;
+                                buf.clear();
+                                continue;
+                            }
+                        }
                         let (run, _, _) =
                             resolve_run(&provenance, event_pos, cell_para, run_offset);
                         let start = patch_character_range(&e, run)?;
@@ -5897,10 +6031,15 @@ fn rewrite_story_part(
                         // state (a nested table's cell pops back to its
                         // host cell; a top-level cell pops back to None) so
                         // siblings + post-table markup patch correctly.
-                        let (cc, cd, cp) = cell_stack.pop().unwrap_or((None, 0, None));
+                        let (cc, cd, cp, pc, pcp, ad) = cell_stack
+                            .pop()
+                            .unwrap_or((None, 0, None, None, None, false));
                         current_cell = cc;
                         cell_depth = cd;
                         cell_para = cp;
+                        parsed_cell = pc;
+                        parsed_cell_para = pcp;
+                        adopted = ad;
                     }
                     b"Content" if body.active => {
                         body.in_content = false;
@@ -5932,7 +6071,14 @@ fn rewrite_story_part(
                         } else {
                             body.text.clone()
                         };
-                        let extras = if body.active && !body.foreign && !current_run_split {
+                        if adopt_extras.is_some() && !body.foreign {
+                            // An empty range (`<CharacterStyleRange>`
+                            // with no inline leaf) still takes its run.
+                            body.active = true;
+                        }
+                        let extras = if let Some(rest) = adopt_extras.take() {
+                            rest
+                        } else if body.active && !body.foreign && !current_run_split {
                             split_tail(
                                 scope,
                                 current_first,
@@ -6592,6 +6738,156 @@ fn model_paragraph_index(scope: &[Paragraph], parse_index: usize) -> Option<usiz
     // The parser keeps every range that had a child (an empty line is a
     // paragraph), so parse space IS model space.
     (parse_index < scope.len()).then_some(parse_index)
+}
+
+/// Which model paragraph each story paragraph of the source is: `out[i]`
+/// for the parse's `i`-th, `None` for one the model no longer has.
+///
+/// Paired in order by what a reader sees — style, text and table: the
+/// common head and tail first, a longest common subsequence between, and
+/// the paragraphs left between two pairs paired in order, as many as
+/// both sides have. A model paragraph left over is NEW — Enter, a
+/// paragraph typed between two — and has no source range; a source one
+/// left over was deleted or joined. The positional pairing this replaces
+/// shifted every source paragraph after a new one onto the wrong model
+/// paragraph: one paragraph's text written into the next, the story's
+/// tail lost.
+fn align_paragraphs(source: &[Paragraph], model: &[Paragraph]) -> Vec<Option<usize>> {
+    type Key = (Option<String>, String, Option<String>);
+    let mut ids: std::collections::HashMap<Key, u32> = std::collections::HashMap::new();
+    let mut key = |p: &Paragraph| -> u32 {
+        let k = (
+            p.paragraph_style.clone(),
+            p.runs.iter().map(|r| r.text.as_str()).collect::<String>(),
+            p.table.as_ref().and_then(|t| t.self_id.clone()),
+        );
+        let next = ids.len() as u32;
+        *ids.entry(k).or_insert(next)
+    };
+    let ks: Vec<u32> = source.iter().map(&mut key).collect();
+    let km: Vec<u32> = model.iter().map(&mut key).collect();
+    let (n, m) = (ks.len(), km.len());
+    let mut out = vec![None; n];
+    let mut head = 0;
+    while head < n && head < m && ks[head] == km[head] {
+        out[head] = Some(head);
+        head += 1;
+    }
+    let mut tail = 0;
+    while tail < n - head && tail < m - head && ks[n - 1 - tail] == km[m - 1 - tail] {
+        out[n - 1 - tail] = Some(m - 1 - tail);
+        tail += 1;
+    }
+    let (s0, s1, m0, m1) = (head, n - tail, head, m - tail);
+    let (a, b) = (s1 - s0, m1 - m0);
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    // Bounded: a story rewritten past this many paragraph pairs is paired
+    // in order.
+    if a > 0 && b > 0 && a.saturating_mul(b) <= 4_000_000 {
+        let at = |i: usize, j: usize| i * (b + 1) + j;
+        let mut lcs = vec![0u32; (a + 1) * (b + 1)];
+        for i in (0..a).rev() {
+            for j in (0..b).rev() {
+                lcs[at(i, j)] = if ks[s0 + i] == km[m0 + j] {
+                    lcs[at(i + 1, j + 1)] + 1
+                } else {
+                    lcs[at(i + 1, j)].max(lcs[at(i, j + 1)])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < a && j < b {
+            if ks[s0 + i] == km[m0 + j] {
+                pairs.push((s0 + i, m0 + j));
+                i += 1;
+                j += 1;
+            } else if lcs[at(i + 1, j)] >= lcs[at(i, j + 1)] {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+    }
+    let mut from = (s0, m0);
+    for &(si, mj) in pairs.iter().chain(std::iter::once(&(s1, m1))) {
+        for t in 0..(si - from.0).min(mj - from.1) {
+            out[from.0 + t] = Some(from.1 + t);
+        }
+        if si < s1 {
+            out[si] = Some(mj);
+        }
+        from = (si + 1, mj + 1);
+    }
+    out
+}
+
+/// The model runs the range at `pos` takes when its paragraph was EMPTY
+/// in the source and the model has text in it now — typed into an empty
+/// line, an empty cell. An empty paragraph produces no run, so no range of
+/// it resolves to one and the text was never written. The paragraph's
+/// first range takes the model's first run with text (`head`), the others
+/// follow as ranges of their own; `adopted` keeps a second range of the
+/// paragraph from taking them again. A paragraph holding a table is not
+/// empty.
+fn adopted_runs(
+    provenance: &idml_import::StoryProvenance,
+    pos: u64,
+    para: Option<&Paragraph>,
+    parsed: Option<&Paragraph>,
+    adopted: &mut bool,
+) -> Option<(usize, Vec<usize>)> {
+    if *adopted || provenance.run_at(pos).is_some() {
+        return None;
+    }
+    let parsed = parsed?;
+    if !parsed.runs.is_empty() || parsed.table.is_some() {
+        return None;
+    }
+    let mut typed = para?
+        .runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.text.is_empty())
+        .map(|(i, _)| i);
+    let head = typed.next()?;
+    *adopted = true;
+    Some((head, typed.collect()))
+}
+
+/// A self-closing `<CharacterStyleRange/>` — the range of an empty last
+/// paragraph or an empty cell — opened to take the model runs `head` and
+/// `rest` (see [`adopted_runs`]). It holds no mark, so neither do they.
+fn write_adopted_range(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    e: &BytesStart,
+    para: &Paragraph,
+    head: usize,
+    rest: &[usize],
+    wrap_source: bool,
+) -> Result<(), quick_xml::Error> {
+    let run = &para.runs[head];
+    let start = patch_character_range(e, Some(run))?;
+    writer.write_event(Event::Start(start.clone()))?;
+    crate::emit::emit_applied_font(writer, &run.font)?;
+    let mut body = RunBody {
+        active: true,
+        ..Default::default()
+    };
+    let mut prev_br = false;
+    flush_run_body(
+        writer,
+        &mut body,
+        Some(run),
+        Some(&start),
+        &mut prev_br,
+        false,
+        wrap_source,
+    )?;
+    writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+    for i in rest {
+        write_split_run(writer, &para.runs[*i], wrap_source, false)?;
+    }
+    Ok(())
 }
 
 /// What the model did to a story-level source `<Table>` since the part
