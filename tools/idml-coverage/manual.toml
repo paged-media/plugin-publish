@@ -993,6 +993,7 @@ keys = [
   "CharacterStyle@BasedOn",
   "CharacterStyle@Leading",
   "CharacterStyleRange@Leading",
+  "FootnoteOption@ContinuingRuleColor",
   "FootnoteOption@FootnoteNumberingStyle",
   "FootnoteOption@RestartNumbering",
   "FootnoteOption@ShowPrefixSuffix",

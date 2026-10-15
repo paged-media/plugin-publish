@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 119957,
+      "covered": 122139,
       "total": 633952,
-      "value": 0.189221
+      "value": 0.192663
     },
     "impactImport": {
-      "covered": 25385,
+      "covered": 25402,
       "total": 54667,
-      "value": 0.464357
+      "value": 0.464668
     },
     "weightedExport": {
       "covered": 87488,
@@ -23,7 +23,7 @@
       "value": 0.138004
     },
     "misplacedReads": 30,
-    "unseenReads": 339,
+    "unseenReads": 340,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -188,6 +188,10 @@
     "MasterSpreads|TextFramePreference@ColumnRuleStrokeWidth|attr",
     "MasterSpreads|TextFramePreference@ColumnRuleTopInset|attr",
     "MasterSpreads|TextFramePreference@FirstBaselineOffset|attr",
+    "MasterSpreads|TextFramePreference@FootnotesEnableOverrides|attr",
+    "MasterSpreads|TextFramePreference@FootnotesMinimumSpacing|attr",
+    "MasterSpreads|TextFramePreference@FootnotesSpaceBetween|attr",
+    "MasterSpreads|TextFramePreference@FootnotesSpanAcrossColumns|attr",
     "MasterSpreads|TextFramePreference@IgnoreWrap|attr",
     "MasterSpreads|TextFramePreference@MinimumFirstBaselineOffset|attr",
     "MasterSpreads|TextFramePreference@MinimumHeightForAutoSizing|attr",
@@ -246,6 +250,14 @@
     "Resources/Preferences|DocumentPreference@SlugInsideOrLeftOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugRightOrOutsideOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugTopOffset|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleLeftIndent|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleLineWeight|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleOffset|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleOn|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleTint|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleWidth|attr",
+    "Resources/Preferences|FootnoteOption@EnableStraddling|attr",
+    "Resources/Preferences|FootnoteOption@NoSplitting|attr",
     "Resources/Preferences|FootnoteOption@Prefix|attr",
     "Resources/Preferences|FootnoteOption@RuleLeftIndent|attr",
     "Resources/Preferences|FootnoteOption@RuleLineWeight|attr",
@@ -872,6 +884,10 @@
     "Spreads|TextFramePreference@ColumnRuleStrokeWidth|attr",
     "Spreads|TextFramePreference@ColumnRuleTopInset|attr",
     "Spreads|TextFramePreference@FirstBaselineOffset|attr",
+    "Spreads|TextFramePreference@FootnotesEnableOverrides|attr",
+    "Spreads|TextFramePreference@FootnotesMinimumSpacing|attr",
+    "Spreads|TextFramePreference@FootnotesSpaceBetween|attr",
+    "Spreads|TextFramePreference@FootnotesSpanAcrossColumns|attr",
     "Spreads|TextFramePreference@IgnoreWrap|attr",
     "Spreads|TextFramePreference@InsetSpacing|attr",
     "Spreads|TextFramePreference@MinimumFirstBaselineOffset|attr",

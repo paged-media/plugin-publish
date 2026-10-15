@@ -541,6 +541,22 @@ fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
             suffix: attr(e, b"Suffix").filter(|s| !s.is_empty()),
             show_prefix_suffix: attr(e, b"ShowPrefixSuffix"),
             restart_numbering: attr(e, b"RestartNumbering"),
+            // A frame with columns sets its notes across them (core
+            // ADR 160); a frame may override it.
+            enable_straddling: attr(e, b"EnableStraddling").and_then(|s| s.trim().parse().ok()),
+            // A note too tall for its frame: continued under the
+            // continuing rule, or its reference line moved on (core
+            // ADR 161). The rule's colour is a typed child too.
+            no_splitting: attr(e, b"NoSplitting").and_then(|s| s.trim().parse().ok()),
+            continuing_rule: paged_model::ContinuingRule {
+                on: attr(e, b"ContinuingRuleOn").and_then(|s| s.trim().parse().ok()),
+                line_weight: f(b"ContinuingRuleLineWeight"),
+                width: f(b"ContinuingRuleWidth"),
+                offset: f(b"ContinuingRuleOffset"),
+                left_indent: f(b"ContinuingRuleLeftIndent"),
+                color: attr(e, b"ContinuingRuleColor"),
+                tint: f(b"ContinuingRuleTint"),
+            },
         };
     }
     // R-11 — `<TransparencyPreference>`: the document's global light,
@@ -627,6 +643,7 @@ fn read_footnote_option_properties(
                             | b"RestartNumbering"
                             | b"ShowPrefixSuffix"
                             | b"RuleColor"
+                            | b"ContinuingRuleColor"
                     ) =>
             {
                 field = Some(e.name().as_ref().to_vec());
@@ -645,6 +662,7 @@ fn read_footnote_option_properties(
                         Some(b"RestartNumbering") => &mut options.restart_numbering,
                         Some(b"ShowPrefixSuffix") => &mut options.show_prefix_suffix,
                         Some(b"RuleColor") => &mut options.rule_color,
+                        Some(b"ContinuingRuleColor") => &mut options.continuing_rule.color,
                         _ => &mut options.numbering_style,
                     };
                     *slot = Some(value.to_string());
@@ -1150,6 +1168,38 @@ mod document_preference_tests {
         assert_eq!(fo.separator_text.as_deref(), Some("^t"));
         assert_eq!(fo.spacer, Some(9.0));
         assert_eq!(fo.space_between, Some(3.0));
+    }
+
+    #[test]
+    fn no_splitting_and_the_continuing_rule_are_read() {
+        // Core ADR 161: InDesign writes `NoSplitting` and the continuing
+        // rule's attributes on `<FootnoteOption>`, its colour as a typed
+        // child.
+        let xml = br#"<?xml version="1.0"?><idPkg:Preferences xmlns:idPkg="x"><FootnoteOption NoSplitting="true" ContinuingRuleOn="true" ContinuingRuleLineWeight="1" ContinuingRuleWidth="288" ContinuingRuleOffset="2" ContinuingRuleTint="50"><Properties><ContinuingRuleColor type="object">Color/Black</ContinuingRuleColor></Properties></FootnoteOption></idPkg:Preferences>"#;
+        let mut dm = DesignMap::default();
+        parse_preferences_part(xml, &mut dm).expect("parse");
+        let fo = &dm.footnote_options;
+        assert_eq!(fo.no_splitting, Some(true));
+        let r = &fo.continuing_rule;
+        assert_eq!(r.on, Some(true));
+        assert_eq!(
+            (r.line_weight, r.width, r.offset),
+            (Some(1.0), Some(288.0), Some(2.0))
+        );
+        assert_eq!(r.tint, Some(50.0));
+        assert_eq!(r.color.as_deref(), Some("Color/Black"));
+    }
+
+    #[test]
+    fn footnote_straddling_is_read() {
+        // Core ADR 160: `EnableStraddling` sets a frame's notes across its
+        // columns, as InDesign 20.0.1 writes it on `<FootnoteOption>`.
+        let xml = br#"<?xml version="1.0"?><idPkg:Preferences xmlns:idPkg="x"><FootnoteOption EnableStraddling="true" StartAt="1"/></idPkg:Preferences>"#;
+        let mut dm = DesignMap::default();
+        parse_preferences_part(xml, &mut dm).expect("parse");
+        assert_eq!(dm.footnote_options.enable_straddling, Some(true));
+        let frame = paged_model::FrameFootnotes::default();
+        assert!(frame.spans(&dm.footnote_options));
     }
 
     #[test]
