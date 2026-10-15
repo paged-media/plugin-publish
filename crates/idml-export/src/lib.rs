@@ -84,6 +84,7 @@ mod effects;
 mod emit;
 pub mod face;
 pub mod fonts;
+mod frame_fitting;
 pub mod guides;
 pub mod images;
 mod inline_objects;

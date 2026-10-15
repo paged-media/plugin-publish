@@ -850,10 +850,21 @@ fn patch_uri(
     )
 }
 
-/// Bring every linked frame's placed-image child in line with the model.
-/// `links` accumulates the files the export's URIs point at (see
+/// Bring every linked frame's placed-image child in line with the model,
+/// then every frame's fitting options ([`crate::frame_fitting`], whose
+/// crops convert by the picture transform written here). `links`
+/// accumulates the files the export's URIs point at (see
 /// [`LinkCollector`]).
 pub(crate) fn rewrite_images(
+    original: &[u8],
+    spread: &Spread,
+    links: &mut LinkCollector,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let placed = rewrite_placed_children(original, spread, links)?;
+    crate::frame_fitting::rewrite_frame_fitting(&placed, spread)
+}
+
+fn rewrite_placed_children(
     original: &[u8],
     spread: &Spread,
     links: &mut LinkCollector,
