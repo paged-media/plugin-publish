@@ -188,9 +188,22 @@ fn style_leading(text: &str) -> Option<f32> {
     text.parse().ok()
 }
 
+/// Which ruby or kenten face a character style's `<Properties>` child names.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MarkFace {
+    RubyFont,
+    RubyFontStyle,
+    KentenFont,
+    KentenFontStyle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum CurrentProperty {
     AppliedFont,
+    /// `<RubyFont>`, `<RubyFontStyle>`, `<KentenFont>` or
+    /// `<KentenFontStyle>` inside a `CharacterStyle`'s `<Properties>`:
+    /// the faces ruby and a custom kenten mark print in.
+    MarkFace(MarkFace),
     BasedOn,
     /// `<Leading type="unit">13</Leading>` — InDesign's spelling of a
     /// style's leading; the `enumeration` child `Auto` is auto leading,
@@ -385,6 +398,16 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"AppliedFont" if current_style.is_some() => {
                     pending_property = Some(CurrentProperty::AppliedFont);
                 }
+                b"RubyFont" | b"RubyFontStyle" | b"KentenFont" | b"KentenFontStyle"
+                    if matches!(current_style, Some(CurrentStyle::Character)) =>
+                {
+                    pending_property = Some(CurrentProperty::MarkFace(match e.name().as_ref() {
+                        b"RubyFont" => MarkFace::RubyFont,
+                        b"RubyFontStyle" => MarkFace::RubyFontStyle,
+                        b"KentenFont" => MarkFace::KentenFont,
+                        _ => MarkFace::KentenFontStyle,
+                    }));
+                }
                 b"BasedOn" if current_style.is_some() => {
                     pending_property = Some(CurrentProperty::BasedOn);
                 }
@@ -493,6 +516,8 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                                 p.font = Some(text);
                                             }
                                         }
+                                        // Read on character styles only.
+                                        CurrentProperty::MarkFace(_) => {}
                                         CurrentProperty::BasedOn => {
                                             if p.based_on.is_none() {
                                                 p.based_on =
@@ -552,6 +577,20 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         CurrentProperty::AppliedFont => {
                                             if c.font.is_none() {
                                                 c.font = Some(text);
+                                            }
+                                        }
+                                        CurrentProperty::MarkFace(face) => {
+                                            let m = &mut c.marks;
+                                            let slot = match face {
+                                                MarkFace::RubyFont => &mut m.ruby_font,
+                                                MarkFace::RubyFontStyle => &mut m.ruby_font_style,
+                                                MarkFace::KentenFont => &mut m.kenten_font,
+                                                MarkFace::KentenFontStyle => {
+                                                    &mut m.kenten_font_style
+                                                }
+                                            };
+                                            if slot.is_none() {
+                                                *slot = Some(text);
                                             }
                                         }
                                         CurrentProperty::BasedOn => {
@@ -928,6 +967,37 @@ fn qualify_parent(kind: &str, parent: String) -> String {
     }
 }
 
+/// The ruby and kenten settings a `<CharacterStyleRange>` or
+/// `<CharacterStyle>` carries beyond their flag, kind, text and kenten
+/// size, as InDesign 20.0.1 spells them (core
+/// `tools/indesign-export/ruby-kenten-probe`): `RubyFontSize`,
+/// `RubyXScale` / `RubyYScale`, `RubyXOffset` / `RubyYOffset`,
+/// `RubyPosition`, `RubyAlignment`, `KentenXScale` / `KentenYScale`,
+/// `KentenPlacement`, `KentenPosition`, `KentenAlignment`. The faces
+/// (`RubyFont`, `KentenFont` and their styles) are `<Properties>`
+/// children in InDesign's IDML, as `AppliedFont` is, and are read there.
+pub(crate) fn mark_settings(e: &quick_xml::events::BytesStart) -> paged_model::MarkSettings {
+    let num = |key: &[u8]| attr(e, key).and_then(|s| s.parse().ok());
+    paged_model::MarkSettings {
+        ruby_font_size: num(b"RubyFontSize"),
+        ruby_x_scale: num(b"RubyXScale"),
+        ruby_y_scale: num(b"RubyYScale"),
+        ruby_x_offset: num(b"RubyXOffset"),
+        ruby_y_offset: num(b"RubyYOffset"),
+        ruby_position: attr(e, b"RubyPosition"),
+        ruby_alignment: attr(e, b"RubyAlignment"),
+        ruby_font: None,
+        ruby_font_style: None,
+        kenten_x_scale: num(b"KentenXScale"),
+        kenten_y_scale: num(b"KentenYScale"),
+        kenten_placement: num(b"KentenPlacement"),
+        kenten_position: attr(e, b"KentenPosition"),
+        kenten_alignment: attr(e, b"KentenAlignment"),
+        kenten_font: None,
+        kenten_font_style: None,
+    }
+}
+
 fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterStyleDef> {
     // `Swatch/None` is IDML's literal for "no stroke" — normalise to
     // None so a `BasedOn` cascade can fall through to a real colour.
@@ -963,8 +1033,11 @@ fn parse_character_style(e: &quick_xml::events::BytesStart) -> Option<CharacterS
         ruby_type: attr(e, b"RubyType"),
         ruby_string: attr(e, b"RubyString"),
         kenten_kind: attr(e, b"KentenKind"),
-        kenten_character: attr(e, b"KentenCharacter"),
+        // InDesign 20.0.1 writes a `Custom` kind's character as
+        // `KentenCustomCharacter` (core ruby-kenten-probe).
+        kenten_character: attr(e, b"KentenCustomCharacter"),
         kenten_font_size: attr(e, b"KentenFontSize").and_then(|s| s.parse().ok()),
+        marks: mark_settings(e),
         ligatures_on: attr(e, b"Ligatures").and_then(|s| s.parse().ok()),
         kerning_method: attr(e, b"KerningMethod"),
         otf: crate::story::parse_otf_features(e),
@@ -2578,8 +2651,14 @@ mod tests {
                             RubyFlag="true"
                             RubyType="GroupRuby"
                             RubyString="furigana"
-                            KentenKind="BlackCircle"
-                            KentenFontSize="50"/>
+                            RubyAlignment="Ruby1Aki"
+                            KentenKind="KentenBlackCircle"
+                            KentenFontSize="12"
+                            KentenPlacement="3">
+              <Properties>
+                <RubyFont type="string">Kozuka Gothic Pr6N</RubyFont>
+              </Properties>
+            </CharacterStyle>
           </RootCharacterStyleGroup>
         </idPkg:Styles>"#;
         let s = parse_stylesheet(xml).unwrap();
@@ -2587,8 +2666,11 @@ mod tests {
         assert_eq!(c.ruby_flag, Some(true));
         assert_eq!(c.ruby_type.as_deref(), Some("GroupRuby"));
         assert_eq!(c.ruby_string.as_deref(), Some("furigana"));
-        assert_eq!(c.kenten_kind.as_deref(), Some("BlackCircle"));
-        assert_eq!(c.kenten_font_size, Some(50.0));
+        assert_eq!(c.kenten_kind.as_deref(), Some("KentenBlackCircle"));
+        assert_eq!(c.kenten_font_size, Some(12.0));
+        assert_eq!(c.marks.ruby_alignment.as_deref(), Some("Ruby1Aki"));
+        assert_eq!(c.marks.kenten_placement, Some(3.0));
+        assert_eq!(c.marks.ruby_font.as_deref(), Some("Kozuka Gothic Pr6N"));
     }
 
     #[test]

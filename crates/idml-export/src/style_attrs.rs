@@ -257,11 +257,29 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
             ("RubyType", &s.ruby_type),
             ("RubyString", &s.ruby_string),
             ("KentenKind", &s.kenten_kind),
-            ("KentenCharacter", &s.kenten_character),
+            ("KentenCustomCharacter", &s.kenten_character),
             ("KerningMethod", &s.kerning_method),
+            ("RubyPosition", &s.marks.ruby_position),
+            ("RubyAlignment", &s.marks.ruby_alignment),
+            ("KentenPosition", &s.marks.kenten_position),
+            ("KentenAlignment", &s.marks.kenten_alignment),
         ],
     );
-    push_f32s(&mut out, &[("KentenFontSize", s.kenten_font_size)]);
+    let m = &s.marks;
+    push_f32s(
+        &mut out,
+        &[
+            ("KentenFontSize", s.kenten_font_size),
+            ("RubyFontSize", m.ruby_font_size),
+            ("RubyXScale", m.ruby_x_scale),
+            ("RubyYScale", m.ruby_y_scale),
+            ("RubyXOffset", m.ruby_x_offset),
+            ("RubyYOffset", m.ruby_y_offset),
+            ("KentenXScale", m.kenten_x_scale),
+            ("KentenYScale", m.kenten_y_scale),
+            ("KentenPlacement", m.kenten_placement),
+        ],
+    );
     push_otf(&mut out, &s.otf);
     out
 }
@@ -409,9 +427,21 @@ pub(crate) fn character_style_attr_patch(
         b"RubyType" => Some(opt_string_patch(&s.ruby_type)),
         b"RubyString" => Some(opt_string_patch(&s.ruby_string)),
         b"KentenKind" => Some(opt_string_patch(&s.kenten_kind)),
-        b"KentenCharacter" => Some(opt_string_patch(&s.kenten_character)),
+        b"KentenCustomCharacter" => Some(opt_string_patch(&s.kenten_character)),
         b"KerningMethod" => Some(opt_string_patch(&s.kerning_method)),
         b"KentenFontSize" => Some(preserving_f32_patch(raw, s.kenten_font_size)),
+        b"RubyFontSize" => Some(preserving_f32_patch(raw, s.marks.ruby_font_size)),
+        b"RubyXScale" => Some(preserving_f32_patch(raw, s.marks.ruby_x_scale)),
+        b"RubyYScale" => Some(preserving_f32_patch(raw, s.marks.ruby_y_scale)),
+        b"RubyXOffset" => Some(preserving_f32_patch(raw, s.marks.ruby_x_offset)),
+        b"RubyYOffset" => Some(preserving_f32_patch(raw, s.marks.ruby_y_offset)),
+        b"RubyPosition" => Some(opt_string_patch(&s.marks.ruby_position)),
+        b"RubyAlignment" => Some(opt_string_patch(&s.marks.ruby_alignment)),
+        b"KentenXScale" => Some(preserving_f32_patch(raw, s.marks.kenten_x_scale)),
+        b"KentenYScale" => Some(preserving_f32_patch(raw, s.marks.kenten_y_scale)),
+        b"KentenPlacement" => Some(preserving_f32_patch(raw, s.marks.kenten_placement)),
+        b"KentenPosition" => Some(opt_string_patch(&s.marks.kenten_position)),
+        b"KentenAlignment" => Some(opt_string_patch(&s.marks.kenten_alignment)),
         _ => None,
     }
 }

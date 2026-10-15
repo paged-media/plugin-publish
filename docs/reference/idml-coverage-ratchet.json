@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 119929,
+      "covered": 119957,
       "total": 633952,
-      "value": 0.189177
+      "value": 0.189221
     },
     "impactImport": {
-      "covered": 25359,
+      "covered": 25385,
       "total": 54667,
-      "value": 0.463881
+      "value": 0.464357
     },
     "weightedExport": {
       "covered": 87488,
@@ -23,7 +23,7 @@
       "value": 0.138004
     },
     "misplacedReads": 30,
-    "unseenReads": 313,
+    "unseenReads": 339,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -955,6 +955,7 @@
     "Stories|CharacterStyleRange@HorizontalScale|attr",
     "Stories|CharacterStyleRange@KentenFontSize|attr",
     "Stories|CharacterStyleRange@KentenKind|attr",
+    "Stories|CharacterStyleRange@KentenXScale|attr",
     "Stories|CharacterStyleRange@KerningMethod|attr",
     "Stories|CharacterStyleRange@Leading|properties-child",
     "Stories|CharacterStyleRange@Ligatures|attr",
@@ -965,8 +966,10 @@
     "Stories|CharacterStyleRange@PageNumberType|attr",
     "Stories|CharacterStyleRange@PointSize|attr",
     "Stories|CharacterStyleRange@Position|attr",
+    "Stories|CharacterStyleRange@RubyFontSize|attr",
     "Stories|CharacterStyleRange@RubyString|attr",
     "Stories|CharacterStyleRange@RubyType|attr",
+    "Stories|CharacterStyleRange@RubyXScale|attr",
     "Stories|CharacterStyleRange@Skew|attr",
     "Stories|CharacterStyleRange@StrokeColor|attr",
     "Stories|CharacterStyleRange@StrokeWeight|attr",
