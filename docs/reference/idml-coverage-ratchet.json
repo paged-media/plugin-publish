@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 118028,
+      "covered": 118574,
       "total": 633952,
-      "value": 0.186178
+      "value": 0.187039
     },
     "impactImport": {
-      "covered": 25336,
+      "covered": 25359,
       "total": 54667,
-      "value": 0.463461
+      "value": 0.463881
     },
     "weightedExport": {
       "covered": 86404,
@@ -177,6 +177,16 @@
     "MasterSpreads|TextFrame@Visible|attr",
     "MasterSpreads|TextFramePreference@AutoSizingReferencePoint|attr",
     "MasterSpreads|TextFramePreference@AutoSizingType|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleBottomInset|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleInsetChainOverride|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleOffset|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleOverprintOverride|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleOverride|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleStrokeColor|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleStrokeTint|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleStrokeType|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleStrokeWidth|attr",
+    "MasterSpreads|TextFramePreference@ColumnRuleTopInset|attr",
     "MasterSpreads|TextFramePreference@FirstBaselineOffset|attr",
     "MasterSpreads|TextFramePreference@IgnoreWrap|attr",
     "MasterSpreads|TextFramePreference@MinimumFirstBaselineOffset|attr",
@@ -846,6 +856,16 @@
     "Spreads|TextFrame@Visible|attr",
     "Spreads|TextFramePreference@AutoSizingReferencePoint|attr",
     "Spreads|TextFramePreference@AutoSizingType|attr",
+    "Spreads|TextFramePreference@ColumnRuleBottomInset|attr",
+    "Spreads|TextFramePreference@ColumnRuleInsetChainOverride|attr",
+    "Spreads|TextFramePreference@ColumnRuleOffset|attr",
+    "Spreads|TextFramePreference@ColumnRuleOverprintOverride|attr",
+    "Spreads|TextFramePreference@ColumnRuleOverride|attr",
+    "Spreads|TextFramePreference@ColumnRuleStrokeColor|attr",
+    "Spreads|TextFramePreference@ColumnRuleStrokeTint|attr",
+    "Spreads|TextFramePreference@ColumnRuleStrokeType|attr",
+    "Spreads|TextFramePreference@ColumnRuleStrokeWidth|attr",
+    "Spreads|TextFramePreference@ColumnRuleTopInset|attr",
     "Spreads|TextFramePreference@FirstBaselineOffset|attr",
     "Spreads|TextFramePreference@IgnoreWrap|attr",
     "Spreads|TextFramePreference@InsetSpacing|attr",
