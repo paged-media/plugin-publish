@@ -48,8 +48,9 @@ pub use paged_model::{
 };
 
 pub use paged_model::{
-    BalanceRaggedLines, Composer, Justification, LineSetting, OtfFeatures, SingleWordJustification,
-    SpanColumnType, SpanColumns, SpanSplitColumnCount, StartParagraph, TabStop,
+    BalanceRaggedLines, Composer, Justification, LineSetting, ListLevel, OtfFeatures,
+    RestartPolicy, RestartPolicyKind, SingleWordJustification, SpanColumnType, SpanColumns,
+    SpanSplitColumnCount, StartParagraph, TabStop,
 };
 
 pub use paged_model::{
@@ -760,6 +761,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             // line, the last line's indent; balance is a
                             // typed `<Properties>` child (below; ADR 153).
                             line_setting: crate::util::line_setting_attrs(&e),
+                            // Its level in a multi-level list; the restart
+                            // policy is a `<Properties>` child (below;
+                            // ADR 158).
+                            list_level: crate::util::list_level_attrs(&e),
                             // Align to baseline grid, over the style's.
                             grid_alignment: attr(&e, b"GridAlignment")
                                 .and_then(|s| paged_model::GridAlignment::from_idml(&s)),
@@ -1078,9 +1083,12 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             ruby_type: attr(&e, b"RubyType"),
                             ruby_string: attr(&e, b"RubyString"),
                             kenten_kind: attr(&e, b"KentenKind"),
-                            kenten_character: attr(&e, b"KentenCharacter"),
+                            // InDesign writes a `Custom` kind's character
+                            // as `KentenCustomCharacter`.
+                            kenten_character: attr(&e, b"KentenCustomCharacter"),
                             kenten_font_size: attr(&e, b"KentenFontSize")
                                 .and_then(|s| s.parse().ok()),
+                            marks: crate::styles::mark_settings(&e),
                             overprint_fill: attr(&e, b"OverprintFill")
                                 .and_then(|s| s.parse::<bool>().ok()),
                             overprint_stroke: attr(&e, b"OverprintStroke")
@@ -1331,6 +1339,24 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 }
                             }
                             // CharacterStyleRange Properties.
+                            // The faces ruby and a custom kenten mark
+                            // print in, as InDesign writes them.
+                            (
+                                1,
+                                b"RubyFont" | b"RubyFontStyle" | b"KentenFont" | b"KentenFontStyle",
+                            ) => {
+                                if let Some(run) = current_run.as_mut() {
+                                    if !value.is_empty() {
+                                        let m = &mut run.marks;
+                                        *match name {
+                                            b"RubyFont" => &mut m.ruby_font,
+                                            b"RubyFontStyle" => &mut m.ruby_font_style,
+                                            b"KentenFont" => &mut m.kenten_font,
+                                            _ => &mut m.kenten_font_style,
+                                        } = Some(value);
+                                    }
+                                }
+                            }
                             (1, b"AppliedFont") => {
                                 if let Some(run) = current_run.as_mut() {
                                     if !value.is_empty() {
@@ -1588,6 +1614,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         if let Some(p) = current_paragraph.as_mut() {
                             p.index_markers.push(marker);
                         }
+                    }
+                    buf.clear();
+                    continue;
+                }
+                // A range's restart policy: an empty `<Properties>` child
+                // carrying attributes (core ADR 158).
+                if properties_kind == 2 && name == b"NumberingRestartPolicies" {
+                    if let Some(p) = current_paragraph.as_mut() {
+                        p.list_level.restart_policy = crate::util::restart_policy(&e);
                     }
                     buf.clear();
                     continue;
@@ -3536,6 +3571,27 @@ mod tests {
     /// writes as attributes, the same two as typed children, and the
     /// marker character styles ONLY as children.
     #[test]
+    fn reads_a_ranges_list_level() {
+        // Core ADR 158: attributes on the range, the policy as an empty
+        // `<Properties>` child.
+        let xml = br#"<Story Self="u1"><ParagraphStyleRange NumberingLevel="3" NumberingApplyRestartPolicy="false"><Properties><NumberingRestartPolicies RestartPolicy="SpecificPreviousLevel" LowerLevel="1" UpperLevel="0"/></Properties><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
+        let story = parse_story(xml).unwrap();
+        assert_eq!(
+            story.paragraphs[0].list_level,
+            paged_model::ListLevel {
+                level: Some(3),
+                apply_restart: Some(false),
+                restart_policy: Some(paged_model::RestartPolicy {
+                    kind: paged_model::RestartPolicyKind::SpecificPreviousLevel,
+                    lower: 1,
+                    upper: 0,
+                }),
+            }
+        );
+        assert!(story.paragraphs[1].list_level.is_unset());
+    }
+
+    #[test]
     fn paragraph_style_range_parses_local_list_overrides() {
         let xml = br#"<Story Self="u1"><ParagraphStyleRange BulletsAndNumberingListType="NumberedList" BulletsTextAfter=" " NumberingExpression="(^#)^t" NumberingStartAt="5" NumberingContinue="false" BulletsCharacterStyle="CharacterStyle/Ignored" BulletsAndNumberingDigitsCharacterStyle="CharacterStyle/Ignored"><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange><ParagraphStyleRange BulletsAndNumberingListType="BulletList"><Properties><NumberingExpression type="string">^#.</NumberingExpression><BulletsTextAfter type="string"> </BulletsTextAfter><BulletsCharacterStyle type="object">CharacterStyle/Big</BulletsCharacterStyle><NumberingCharacterStyle type="object">CharacterStyle/Digits</NumberingCharacterStyle></Properties><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#;
         let s = parse_story(xml).unwrap();
@@ -3654,27 +3710,69 @@ mod tests {
 
     #[test]
     fn character_style_range_parses_ruby_and_kenten() {
-        let xml = br#"<Story Self="u1">
+        // As InDesign 20.0.1 writes them (core ruby-kenten-probe).
+        let xml = r#"<Story Self="u1">
           <ParagraphStyleRange>
             <CharacterStyleRange
                 RubyFlag="1"
                 RubyType="PerCharacterRuby"
                 RubyString="furigana"
-                KentenKind="SesameDot"
-                KentenCharacter=""
-                KentenFontSize="50">
+                RubyFontSize="12"
+                RubyXScale="50"
+                RubyYScale="200"
+                RubyXOffset="5"
+                RubyYOffset="-2"
+                RubyPosition="BelowLeft"
+                RubyAlignment="RubyEqualAki"
+                KentenKind="Custom"
+                KentenCustomCharacter="★"
+                KentenFontSize="12"
+                KentenXScale="50"
+                KentenYScale="200"
+                KentenPlacement="5"
+                KentenPosition="BelowLeft"
+                KentenAlignment="AlignKentenLeft">
+              <Properties>
+                <RubyFont type="string">Kozuka Gothic Pr6N</RubyFont>
+                <RubyFontStyle type="string">B</RubyFontStyle>
+                <KentenFont type="string">Minion Pro</KentenFont>
+                <KentenFontStyle type="string">Regular</KentenFontStyle>
+              </Properties>
               <Content>base</Content>
             </CharacterStyleRange>
           </ParagraphStyleRange>
-        </Story>"#;
+        </Story>"#
+            .as_bytes();
         let s = parse_story(xml).unwrap();
         let r = &s.paragraphs[0].runs[0];
         // InDesign writes the flag as a number and the type with its suffix.
         assert_eq!(r.ruby_flag, Some(true));
         assert_eq!(r.ruby_type.as_deref(), Some("PerCharacterRuby"));
         assert_eq!(r.ruby_string.as_deref(), Some("furigana"));
-        assert_eq!(r.kenten_kind.as_deref(), Some("SesameDot"));
-        assert_eq!(r.kenten_font_size, Some(50.0));
+        assert_eq!(r.kenten_kind.as_deref(), Some("Custom"));
+        assert_eq!(r.kenten_character.as_deref(), Some("★"));
+        assert_eq!(r.kenten_font_size, Some(12.0));
+        assert_eq!(
+            r.marks,
+            paged_model::MarkSettings {
+                ruby_font_size: Some(12.0),
+                ruby_x_scale: Some(50.0),
+                ruby_y_scale: Some(200.0),
+                ruby_x_offset: Some(5.0),
+                ruby_y_offset: Some(-2.0),
+                ruby_position: Some("BelowLeft".into()),
+                ruby_alignment: Some("RubyEqualAki".into()),
+                ruby_font: Some("Kozuka Gothic Pr6N".into()),
+                ruby_font_style: Some("B".into()),
+                kenten_x_scale: Some(50.0),
+                kenten_y_scale: Some(200.0),
+                kenten_placement: Some(5.0),
+                kenten_position: Some("BelowLeft".into()),
+                kenten_alignment: Some("AlignKentenLeft".into()),
+                kenten_font: Some("Minion Pro".into()),
+                kenten_font_style: Some("Regular".into()),
+            }
+        );
     }
 
     #[test]
@@ -3692,6 +3790,7 @@ mod tests {
         assert!(r.kenten_kind.is_none());
         assert!(r.kenten_character.is_none());
         assert!(r.kenten_font_size.is_none());
+        assert_eq!(r.marks, paged_model::MarkSettings::default());
     }
 
     #[test]

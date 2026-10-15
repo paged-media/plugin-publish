@@ -179,6 +179,35 @@ pub fn parse_flag(raw: &str) -> Option<bool> {
     }
 }
 
+/// A paragraph's (or paragraph style's) place in a multi-level list:
+/// `NumberingLevel` and `NumberingApplyRestartPolicy` (core ADR 158).
+/// `<NumberingRestartPolicies>` is a `<Properties>` child, read by the
+/// callers through [`restart_policy`].
+pub(crate) fn list_level_attrs(e: &quick_xml::events::BytesStart) -> paged_model::ListLevel {
+    paged_model::ListLevel {
+        level: attr(e, b"NumberingLevel").and_then(|s| s.trim().parse().ok()),
+        apply_restart: attr(e, b"NumberingApplyRestartPolicy").and_then(|s| s.trim().parse().ok()),
+        restart_policy: None,
+    }
+}
+
+/// `<NumberingRestartPolicies RestartPolicy="AnyPreviousLevel"
+/// LowerLevel="0" UpperLevel="0"/>`, as InDesign writes it (core ADR 158).
+pub(crate) fn restart_policy(
+    e: &quick_xml::events::BytesStart,
+) -> Option<paged_model::RestartPolicy> {
+    let level = |key: &[u8]| {
+        attr(e, key)
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+    };
+    Some(paged_model::RestartPolicy {
+        kind: paged_model::RestartPolicyKind::from_idml(&attr(e, b"RestartPolicy")?)?,
+        lower: level(b"LowerLevel"),
+        upper: level(b"UpperLevel"),
+    })
+}
+
 /// A paragraph's (or paragraph style's) line-setting attributes:
 /// `AutoLeading`, `SingleWordJustification`, `LastLineIndent` (core ADR
 /// 153). `<BalanceRaggedLines>` is a typed child, read by the callers.

@@ -748,6 +748,7 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
         out.push(("KeepLastLines", n.to_string()));
     }
     line_setting_attrs(&mut out, &p.line_setting);
+    list_level_attrs(&mut out, &p.list_level);
     // NOT here: `NumberingFormat` and `AppliedNumberingList`. InDesign
     // ignores both as attributes and reads them only as typed
     // `<Properties>` children (measured 2026-09-06) —
@@ -813,6 +814,19 @@ pub(crate) fn line_setting_attrs(
     }
 }
 
+/// A range's or a paragraph style's place in a multi-level list, as
+/// attributes: `NumberingLevel`, `NumberingApplyRestartPolicy` (core ADR
+/// 158). `<NumberingRestartPolicies>` is a `<Properties>` child
+/// ([`write_restart_policy`]).
+pub(crate) fn list_level_attrs(out: &mut Vec<(&'static str, String)>, ll: &idml_import::ListLevel) {
+    if let Some(n) = ll.level {
+        out.push(("NumberingLevel", n.to_string()));
+    }
+    if let Some(b) = ll.apply_restart {
+        out.push(("NumberingApplyRestartPolicy", b.to_string()));
+    }
+}
+
 /// The span / split columns attributes of a range or a paragraph style.
 /// `SpanSplitColumnCount` is not among them: InDesign reads it only as a
 /// typed `<Properties>` child ([`write_span_split_column_count`]).
@@ -848,6 +862,7 @@ pub(crate) fn paragraph_has_properties(p: &idml_import::Paragraph) -> bool {
         || p.bullets_and_numbering_digits_character_style.is_some()
         || p.span_columns.count.is_some()
         || p.line_setting.balance.is_some()
+        || p.list_level.restart_policy.is_some()
 }
 
 /// The paragraph's `<Properties>` block — its tab stops, bullet
@@ -896,6 +911,9 @@ pub(crate) fn emit_paragraph_properties(
     if let Some(b) = p.line_setting.balance {
         write_balance_ragged_lines(writer, b)?;
     }
+    if let Some(r) = p.list_level.restart_policy {
+        write_restart_policy(writer, r)?;
+    }
     writer.write_event(Event::End(BytesEnd::new("Properties")))?;
     Ok(())
 }
@@ -926,6 +944,21 @@ pub(crate) fn write_balance_ragged_lines(
         "enumeration",
         balance.as_idml(),
     )
+}
+
+/// `<NumberingRestartPolicies RestartPolicy="AnyPreviousLevel"
+/// LowerLevel="0" UpperLevel="0"/>` — InDesign's own spelling (core ADR
+/// 158): an empty element whose attributes carry the policy.
+pub(crate) fn write_restart_policy(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    policy: idml_import::RestartPolicy,
+) -> Result<(), quick_xml::Error> {
+    let mut e = BytesStart::new("NumberingRestartPolicies");
+    e.push_attribute(("RestartPolicy", policy.kind.as_idml()));
+    e.push_attribute(("LowerLevel", policy.lower.to_string().as_str()));
+    e.push_attribute(("UpperLevel", policy.upper.to_string().as_str()));
+    writer.write_event(Event::Empty(e))?;
+    Ok(())
 }
 
 /// `<NumberingFormat type="string">1, 2, 3, 4...</NumberingFormat>` —

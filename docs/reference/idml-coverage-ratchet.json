@@ -8,22 +8,22 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 119116,
+      "covered": 119957,
       "total": 633952,
-      "value": 0.187894
+      "value": 0.189221
     },
     "impactImport": {
-      "covered": 25359,
+      "covered": 25385,
       "total": 54667,
-      "value": 0.463881
+      "value": 0.464357
     },
     "weightedExport": {
-      "covered": 87624,
+      "covered": 88708,
       "total": 633952,
-      "value": 0.138219
+      "value": 0.139929
     },
     "misplacedReads": 30,
-    "unseenReads": 307,
+    "unseenReads": 339,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -424,10 +424,13 @@
     "Resources/Styles|ParagraphStyle@MinimumWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@Name|attr",
     "Resources/Styles|ParagraphStyle@NextStyle|attr",
+    "Resources/Styles|ParagraphStyle@NumberingApplyRestartPolicy|attr",
     "Resources/Styles|ParagraphStyle@NumberingCharacterStyle|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingContinue|attr",
     "Resources/Styles|ParagraphStyle@NumberingExpression|attr",
     "Resources/Styles|ParagraphStyle@NumberingFormat|properties-child",
+    "Resources/Styles|ParagraphStyle@NumberingLevel|attr",
+    "Resources/Styles|ParagraphStyle@NumberingRestartPolicies|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingStartAt|attr",
     "Resources/Styles|ParagraphStyle@OTFContextualAlternate|attr",
     "Resources/Styles|ParagraphStyle@OTFDiscretionaryLigature|attr",
@@ -952,6 +955,7 @@
     "Stories|CharacterStyleRange@HorizontalScale|attr",
     "Stories|CharacterStyleRange@KentenFontSize|attr",
     "Stories|CharacterStyleRange@KentenKind|attr",
+    "Stories|CharacterStyleRange@KentenXScale|attr",
     "Stories|CharacterStyleRange@KerningMethod|attr",
     "Stories|CharacterStyleRange@Leading|properties-child",
     "Stories|CharacterStyleRange@Ligatures|attr",
@@ -962,8 +966,10 @@
     "Stories|CharacterStyleRange@PageNumberType|attr",
     "Stories|CharacterStyleRange@PointSize|attr",
     "Stories|CharacterStyleRange@Position|attr",
+    "Stories|CharacterStyleRange@RubyFontSize|attr",
     "Stories|CharacterStyleRange@RubyString|attr",
     "Stories|CharacterStyleRange@RubyType|attr",
+    "Stories|CharacterStyleRange@RubyXScale|attr",
     "Stories|CharacterStyleRange@Skew|attr",
     "Stories|CharacterStyleRange@StrokeColor|attr",
     "Stories|CharacterStyleRange@StrokeWeight|attr",
@@ -1452,6 +1458,7 @@
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|attr",
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|properties-child",
     "Resources/Styles|ParagraphStyle@AutoLeading|attr",
+    "Resources/Styles|ParagraphStyle@BalanceRaggedLines|properties-child",
     "Resources/Styles|ParagraphStyle@BasedOn|properties-child",
     "Resources/Styles|ParagraphStyle@BaselineShift|attr",
     "Resources/Styles|ParagraphStyle@BulletsAndNumberingListType|attr",
@@ -1492,10 +1499,13 @@
     "Resources/Styles|ParagraphStyle@MinimumWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@Name|attr",
     "Resources/Styles|ParagraphStyle@NextStyle|attr",
+    "Resources/Styles|ParagraphStyle@NumberingApplyRestartPolicy|attr",
     "Resources/Styles|ParagraphStyle@NumberingCharacterStyle|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingContinue|attr",
     "Resources/Styles|ParagraphStyle@NumberingExpression|attr",
     "Resources/Styles|ParagraphStyle@NumberingFormat|properties-child",
+    "Resources/Styles|ParagraphStyle@NumberingLevel|attr",
+    "Resources/Styles|ParagraphStyle@NumberingRestartPolicies|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingStartAt|attr",
     "Resources/Styles|ParagraphStyle@OTFContextualAlternate|attr",
     "Resources/Styles|ParagraphStyle@OTFDiscretionaryLigature|attr",
