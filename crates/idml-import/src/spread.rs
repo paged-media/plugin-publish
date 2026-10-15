@@ -2122,6 +2122,7 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                         let f = &mut out.text_frames[i];
                         f.ignore_wrap =
                             attr(&e, b"IgnoreWrap").and_then(|s| s.parse::<bool>().ok());
+                        f.column_rule = column_rule_attrs(&e);
                         if let Some(vj) = attr(&e, b"VerticalJustification")
                             .as_deref()
                             .and_then(VerticalJustification::from_idml)
@@ -3232,6 +3233,30 @@ fn compose_matrix(a: &[f32; 6], b: &[f32; 6]) -> [f32; 6] {
 /// then the frame's own ItemTransform. `None` for every input
 /// short-circuits to `None` so axis-aligned frames keep an empty
 /// transform field.
+/// A text frame's column rules, off its `<TextFramePreference>` (core
+/// ADR 155): `Some` only when `ColumnRuleOverride="true"` switches them
+/// on. InDesign writes every `ColumnRule*` attribute on every frame,
+/// switched on or not.
+fn column_rule_attrs(e: &quick_xml::events::BytesStart) -> Option<paged_model::ColumnRule> {
+    let flag = |k: &[u8]| attr(e, k).and_then(|s| s.parse::<bool>().ok());
+    if flag(b"ColumnRuleOverride") != Some(true) {
+        return None;
+    }
+    let num = |k: &[u8]| attr(e, k).and_then(|s| s.parse::<f32>().ok());
+    let d = paged_model::ColumnRule::default();
+    Some(paged_model::ColumnRule {
+        stroke_width: num(b"ColumnRuleStrokeWidth").unwrap_or(d.stroke_width),
+        stroke_type: attr(e, b"ColumnRuleStrokeType"),
+        stroke_color: attr(e, b"ColumnRuleStrokeColor"),
+        stroke_tint: num(b"ColumnRuleStrokeTint"),
+        overprint: flag(b"ColumnRuleOverprintOverride").unwrap_or(d.overprint),
+        top_inset: num(b"ColumnRuleTopInset").unwrap_or(d.top_inset),
+        bottom_inset: num(b"ColumnRuleBottomInset").unwrap_or(d.bottom_inset),
+        inset_chain: flag(b"ColumnRuleInsetChainOverride").unwrap_or(d.inset_chain),
+        offset: num(b"ColumnRuleOffset").unwrap_or(d.offset),
+    })
+}
+
 fn effective_item_transform(
     group_stack: &[Option<[f32; 6]>],
     own: Option<[f32; 6]>,
@@ -4803,6 +4828,31 @@ mod tests {
         assert!(s.polygons[1].image_item_transform.is_none());
         // Rectangles in the same spread keep working.
         assert_eq!(s.rectangles.len(), 0);
+    }
+
+    #[test]
+    fn column_rules_are_read_when_switched_on() {
+        // Core ADR 155: InDesign writes every `ColumnRule*` attribute on
+        // every frame; only `ColumnRuleOverride="true"` switches them on.
+        let xml = br#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s">
+            <TextFrame Self="on" ParentStory="u1" GeometricBounds="0 0 100 100">
+              <TextFramePreference TextColumnCount="2" ColumnRuleOverride="true" ColumnRuleStrokeWidth="0.5" ColumnRuleStrokeType="StrokeStyle/$ID/Dashed" ColumnRuleStrokeColor="Color/Black" ColumnRuleStrokeTint="50" ColumnRuleOverprintOverride="false" ColumnRuleTopInset="12" ColumnRuleBottomInset="24" ColumnRuleInsetChainOverride="false" ColumnRuleOffset="4"/>
+            </TextFrame>
+            <TextFrame Self="off" ParentStory="u2" GeometricBounds="0 0 100 100">
+              <TextFramePreference TextColumnCount="2" ColumnRuleOverride="false" ColumnRuleStrokeWidth="1" ColumnRuleTopInset="0"/>
+            </TextFrame>
+          </Spread>
+        </idPkg:Spread>"#;
+        let s = parse_spread(xml).unwrap();
+        let rule = s.text_frames[0].column_rule.as_ref().expect("switched on");
+        assert_eq!(rule.stroke_width, 0.5);
+        assert_eq!(rule.stroke_type.as_deref(), Some("StrokeStyle/$ID/Dashed"));
+        assert_eq!(rule.stroke_tint, Some(50.0));
+        assert_eq!((rule.top_inset, rule.bottom_inset), (12.0, 24.0));
+        assert!(!rule.inset_chain);
+        assert_eq!(rule.offset, 4.0);
+        assert!(s.text_frames[1].column_rule.is_none());
     }
 
     #[test]
