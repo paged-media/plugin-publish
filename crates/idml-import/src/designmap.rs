@@ -825,6 +825,27 @@ mod tests {
     }
 
     #[test]
+    fn reads_every_page_number_style_indesign_offers() {
+        // InDesign 20.0.1 writes the style as a typed child of the
+        // section (core ADR 157); the newer styles read as themselves.
+        for (idml, style) in [
+            ("Kanji", NumberingStyle::Kanji),
+            ("HebrewBiblical", NumberingStyle::HebrewBiblical),
+            ("ArabicAbjad", NumberingStyle::ArabicAbjad),
+            ("DoubleLeadingZeros", NumberingStyle::DoubleLeadingZeros),
+        ] {
+            let xml = format!(
+                r#"<Document><Section Self="s" PageStart="p" PageNumberStart="12"><Properties><PageNumberStyle type="enumeration">{idml}</PageNumberStyle></Properties></Section></Document>"#
+            );
+            let dm = parse_designmap(xml.as_bytes()).unwrap();
+            assert_eq!(dm.sections[0].numbering_style, style, "{idml}");
+            assert_eq!(style.as_idml(), idml);
+        }
+        assert_eq!(NumberingStyle::HebrewBiblical.format(12), "יב");
+        assert_eq!(NumberingStyle::DoubleLeadingZeros.format(12), "012");
+    }
+
+    #[test]
     fn reads_dom_version_when_present() {
         let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
 <Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="18.5">
