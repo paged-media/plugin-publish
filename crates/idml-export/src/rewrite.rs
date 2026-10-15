@@ -6857,6 +6857,22 @@ fn character_attr_patch(key: &[u8], raw: &[u8], r: &CharacterRun) -> Option<Patc
         b"Position" => Some(opt_string_patch(&r.position)),
         b"KerningMethod" => Some(opt_string_patch(&r.kerning_method)),
         b"AppliedLanguage" => Some(opt_string_patch(&r.applied_language)),
+        // Compared as the parser reads it (whitespace-separated ids), so
+        // a source spelling of the model's list keeps its bytes.
+        b"AppliedConditions" => Some(
+            match crate::emit::applied_conditions_attr(&r.applied_conditions) {
+                Some(_)
+                    if raw.is_some_and(|s| {
+                        s.split_whitespace()
+                            .eq(r.applied_conditions.iter().map(String::as_str))
+                    }) =>
+                {
+                    Patch::Keep
+                }
+                Some(v) => Patch::Set(v),
+                None => Patch::Remove,
+            },
+        ),
         b"Underline" => Some(opt_bool_patch(r.underline)),
         b"StrikeThru" => Some(opt_bool_patch(r.strikethru)),
         b"Ligatures" => Some(opt_bool_patch(r.ligatures_on)),
@@ -6879,6 +6895,9 @@ fn character_extras(r: &CharacterRun) -> Vec<(&'static str, String)> {
     }
     if let Some(s) = &r.character_style {
         out.push(("AppliedCharacterStyle", s.clone()));
+    }
+    if let Some(v) = crate::emit::applied_conditions_attr(&r.applied_conditions) {
+        out.push(("AppliedConditions", v));
     }
     // A property path sets it (core ADR 153); InDesign writes it only
     // where it is on.

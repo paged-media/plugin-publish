@@ -1028,6 +1028,15 @@ pub(crate) fn write_bullet_char(
     Ok(())
 }
 
+/// A run's conditions as InDesign spells them on its range: the
+/// `Condition/…` ids, space-separated (`AppliedConditions="Condition/A
+/// Condition/B"`). `None` for a run with none. No writer spelled them, so
+/// every run lost its conditions on export — text a hidden condition
+/// should hide came back showing.
+pub(crate) fn applied_conditions_attr(conditions: &[String]) -> Option<String> {
+    (!conditions.is_empty()).then(|| conditions.join(" "))
+}
+
 pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String)> {
     let mut out: Vec<(&'static str, String)> = Vec::new();
     // NOT here: `AppliedFont`. InDesign reads the applied font as a
@@ -1050,6 +1059,9 @@ pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String
         if let Some(v) = v {
             out.push((k, v.clone()));
         }
+    }
+    if let Some(v) = applied_conditions_attr(&r.applied_conditions) {
+        out.push(("AppliedConditions", v));
     }
     let f32_attrs: [(&'static str, Option<f32>); 9] = [
         ("PointSize", r.point_size),
