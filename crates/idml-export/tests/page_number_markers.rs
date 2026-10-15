@@ -153,6 +153,15 @@ fn a_bare_marker_an_older_export_wrote_is_corrected_from_the_model() {
     let re = pkg::open(&out);
     assert_eq!(text_of(&re.stories[0].story), want);
     pkg::assert_same_package(&out, &write_idml(&re, &out).expect("re-write"));
+
+    // The same model cut as a `.paged` reopen cuts it: the part's one
+    // range now meets three runs, its first piece and two the model split
+    // off it.
+    let mut cut = doc;
+    idml_export::cut_page_number_runs(&mut cut);
+    assert_eq!(cut.stories[0].story.paragraphs[0].runs.len(), 3);
+    let out = write_idml(&cut, &source).expect("write the cut model");
+    assert_eq!(text_of(&pkg::open(&out).stories[0].story), want);
 }
 
 /// InDesign's own range, the marker changed in the model: the range
@@ -215,4 +224,99 @@ fn a_next_page_number_after_a_paragraph_mark_stays_in_its_paragraph() {
         "{}",
         String::from_utf8_lossy(&out)
     );
+}
+
+/// A `.paged` reopen restores the NATIVE model, where the run the writer
+/// cut at its page numbers is still one run, and the export patches the
+/// part the save wrote, range by range. Met positionally, the run was
+/// written into its first range and the ranges after it replayed — its
+/// text twice. The engine cuts the reopened model the way the writer cuts
+/// it (`cut_page_number_runs`); the export then agrees with the part run
+/// for run, whatever is edited after.
+#[test]
+fn a_run_cut_at_its_page_numbers_exports_once_after_a_paged_reopen() {
+    let source = pkg::simple("", pkg::STORY_BODY, pkg::STYLES);
+    let mut doc = pkg::open(&source);
+    doc.stories.push(paged_scene::ParsedStory {
+        src: String::new(),
+        self_id: "Story/u242".into(),
+        story: Story {
+            paragraphs: vec![
+                Paragraph {
+                    runs: vec![CharacterRun {
+                        text: format!("Continued on page {NEXT}; this is page {AUTO}."),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Paragraph {
+                    runs: vec![CharacterRun {
+                        text: format!("Back on page {PREV}"),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        },
+    });
+    pkg::place_story(&mut doc, "tf_u242", "Story/u242");
+    let saved = write_idml(&doc, &source).expect("save");
+    let part = |pkg: &[u8]| pkg::entry(pkg, "Stories/Story_Story_u242.xml").unwrap();
+
+    // The native model as reopened: still one run per paragraph, `src: ""`.
+    let mut reopened = doc;
+    idml_export::cut_page_number_runs(&mut reopened);
+    let story = |d: &paged_scene::Document| -> Story {
+        d.stories
+            .iter()
+            .find(|s| s.self_id.ends_with("u242"))
+            .unwrap()
+            .story
+            .clone()
+    };
+    assert_eq!(
+        story(&reopened).paragraphs[0]
+            .runs
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Continued on page ".to_string(),
+            NEXT.to_string(),
+            format!("; this is page {AUTO}.")
+        ],
+        "cut where the writer cut it"
+    );
+    // Unchanged: the part the save wrote.
+    assert_eq!(
+        part(&write_idml(&reopened, &saved).expect("export")),
+        part(&saved)
+    );
+
+    type Edit = (&'static str, fn(&mut Story));
+    let edits: [Edit; 3] = [
+        ("an edit after the marker", |s| {
+            s.paragraphs[0].runs[2].text = format!("; this is page {AUTO}!");
+        }),
+        ("text typed into the marker's run", |s| {
+            s.paragraphs[0].runs[1].text = format!("{NEXT} (over)");
+        }),
+        ("the marker deleted", |s| {
+            s.paragraphs[0].runs[1].text.clear();
+        }),
+    ];
+    for (label, edit) in edits {
+        let mut model = reopened.clone();
+        let st = model
+            .stories
+            .iter_mut()
+            .find(|s| s.self_id.ends_with("u242"))
+            .unwrap();
+        edit(&mut st.story);
+        let want = text_of(&st.story);
+        let out = write_idml(&model, &saved).expect("export the edit");
+        let re = pkg::open(&out);
+        assert_eq!(text_of(&story(&re)), want, "{label}:\n{}", part(&out));
+    }
 }

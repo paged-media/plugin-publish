@@ -1116,6 +1116,53 @@ pub(crate) fn page_number_pieces(text: &str) -> Vec<(Option<&'static str>, &str)
     out
 }
 
+/// The pieces a run is CUT into — [`page_number_pieces`] — when it holds
+/// a next or previous page number; `None` for a run written whole (a
+/// text variable instance never holds one).
+fn run_cut(r: &CharacterRun) -> Option<Vec<(Option<&'static str>, &str)>> {
+    if r.text_variable.is_some() {
+        return None;
+    }
+    let pieces = page_number_pieces(&r.text);
+    pieces
+        .iter()
+        .any(|(kind, _)| kind.is_some())
+        .then_some(pieces)
+}
+
+/// Cut every run of `paragraphs` (and of their tables' cells) the way
+/// [`write_run_ranges`] writes it: one run per piece, each with the run's
+/// attributes; the hyperlink source and a placeholder stay on the first.
+/// What a re-parse of the written ranges reads.
+pub(crate) fn cut_page_number_runs(paragraphs: &mut [idml_import::Paragraph]) {
+    for p in paragraphs {
+        if p.runs.iter().any(|r| run_cut(r).is_some()) {
+            let mut runs = Vec::with_capacity(p.runs.len() + 2);
+            for r in std::mem::take(&mut p.runs) {
+                let Some(pieces) = run_cut(&r) else {
+                    runs.push(r);
+                    continue;
+                };
+                for (i, (_, text)) in pieces.into_iter().enumerate() {
+                    let mut piece = r.clone();
+                    piece.text = text.to_string();
+                    if i > 0 {
+                        piece.hyperlink_source = None;
+                        piece.placeholder = None;
+                    }
+                    runs.push(piece);
+                }
+            }
+            p.runs = runs;
+        }
+        if let Some(t) = p.table.as_mut() {
+            for c in &mut t.cells {
+                cut_page_number_runs(&mut c.paragraphs);
+            }
+        }
+    }
+}
+
 /// One model run as `<CharacterStyleRange>`s, the paragraph mark after
 /// its text when `mark`. One range, unless the run holds a next or
 /// previous page number: then each [`page_number_pieces`] piece takes a
@@ -1129,12 +1176,7 @@ pub(crate) fn write_run_ranges(
     wrap_source: bool,
     mark: bool,
 ) -> Result<(), quick_xml::Error> {
-    let pieces = if r.text_variable.is_some() {
-        Vec::new()
-    } else {
-        page_number_pieces(&r.text)
-    };
-    if pieces.iter().all(|(kind, _)| kind.is_none()) {
+    let Some(pieces) = run_cut(r) else {
         rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
         emit_applied_font(writer, &r.font)?;
         write_run_body(writer, r, wrap_source)?;
@@ -1143,7 +1185,7 @@ pub(crate) fn write_run_ranges(
         }
         writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
         return Ok(());
-    }
+    };
     let last = pieces.len() - 1;
     for (i, (kind, text)) in pieces.into_iter().enumerate() {
         let mut attrs = character_run_attrs(r);

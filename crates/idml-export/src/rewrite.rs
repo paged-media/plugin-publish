@@ -6695,6 +6695,13 @@ fn resolve_run<'a>(
 /// followed by the next `k` runs exactly. Returns those `k` extra run
 /// indices (empty when the range is not a split, or the pieces were also
 /// edited — then the old single-run comparison applies).
+///
+/// The page numbers compare by kind, not flavour: a part an older writer
+/// spelled with a bare `<?ACE 18?>` reads every page number as the
+/// current one, while the model — reopened from `.paged`, its runs cut
+/// at their next / previous page numbers (`cut_page_number_runs`) — holds
+/// the flavour. Those pieces are a split of the range like any other, and
+/// are written from the model.
 fn split_tail(
     para: Option<&Paragraph>,
     first: Option<usize>,
@@ -6713,7 +6720,17 @@ fn split_tail(
     } else {
         head.text.as_str()
     };
-    if !source_text.starts_with(head_text) {
+    let alike = |t: &str| -> String {
+        t.chars()
+            .map(|c| match crate::emit::page_number_type(c) {
+                Some(_) => paged_model::AUTO_PAGE_NUMBER_MARKER,
+                None => c,
+            })
+            .collect()
+    };
+    let source_text = &alike(source_text);
+    let head_text = &alike(head_text);
+    if !source_text.starts_with(head_text.as_str()) {
         return Vec::new();
     }
     // A NEW text variable instance (see [`new_variable_runs`]) adds no
@@ -6721,7 +6738,7 @@ fn split_tail(
     // the range (an insert that split it) or right after it.
     let is_new = |i: usize| new_runs.contains(&(para as *const Paragraph as usize, i));
     let mut acc = head_text.to_string();
-    let mut matched = acc == source_text;
+    let mut matched = acc == *source_text;
     let mut extras = Vec::new();
     for (i, r) in para.runs.iter().enumerate().skip(first + 1) {
         if is_new(i) {
@@ -6731,9 +6748,9 @@ fn split_tail(
         if matched {
             break;
         }
-        acc.push_str(&r.text);
+        acc.push_str(&alike(&r.text));
         extras.push(i);
-        if acc == source_text {
+        if acc == *source_text {
             matched = true;
         } else if !source_text.starts_with(&acc) {
             return Vec::new();
