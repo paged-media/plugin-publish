@@ -1008,7 +1008,9 @@ fn qualify_parent(kind: &str, parent: String) -> String {
 /// `tools/indesign-export/ruby-kenten-probe`): `RubyFontSize`,
 /// `RubyXScale` / `RubyYScale`, `RubyXOffset` / `RubyYOffset`,
 /// `RubyPosition`, `RubyAlignment`, `KentenXScale` / `KentenYScale`,
-/// `KentenPlacement`, `KentenPosition`, `KentenAlignment`. The faces
+/// `KentenPlacement`, `KentenPosition`, `KentenAlignment`,
+/// `RubyParentSpacing`, `RubyParentOverhangAmount`, `RubyAutoScaling`,
+/// `RubyParentScalingPercent`. The faces
 /// (`RubyFont`, `KentenFont` and their styles) are `<Properties>`
 /// children in InDesign's IDML, as `AppliedFont` is, and are read there.
 pub(crate) fn mark_settings(e: &quick_xml::events::BytesStart) -> paged_model::MarkSettings {
@@ -1021,15 +1023,18 @@ pub(crate) fn mark_settings(e: &quick_xml::events::BytesStart) -> paged_model::M
         ruby_y_offset: num(b"RubyYOffset"),
         ruby_position: attr(e, b"RubyPosition"),
         ruby_alignment: attr(e, b"RubyAlignment"),
-        ruby_font: None,
-        ruby_font_style: None,
         kenten_x_scale: num(b"KentenXScale"),
         kenten_y_scale: num(b"KentenYScale"),
         kenten_placement: num(b"KentenPlacement"),
         kenten_position: attr(e, b"KentenPosition"),
         kenten_alignment: attr(e, b"KentenAlignment"),
-        kenten_font: None,
-        kenten_font_style: None,
+        ruby_parent_spacing: attr(e, b"RubyParentSpacing"),
+        ruby_overhang_amount: attr(e, b"RubyParentOverhangAmount"),
+        ruby_auto_scaling: attr(e, b"RubyAutoScaling").and_then(|s| s.parse().ok()),
+        ruby_parent_scaling_percent: num(b"RubyParentScalingPercent"),
+        // The faces are read from <Properties>; anything core adds later
+        // starts unset here rather than failing to build.
+        ..Default::default()
     }
 }
 

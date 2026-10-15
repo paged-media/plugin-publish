@@ -3685,6 +3685,10 @@ mod tests {
                 RubyYOffset="-2"
                 RubyPosition="BelowLeft"
                 RubyAlignment="RubyEqualAki"
+                RubyParentSpacing="RubyParentFullJustify"
+                RubyParentOverhangAmount="RubyOverhangHalfRuby"
+                RubyAutoScaling="true"
+                RubyParentScalingPercent="80"
                 KentenKind="Custom"
                 KentenCustomCharacter="★"
                 KentenFontSize="12"
@@ -3725,6 +3729,10 @@ mod tests {
                 ruby_alignment: Some("RubyEqualAki".into()),
                 ruby_font: Some("Kozuka Gothic Pr6N".into()),
                 ruby_font_style: Some("B".into()),
+                ruby_parent_spacing: Some("RubyParentFullJustify".into()),
+                ruby_overhang_amount: Some("RubyOverhangHalfRuby".into()),
+                ruby_auto_scaling: Some(true),
+                ruby_parent_scaling_percent: Some(80.0),
                 kenten_x_scale: Some(50.0),
                 kenten_y_scale: Some(200.0),
                 kenten_placement: Some(5.0),
