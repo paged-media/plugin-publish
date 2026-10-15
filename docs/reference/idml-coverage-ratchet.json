@@ -18,9 +18,9 @@
       "value": 0.464668
     },
     "weightedExport": {
-      "covered": 87488,
+      "covered": 90554,
       "total": 633952,
-      "value": 0.138004
+      "value": 0.14284
     },
     "misplacedReads": 30,
     "unseenReads": 340,
@@ -1414,6 +1414,18 @@
     "Resources/Preferences|DocumentPreference@SlugInsideOrLeftOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugRightOrOutsideOffset|attr",
     "Resources/Preferences|DocumentPreference@SlugTopOffset|attr",
+    "Resources/Preferences|FootnoteOption@ContinuingRuleOn|attr",
+    "Resources/Preferences|FootnoteOption@EnableStraddling|attr",
+    "Resources/Preferences|FootnoteOption@FootnoteNumberingStyle|properties-child",
+    "Resources/Preferences|FootnoteOption@NoSplitting|attr",
+    "Resources/Preferences|FootnoteOption@Prefix|attr",
+    "Resources/Preferences|FootnoteOption@RestartNumbering|properties-child",
+    "Resources/Preferences|FootnoteOption@RuleOn|attr",
+    "Resources/Preferences|FootnoteOption@ShowPrefixSuffix|properties-child",
+    "Resources/Preferences|FootnoteOption@SpaceBetween|attr",
+    "Resources/Preferences|FootnoteOption@Spacer|attr",
+    "Resources/Preferences|FootnoteOption@StartAt|attr",
+    "Resources/Preferences|FootnoteOption@Suffix|attr",
     "Resources/Preferences|TextDefault@FontStyle|attr",
     "Resources/Preferences|TextDefault@PointSize|attr",
     "Resources/Preferences|TextPreference@UseOpticalSize|attr",
