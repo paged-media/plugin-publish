@@ -8,9 +8,9 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 119116,
+      "covered": 119929,
       "total": 633952,
-      "value": 0.187894
+      "value": 0.189177
     },
     "impactImport": {
       "covered": 25359,
@@ -18,12 +18,12 @@
       "value": 0.463881
     },
     "weightedExport": {
-      "covered": 86404,
+      "covered": 87488,
       "total": 633952,
-      "value": 0.136294
+      "value": 0.138004
     },
     "misplacedReads": 30,
-    "unseenReads": 307,
+    "unseenReads": 313,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -424,10 +424,13 @@
     "Resources/Styles|ParagraphStyle@MinimumWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@Name|attr",
     "Resources/Styles|ParagraphStyle@NextStyle|attr",
+    "Resources/Styles|ParagraphStyle@NumberingApplyRestartPolicy|attr",
     "Resources/Styles|ParagraphStyle@NumberingCharacterStyle|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingContinue|attr",
     "Resources/Styles|ParagraphStyle@NumberingExpression|attr",
     "Resources/Styles|ParagraphStyle@NumberingFormat|properties-child",
+    "Resources/Styles|ParagraphStyle@NumberingLevel|attr",
+    "Resources/Styles|ParagraphStyle@NumberingRestartPolicies|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingStartAt|attr",
     "Resources/Styles|ParagraphStyle@OTFContextualAlternate|attr",
     "Resources/Styles|ParagraphStyle@OTFDiscretionaryLigature|attr",
@@ -1437,6 +1440,7 @@
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|attr",
     "Resources/Styles|ParagraphStyle@AppliedNumberingList|properties-child",
     "Resources/Styles|ParagraphStyle@AutoLeading|attr",
+    "Resources/Styles|ParagraphStyle@BalanceRaggedLines|properties-child",
     "Resources/Styles|ParagraphStyle@BasedOn|properties-child",
     "Resources/Styles|ParagraphStyle@BaselineShift|attr",
     "Resources/Styles|ParagraphStyle@BulletsAndNumberingListType|attr",
@@ -1477,10 +1481,13 @@
     "Resources/Styles|ParagraphStyle@MinimumWordSpacing|attr",
     "Resources/Styles|ParagraphStyle@Name|attr",
     "Resources/Styles|ParagraphStyle@NextStyle|attr",
+    "Resources/Styles|ParagraphStyle@NumberingApplyRestartPolicy|attr",
     "Resources/Styles|ParagraphStyle@NumberingCharacterStyle|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingContinue|attr",
     "Resources/Styles|ParagraphStyle@NumberingExpression|attr",
     "Resources/Styles|ParagraphStyle@NumberingFormat|properties-child",
+    "Resources/Styles|ParagraphStyle@NumberingLevel|attr",
+    "Resources/Styles|ParagraphStyle@NumberingRestartPolicies|properties-child",
     "Resources/Styles|ParagraphStyle@NumberingStartAt|attr",
     "Resources/Styles|ParagraphStyle@OTFContextualAlternate|attr",
     "Resources/Styles|ParagraphStyle@OTFDiscretionaryLigature|attr",

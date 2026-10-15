@@ -39,13 +39,16 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::styles::{ParagraphStyleDef, StyleSheet};
-use idml_import::{BalanceRaggedLines, Paragraph, SpanSplitColumnCount, Story, TabStop};
+use idml_import::{
+    BalanceRaggedLines, Paragraph, RestartPolicy, RestartPolicyKind, SpanSplitColumnCount, Story,
+    TabStop,
+};
 
 use crate::emit::{
     paragraph_has_properties, write_applied_numbering_list, write_balance_ragged_lines,
     write_bullet_char, write_bullets_character_style, write_numbering_character_style,
-    write_numbering_expression, write_numbering_format, write_span_split_column_count,
-    write_tab_list,
+    write_numbering_expression, write_numbering_format, write_restart_policy,
+    write_span_split_column_count, write_tab_list,
 };
 use crate::rewrite::resolve_paragraph;
 
@@ -70,6 +73,8 @@ pub(crate) struct Owner<'a> {
     pub(crate) count: Option<SpanSplitColumnCount>,
     /// `BalanceRaggedLines` (core ADR 153).
     pub(crate) balance: Option<BalanceRaggedLines>,
+    /// `NumberingRestartPolicies` (core ADR 158).
+    pub(crate) restart: Option<RestartPolicy>,
 }
 
 impl<'a> Owner<'a> {
@@ -84,6 +89,7 @@ impl<'a> Owner<'a> {
             digits_style: p.bullets_and_numbering_digits_character_style.as_deref(),
             count: p.span_columns.count,
             balance: p.line_setting.balance,
+            restart: p.list_level.restart_policy,
         }
     }
 
@@ -98,6 +104,7 @@ impl<'a> Owner<'a> {
             digits_style: s.bullets_and_numbering_digits_character_style.as_deref(),
             count: s.span_columns.count,
             balance: s.line_setting.balance,
+            restart: s.list_level.restart_policy,
         }
     }
 
@@ -111,6 +118,7 @@ impl<'a> Owner<'a> {
             || self.digits_style.is_some()
             || self.count.is_some()
             || self.balance.is_some()
+            || self.restart.is_some()
     }
 
     /// Every child, in InDesign's order, for a freshly written element.
@@ -145,6 +153,9 @@ impl<'a> Owner<'a> {
         if let Some(b) = self.balance {
             write_balance_ragged_lines(writer, b)?;
         }
+        if let Some(r) = self.restart {
+            write_restart_policy(writer, r)?;
+        }
         Ok(())
     }
 }
@@ -168,6 +179,7 @@ struct Open<'a> {
     digits_style_done: bool,
     count_done: bool,
     balance_done: bool,
+    restart_done: bool,
 }
 
 impl<'a> Open<'a> {
@@ -186,6 +198,7 @@ impl<'a> Open<'a> {
             digits_style_done: false,
             count_done: false,
             balance_done: false,
+            restart_done: false,
         }
     }
     fn owes_tabs(&self) -> bool {
@@ -223,9 +236,13 @@ impl<'a> Open<'a> {
     fn owes_balance(&self) -> bool {
         !self.balance_done && self.owner.as_ref().is_some_and(|o| o.balance.is_some())
     }
+    fn owes_restart(&self) -> bool {
+        !self.restart_done && self.owner.as_ref().is_some_and(|o| o.restart.is_some())
+    }
     fn owes_any(&self) -> bool {
         self.owes_count()
             || self.owes_balance()
+            || self.owes_restart()
             || self.owes_tabs()
             || self.owes_bullet()
             || self.owes_format()
@@ -296,6 +313,7 @@ fn source_has_any(original: &[u8]) -> bool {
         || contains(original, b"<NumberingCharacterStyle")
         || contains(original, b"<BulletsTextAfter")
         || contains(original, b"<BalanceRaggedLines")
+        || contains(original, b"<NumberingRestartPolicies")
 }
 
 /// A story's ranges, matched to the model by provenance.
@@ -365,6 +383,7 @@ fn is_owned_child(name: &[u8]) -> bool {
             | b"NumberingCharacterStyle"
             | b"BulletsTextAfter"
             | b"BalanceRaggedLines"
+            | b"NumberingRestartPolicies"
     )
 }
 
@@ -429,6 +448,10 @@ fn spell_with<'m>(
                         b"BalanceRaggedLines" => {
                             let text = subtree_text(&inner);
                             settle_balance(&mut writer, o, Some((&start, &inner)), &text)?;
+                        }
+                        b"NumberingRestartPolicies" => {
+                            let policy = restart_policy_of(&start);
+                            settle_restart(&mut writer, o, Some((&start, &inner)), policy)?;
                         }
                         other => {
                             let which = TextChild::of(other);
@@ -495,6 +518,10 @@ fn spell_with<'m>(
                         }
                         b"BalanceRaggedLines" => {
                             settle_balance(&mut writer, o, Some((&e.borrow(), &[])), "")?;
+                        }
+                        b"NumberingRestartPolicies" => {
+                            let policy = restart_policy_of(&e);
+                            settle_restart(&mut writer, o, Some((&e.borrow(), &[])), policy)?;
                         }
                         other => {
                             let which = TextChild::of(other);
@@ -795,6 +822,42 @@ fn settle_balance(
     }
 }
 
+/// A `<NumberingRestartPolicies>`'s policy, read as the parser reads it.
+fn restart_policy_of(e: &BytesStart) -> Option<RestartPolicy> {
+    Some(RestartPolicy {
+        kind: RestartPolicyKind::from_idml(&attr_string(e, b"RestartPolicy")?)?,
+        lower: attr_u32(e, b"LowerLevel").unwrap_or(0),
+        upper: attr_u32(e, b"UpperLevel").unwrap_or(0),
+    })
+}
+
+/// A source `<NumberingRestartPolicies>` (or none) against the model,
+/// like [`settle_balance`] (core ADR 158).
+fn settle_restart(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    o: &mut Open<'_>,
+    source: Option<(&BytesStart<'_>, &[Event<'static>])>,
+    source_policy: Option<RestartPolicy>,
+) -> Result<(), quick_xml::Error> {
+    o.restart_done = true;
+    let Some(p) = o.owner.as_ref() else {
+        if let Some((start, inner)) = source {
+            write_events(writer, start, inner)?;
+        }
+        return Ok(());
+    };
+    match (p.restart, source) {
+        (Some(r), Some((start, inner))) if source_policy == Some(r) => {
+            write_events(writer, start, inner)
+        }
+        (Some(r), _) => write_restart_policy(writer, r),
+        (None, Some((start, inner))) if source_policy.is_none() => {
+            write_events(writer, start, inner)
+        }
+        (None, _) => Ok(()),
+    }
+}
+
 /// A source `<NumberingFormat>` / `<AppliedNumberingList>` /
 /// `<NumberingExpression>` (or none) against the model, like
 /// [`settle_tabs`]. A "no list" spelling the parser reads as `None`
@@ -880,6 +943,9 @@ fn write_missing_children(
     }
     if o.owes_balance() {
         settle_balance(writer, o, None, "")?;
+    }
+    if o.owes_restart() {
+        settle_restart(writer, o, None, None)?;
     }
     Ok(())
 }
@@ -984,6 +1050,49 @@ mod tests {
         let out = String::from_utf8(spell(src, &s).unwrap()).unwrap();
         assert!(
             out.contains(r#"<ParagraphStyleRange SpanColumnType="SpanColumns"><Properties><SpanSplitColumnCount type="short">3</SpanSplitColumnCount></Properties><CharacterStyleRange>"#),
+            "{out}"
+        );
+    }
+
+    /// A range's restart policy, as InDesign spells it: an empty child
+    /// carrying attributes (core ADR 158). Kept, changed, added and
+    /// cleared like balance.
+    const RESTART: &[u8] = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange NumberingLevel="2"><Properties><NumberingRestartPolicies RestartPolicy="AnyPreviousLevel" LowerLevel="0" UpperLevel="0"/></Properties><CharacterStyleRange><Content>B</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+
+    #[test]
+    fn a_restart_policy_round_trips_as_a_child() {
+        let s = story(RESTART);
+        let any = RestartPolicy {
+            kind: RestartPolicyKind::AnyPreviousLevel,
+            lower: 0,
+            upper: 0,
+        };
+        assert_eq!(s.paragraphs[0].list_level.restart_policy, Some(any));
+        assert_eq!(spell(RESTART, &s).unwrap(), RESTART, "unmutated");
+
+        let mut s = story(RESTART);
+        s.paragraphs[0].list_level.restart_policy = Some(RestartPolicy {
+            kind: RestartPolicyKind::RangeOfPreviousLevels,
+            lower: 1,
+            upper: 1,
+        });
+        let out = String::from_utf8(spell(RESTART, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Properties><NumberingRestartPolicies RestartPolicy="RangeOfPreviousLevels" LowerLevel="1" UpperLevel="1"/></Properties>"#),
+            "{out}"
+        );
+
+        let mut s = story(RESTART);
+        s.paragraphs[0].list_level.restart_policy = None;
+        let out = String::from_utf8(spell(RESTART, &s).unwrap()).unwrap();
+        assert!(!out.contains("NumberingRestartPolicies"), "{out}");
+
+        let plain = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>B</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let mut s = story(plain);
+        s.paragraphs[0].list_level.restart_policy = Some(any);
+        let out = String::from_utf8(spell(plain, &s).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<ParagraphStyleRange><Properties><NumberingRestartPolicies RestartPolicy="AnyPreviousLevel" LowerLevel="0" UpperLevel="0"/></Properties><CharacterStyleRange>"#),
             "{out}"
         );
     }
