@@ -1494,6 +1494,7 @@ fn write_new_text_frame(
         content_target: target(&f.content_transparency, &f.content_drop_shadow),
     };
     push_common_item_attrs(&mut attrs, f.item_transform, &paint);
+    crate::overprint::push_item_attrs(&mut attrs, spread, self_id);
     if let Some(a) = &f.stroke_alignment {
         attrs.push(("StrokeAlignment", a.clone()));
     }
@@ -1576,10 +1577,10 @@ pub(crate) fn write_text_frame_preference(
     f: &TextFrame,
 ) -> Result<(), quick_xml::Error> {
     let insets = f.inset_spacing.filter(|i| i.iter().any(|v| *v != 0.0));
-    if f.auto_sizing.is_none() && insets.is_none() {
+    let mut attrs: Vec<(&str, String)> = crate::text_frame_prefs::layout_attrs(f);
+    if f.auto_sizing.is_none() && insets.is_none() && attrs.is_empty() {
         return Ok(());
     }
-    let mut attrs: Vec<(&str, String)> = Vec::new();
     if let Some(kind) = f.auto_sizing {
         attrs.push(("AutoSizingType", auto_sizing_idml(kind).to_string()));
     }
@@ -1792,6 +1793,7 @@ fn write_new_box_item(
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
     push_item_name(&mut attrs, spread, self_id);
     push_common_item_attrs(&mut attrs, item_transform, paint);
+    crate::overprint::push_item_attrs(&mut attrs, spread, self_id);
     emit_start_with_attrs(writer, kind, &attrs)?;
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
     write_item_label(writer, spread, self_id)?;
@@ -1837,6 +1839,7 @@ fn write_new_path_item(
     let mut attrs: Vec<(&str, String)> = vec![("Self", self_id.to_string())];
     push_item_name(&mut attrs, spread, self_id);
     push_common_item_attrs(&mut attrs, item_transform, paint);
+    crate::overprint::push_item_attrs(&mut attrs, spread, self_id);
     for (k, v) in extra_attrs {
         attrs.push((k, v.clone()));
     }
@@ -1964,17 +1967,20 @@ fn write_text_paths(
     }
     let host_len = host_path_length(spread, host_id);
     for (i, tp) in paths.iter().enumerate() {
-        if let (Some(id), Some(skip)) = (&tp.self_id, skip) {
-            if skip.contains(id) {
-                continue;
-            }
+        // The id this path is written under — its own, or the one minted
+        // for it. The source carries a path the model holds with no id
+        // (one attached through the wire) under the MINTED id, so that is
+        // the one to look for: matching on the model's id alone appended
+        // another copy on every save, and a story set once per copy
+        // printed heavier each time.
+        let id = tp
+            .self_id
+            .clone()
+            .unwrap_or_else(|| format!("{}tp{i}", crate::emit::sanitize_id(&tp.parent_story)));
+        if skip.is_some_and(|skip| skip.contains(&id)) {
+            continue;
         }
-        let mut attrs: Vec<(&str, String)> = vec![(
-            "Self",
-            tp.self_id
-                .clone()
-                .unwrap_or_else(|| format!("{}tp{i}", crate::emit::sanitize_id(&tp.parent_story))),
-        )];
+        let mut attrs: Vec<(&str, String)> = vec![("Self", id)];
         attrs.push(("ParentStory", crate::emit::sanitize_id(&tp.parent_story)));
         // InDesign writes the glyph seat as `TextAlignment`, its values
         // ending `TextAlignment`; a value an older Paged build read as
@@ -3668,7 +3674,14 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
                         open_items.last().and_then(|it| it.self_id.clone()),
                         attr_value(&e, b"Self"),
                     ) {
-                        text_paths_in.entry(host).or_default().insert(id);
+                        // A second `<TextPath>` with the same `Self` on one
+                        // host is a copy an earlier export appended (see
+                        // `write_text_paths`): every reader sets the story
+                        // once per copy. Keep the first.
+                        if !text_paths_in.entry(host).or_default().insert(id) {
+                            buf.clear();
+                            continue;
+                        }
                     }
                 }
                 // C-22: a self-closing page item anchors inserts exactly
@@ -4258,7 +4271,11 @@ fn patch_spread_item(
         group_on_disk,
     )?;
     match patched {
-        Some(start) => patch_item_name(patch_item_state(start, spread)?, spread).map(Some),
+        Some(start) => patch_item_name(
+            crate::overprint::patch_item(patch_item_state(start, spread)?, spread)?,
+            spread,
+        )
+        .map(Some),
         None => Ok(None),
     }
 }
@@ -5249,7 +5266,11 @@ pub fn rewrite_story_in_frame(
     story: &Story,
     host_width: Option<f32>,
 ) -> Result<Vec<u8>, quick_xml::Error> {
-    let out = rewrite_story_part(original, story, host_width)?;
+    let out = if crate::inline_objects::source_cannot_hold(original, story) {
+        fresh_story_part(original, story, host_width)?
+    } else {
+        rewrite_story_part(original, story, host_width)?
+    };
     Ok(match story_self_id(original) {
         Some(id) => crate::emit::assign_instance_ids(out, &id),
         None => out,

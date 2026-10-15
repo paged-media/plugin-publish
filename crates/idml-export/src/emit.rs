@@ -205,6 +205,11 @@ pub(crate) fn write_paragraphs(
         // else: opened in InDesign, an eleven-entry table of contents
         // came back as ONE paragraph with its style dropped.
         let mark = pi < last_para;
+        if crate::inline_objects::needs(p) {
+            crate::inline_objects::write_body(writer, p, mark, host_width)?;
+            writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;
+            continue;
+        }
         // A table takes the mark (it is the paragraph's last child);
         // otherwise the last run does.
         let mark_on_runs = mark && p.table.is_none();

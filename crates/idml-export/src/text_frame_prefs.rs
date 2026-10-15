@@ -12,8 +12,9 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-//! `<TextFramePreference>` auto-sizing and inset save-back for
-//! EXISTING frames.
+//! `<TextFramePreference>` save-back for EXISTING frames: auto-sizing,
+//! insets, and the frame's layout options (columns, balance, first
+//! baseline, vertical justification, ignore-wrap — [`layout_attrs`]).
 //!
 //! Measured on InDesign 20.0.1: `<TextFramePreference
 //! AutoSizingType="HeightOnly" AutoSizingReferencePoint="TopCenterPoint"/>`
@@ -30,7 +31,7 @@ use std::io::Cursor;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
-use idml_import::{Spread, TextFrame};
+use idml_import::{FirstBaselineOffset, Spread, TextFrame, VerticalJustification};
 
 use crate::rewrite::{
     attr_value, auto_sizing_idml, auto_sizing_reference_point_idml, format_f32, patch_start,
@@ -112,30 +113,37 @@ fn patch_preference(
     e: &BytesStart,
     f: &TextFrame,
 ) -> Result<BytesStart<'static>, quick_xml::Error> {
-    let Some(kind) = f.auto_sizing else {
-        return Ok(e.clone().into_owned());
-    };
-    let kind = auto_sizing_idml(kind);
+    let kind = f.auto_sizing.map(auto_sizing_idml);
     let point = f
         .auto_sizing_reference_point
         .map(auto_sizing_reference_point_idml);
-    let mut extras: Vec<(&str, String)> = vec![("AutoSizingType", kind.to_string())];
-    if let Some(p) = point {
-        extras.push(("AutoSizingReferencePoint", p.to_string()));
-    }
-    if let Some(v) = f.minimum_width_for_auto_sizing {
-        extras.push(("MinimumWidthForAutoSizing", format_f32(v)));
-    }
-    if let Some(v) = f.minimum_height_for_auto_sizing {
-        extras.push(("MinimumHeightForAutoSizing", format_f32(v)));
-    }
-    if let Some(v) = f.use_minimum_height_for_auto_sizing {
-        extras.push(("UseMinimumHeightForAutoSizing", v.to_string()));
+    // The layout attributes first, in InDesign's order, then the
+    // auto-sizing ones (only for a frame the model auto-sizes, as
+    // before).
+    let mut extras: Vec<(&str, String)> = layout_attrs(f);
+    if let Some(kind) = kind {
+        extras.push(("AutoSizingType", kind.to_string()));
+        if let Some(p) = point {
+            extras.push(("AutoSizingReferencePoint", p.to_string()));
+        }
+        if let Some(v) = f.minimum_width_for_auto_sizing {
+            extras.push(("MinimumWidthForAutoSizing", format_f32(v)));
+        }
+        if let Some(v) = f.minimum_height_for_auto_sizing {
+            extras.push(("MinimumHeightForAutoSizing", format_f32(v)));
+        }
+        if let Some(v) = f.use_minimum_height_for_auto_sizing {
+            extras.push(("UseMinimumHeightForAutoSizing", v.to_string()));
+        }
     }
     let rebuilt = patch_start(
         e,
         |k, raw| {
             let raw = std::str::from_utf8(raw).ok();
+            if let Some(patch) = layout_patch(k, raw, f) {
+                return Some(patch);
+            }
+            let kind = kind?;
             match k {
                 b"AutoSizingType" => Some(if raw == Some(kind) {
                     Patch::Keep
@@ -174,6 +182,178 @@ fn patch_preference(
     )
 }
 
+/// InDesign's `VerticalJustification` value.
+fn vertical_justification_idml(v: VerticalJustification) -> &'static str {
+    match v {
+        VerticalJustification::Top => "TopAlign",
+        VerticalJustification::Center => "CenterAlign",
+        VerticalJustification::Bottom => "BottomAlign",
+        VerticalJustification::Justify => "JustifyAlign",
+    }
+}
+
+/// InDesign's `FirstBaselineOffset` value. The em box is `EmboxHeight`
+/// in its own export (InDesign reads `EmBoxHeight`, the wire's name, as
+/// `AscentOffset` — see `paged_model::FirstBaselineOffset::from_idml`).
+fn first_baseline_offset_idml(v: FirstBaselineOffset) -> &'static str {
+    match v {
+        FirstBaselineOffset::AscentOffset => "AscentOffset",
+        FirstBaselineOffset::CapHeight => "CapHeight",
+        FirstBaselineOffset::XHeight => "XHeight",
+        FirstBaselineOffset::EmBoxHeight => "EmboxHeight",
+        FirstBaselineOffset::LeadingOffset => "LeadingOffset",
+        FirstBaselineOffset::FixedHeight => "FixedHeight",
+    }
+}
+
+/// The text frame's own layout options the model carries — columns,
+/// their balance, the first-baseline policy, vertical justification and
+/// the frame's wrap opt-out — as `<TextFramePreference>` attributes, in
+/// the order InDesign writes them. Only what the model states: an unset
+/// option is InDesign's default, and writing nothing keeps it so.
+///
+/// The importer has always read these and the engine lays them out, but
+/// no writer spelled them: a two-column frame, a balanced one, a
+/// vertically justified one and every first-baseline policy came back
+/// from an export as one top-aligned column set from the ascent.
+pub(crate) fn layout_attrs(f: &TextFrame) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    if let Some(n) = f.column_count {
+        out.push(("TextColumnCount", n.to_string()));
+    }
+    if let Some(g) = f.column_gutter {
+        out.push(("TextColumnGutter", format_f32(g)));
+    }
+    if let Some(v) = f.first_baseline_offset {
+        out.push((
+            "FirstBaselineOffset",
+            first_baseline_offset_idml(v).to_string(),
+        ));
+    }
+    if let Some(v) = f.minimum_first_baseline_offset {
+        out.push(("MinimumFirstBaselineOffset", format_f32(v)));
+    }
+    if let Some(v) = f.vertical_justification {
+        out.push((
+            "VerticalJustification",
+            vertical_justification_idml(v).to_string(),
+        ));
+    }
+    if let Some(v) = f.ignore_wrap {
+        out.push(("IgnoreWrap", v.to_string()));
+    }
+    if let Some(v) = f.column_balance {
+        out.push(("VerticalBalanceColumns", v.to_string()));
+    }
+    out
+}
+
+/// Whether the source preference attribute `k` (one of
+/// [`layout_attrs`]'s) already says what the model holds. A value the
+/// source spells another way that reads the same (`TextColumnGutter="12.0"`)
+/// keeps its bytes; an enumerator is compared by its spelling, so a
+/// value only our older exports wrote (`EmBoxHeight`) is rewritten in
+/// InDesign's.
+fn layout_patch(k: &[u8], raw: Option<&str>, f: &TextFrame) -> Option<Patch> {
+    fn spelled(raw: Option<&str>, want: Option<String>) -> Patch {
+        match want {
+            Some(w) if raw == Some(w.as_str()) => Patch::Keep,
+            Some(w) => Patch::Set(w),
+            None => Patch::Remove,
+        }
+    }
+    fn parsed<T: std::str::FromStr + PartialEq + ToString>(
+        raw: Option<&str>,
+        want: Option<T>,
+    ) -> Patch {
+        match want {
+            Some(w) if raw.and_then(|s| s.trim().parse::<T>().ok()).as_ref() == Some(&w) => {
+                Patch::Keep
+            }
+            Some(w) => Patch::Set(w.to_string()),
+            None => Patch::Remove,
+        }
+    }
+    Some(match k {
+        b"TextColumnCount" => parsed(raw, f.column_count),
+        b"TextColumnGutter" => match f.column_gutter {
+            Some(v) => preserving_f32_patch(raw, Some(v)),
+            None => Patch::Remove,
+        },
+        b"FirstBaselineOffset" => spelled(
+            raw,
+            f.first_baseline_offset
+                .map(|v| first_baseline_offset_idml(v).to_string()),
+        ),
+        b"MinimumFirstBaselineOffset" => match f.minimum_first_baseline_offset {
+            Some(v) => preserving_f32_patch(raw, Some(v)),
+            None => Patch::Remove,
+        },
+        b"VerticalJustification" => spelled(
+            raw,
+            f.vertical_justification
+                .map(|v| vertical_justification_idml(v).to_string()),
+        ),
+        b"IgnoreWrap" => parsed(raw, f.ignore_wrap),
+        b"VerticalBalanceColumns" => parsed(raw, f.column_balance),
+        _ => return None,
+    })
+}
+
+/// Whether the model states any of [`layout_attrs`].
+fn has_layout(f: &TextFrame) -> bool {
+    f.column_count.is_some()
+        || f.column_gutter.is_some()
+        || f.first_baseline_offset.is_some()
+        || f.minimum_first_baseline_offset.is_some()
+        || f.vertical_justification.is_some()
+        || f.ignore_wrap.is_some()
+        || f.column_balance.is_some()
+}
+
+/// The `Self` of every source `<TextFrame>` whose own
+/// `<TextFramePreference>` spells one of [`layout_attrs`] — so an option
+/// the model has since CLEARED is removed rather than passed through.
+fn source_layout_frames(original: &[u8]) -> std::collections::HashSet<String> {
+    const KEYS: [&[u8]; 7] = [
+        b"TextColumnCount",
+        b"TextColumnGutter",
+        b"FirstBaselineOffset",
+        b"MinimumFirstBaselineOffset",
+        b"VerticalJustification",
+        b"IgnoreWrap",
+        b"VerticalBalanceColumns",
+    ];
+    let mut out = std::collections::HashSet::new();
+    let mut reader = Reader::from_reader(original);
+    reader.config_mut().expand_empty_elements = false;
+    let mut buf = Vec::new();
+    let mut frame: Option<String> = None;
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Err(_) | Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.name().as_ref() {
+                b"TextFrame" => frame = attr_value(&e, b"Self"),
+                b"TextFramePreference" => {
+                    if let Some(id) = frame.as_ref() {
+                        if e.attributes()
+                            .flatten()
+                            .any(|a| KEYS.contains(&a.key.as_ref()))
+                        {
+                            out.insert(id.clone());
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(e)) if e.name().as_ref() == b"TextFrame" => frame = None,
+            _ => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
 /// Bring every source `<TextFrame>`'s `<TextFramePreference>` in line
 /// with the model frame of the same `Self` — auto-sizing, and the text
 /// insets when the model has changed them. A frame the model neither
@@ -196,11 +376,17 @@ pub fn rewrite_text_frame_prefs(
             (model != src).then_some(id)
         })
         .collect();
+    let layout_in_source = source_layout_frames(original);
     let frames: std::collections::HashMap<&str, &TextFrame> = spread
         .text_frames
         .iter()
         .filter_map(|f| f.self_id.as_deref().map(|id| (id, f)))
-        .filter(|(id, f)| f.auto_sizing.is_some() || moved_insets.contains(id))
+        .filter(|(id, f)| {
+            f.auto_sizing.is_some()
+                || moved_insets.contains(id)
+                || has_layout(f)
+                || layout_in_source.contains(*id)
+        })
         .collect();
     if frames.is_empty() {
         return Ok(original.to_vec());
