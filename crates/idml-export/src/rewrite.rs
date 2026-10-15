@@ -107,10 +107,16 @@
 //!     `<Tab/>` structure. The parser collapses
 //!     `<Content>A</Content><Br/><Content>B</Content>` into one run
 //!     string `"A\nB"`; the rewrite splits the model text back the same
-//!     way (`\n` → `<Br/>`, `\t` → `<Tab/>`). A run carrying foreign
-//!     inline markup (an `<?ACE?>` page-number PI, a
+//!     way (`\n` → `<Br/>`, `\t` → `<Tab/>`). A page number or section
+//!     marker (`<?ACE 18?>` / `<?ACE 19?>`) is a character of the run like
+//!     any other; a next / previous page number is written in a range of
+//!     its own naming its `PageNumberType`, as InDesign does. A run
+//!     carrying foreign inline markup (another processing instruction, a
 //!     `<TextVariableInstance>`, an anchored frame, an unknown entity)
 //!     passes through verbatim — never clobbered (see Known losses).
+//!   - a story-level `<Table>` the model replaced or removed since the
+//!     part was written — written as the table the paragraph holds now,
+//!     or dropped (see `story_table_fate`).
 //!
 //! # Structural edits (W1.15 — landed)
 //!
@@ -219,10 +225,11 @@
 //!   anchor among the source items (C-22), and any residual order
 //!   difference is settled by the z-order post-pass (C-23).
 //! * **Runs with foreign inline markup.** A run whose text body carries
-//!   an `<?ACE?>` page-number marker, a `<TextVariableInstance>`, an
-//!   anchored frame, or an unknown entity passes through verbatim (its
-//!   attributes still patch). The structured text rewrite only fires on
-//!   pure `<Content>` / `<Br/>` / `<Tab/>` runs.
+//!   a processing instruction other than a page number or section
+//!   marker, a `<TextVariableInstance>`, an anchored frame, or an unknown
+//!   entity passes through verbatim (its attributes still patch). The
+//!   structured text rewrite only fires on `<Content>` / `<Br/>` /
+//!   `<Tab/>` runs and their page markers.
 //! * **MoveNode / sections.** Reparenting a node across spreads
 //!   (`MoveNode`) and new `<Section>` definitions are not yet reflected.
 //! * Anything the parser never modeled (preferences, fonts, tags, the
@@ -5353,13 +5360,21 @@ fn rewrite_story_part(
     // runs either way.
     let spelled = crate::paragraph_props::spell(original, story)?;
     let original: &[u8] = &spelled;
-    let (provenance, provenance_ok, new_runs) =
+    // `read_tables[i]`: the `Self` of the table the parser attached to
+    // its `i`-th story paragraph — the one table of the range the model
+    // was read with (a range holding two keeps the last).
+    let (provenance, provenance_ok, new_runs, read_tables) =
         match idml_import::parse_story_with_provenance(original) {
             Ok((parsed, p)) => {
                 let new_runs = new_variable_runs(&story.paragraphs, &parsed.paragraphs);
-                (p, true, new_runs)
+                let read_tables: Vec<Option<String>> = parsed
+                    .paragraphs
+                    .iter()
+                    .map(|p| p.table.as_ref().and_then(|t| t.self_id.clone()))
+                    .collect();
+                (p, true, new_runs, read_tables)
             }
-            Err(_) => (Default::default(), false, NewRuns::new()),
+            Err(_) => (Default::default(), false, NewRuns::new(), Vec::new()),
         };
     // How many story-level `<ParagraphStyleRange>`s the source carries —
     // so the LAST one is recognisable when the model appends paragraphs
@@ -5484,6 +5499,10 @@ fn rewrite_story_part(
     // one must not gain a second, inner wrapper.
     let mut open_sources: usize = 0;
     let mut csr_open = false;
+    // The open `<CharacterStyleRange>`'s start tag as written: a run whose
+    // text is re-serialised across ranges (a next / previous page number,
+    // see `write_page_number_pieces`) opens the later ones from it.
+    let mut open_csr: Option<BytesStart<'static>> = None;
     // ---- what the SOURCE story lacks and the model has ----
     // The highest model paragraph index a story-level range resolved to:
     // model paragraphs beyond it have no source element (a table
@@ -5497,6 +5516,9 @@ fn rewrite_story_part(
     // paragraph with a table the source range lacks gets it at the
     // range's close.
     let mut table_in_para = false;
+    // The `Self` of the table the parser read for the open story-level
+    // range (see `read_tables`).
+    let mut read_table: Option<String> = None;
     // Depth of open `<Table>` elements. Inside a table the
     // `<ParagraphStyleRange>` / `<CharacterStyleRange>` belong to CELL
     // paragraphs, which the parser stores on `paragraph.table.cells[]`,
@@ -5573,6 +5595,24 @@ fn rewrite_story_part(
                         writer.write_event(Event::Start(patch_story_start(&e, story)?))?;
                     }
                     b"Table" => {
+                        if table_depth == 0 {
+                            if let Some(fate) =
+                                story_table_fate(&e, story_para, read_table.as_deref())
+                            {
+                                // The model no longer holds this table on
+                                // its paragraph: the source subtree goes,
+                                // and the table the paragraph holds now
+                                // (if any) is written in its place.
+                                let mut skipped = Vec::new();
+                                skip_element(&mut reader, &mut skipped, b"Table")?;
+                                if let TableFate::Replaced(t) = fate {
+                                    crate::emit::write_table(&mut writer, t, host_width)?;
+                                    table_in_para = true;
+                                }
+                                buf.clear();
+                                continue;
+                            }
+                        }
                         table_depth += 1;
                         if table_depth == 1 {
                             table_in_para = true;
@@ -5595,6 +5635,9 @@ fn rewrite_story_part(
                     b"ParagraphStyleRange" if table_depth == 0 => {
                         run_offset = 0;
                         table_in_para = false;
+                        read_table = provenance
+                            .paragraph_at(event_pos)
+                            .and_then(|i| read_tables.get(i).cloned().flatten());
                         source_psr_seen += 1;
                         if let Some(i) = provenance
                             .paragraph_at(event_pos)
@@ -5634,6 +5677,7 @@ fn rewrite_story_part(
                         csr_open = true;
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
+                        open_csr = Some(start.clone());
                         writer.write_event(Event::Start(start))?;
                     }
                     b"CharacterStyleRange" if in_cell => {
@@ -5642,6 +5686,7 @@ fn rewrite_story_part(
                         csr_open = true;
                         body = RunBody::default();
                         let start = patch_character_range(&e, current_run)?;
+                        open_csr = Some(start.clone());
                         writer.write_event(Event::Start(start))?;
                     }
                     b"Content" if table_depth == 0 || in_cell => {
@@ -5732,6 +5777,7 @@ fn rewrite_story_part(
                         let (run, _, _) =
                             resolve_run(&provenance, event_pos, story_para, run_offset);
                         let start = patch_character_range(&e, run)?;
+                        open_csr = None;
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"CharacterStyleRange" if in_cell => {
@@ -5743,6 +5789,7 @@ fn rewrite_story_part(
                         let (run, _, _) =
                             resolve_run(&provenance, event_pos, cell_para, run_offset);
                         let start = patch_character_range(&e, run)?;
+                        open_csr = None;
                         writer.write_event(Event::Empty(start))?;
                     }
                     b"Br" if (table_depth == 0 || in_cell) && !body.in_content => {
@@ -5902,6 +5949,7 @@ fn rewrite_story_part(
                             &mut writer,
                             &mut body,
                             text_run,
+                            open_csr.take().as_ref(),
                             &mut prev_ended_with_br,
                             !extras.is_empty(),
                             wrap,
@@ -6054,11 +6102,27 @@ fn rewrite_story_part(
                     writer.write_event(Event::End(e))?;
                 }
             }
+            Event::PI(pi) if body.active && body.in_content && footnote_depth == 0 => {
+                // A page number or section marker is a character of the
+                // run to the parser: reconstruct it the parser's way, so
+                // a run carrying one is compared with the model like any
+                // other and re-serialised when the model differs. (It
+                // used to make the body foreign, which replayed a part an
+                // older writer had spelled wrong on every later save.)
+                let range_type = open_csr
+                    .as_ref()
+                    .and_then(|s| attr_value(s, b"PageNumberType"));
+                match marker_of_pi(pi.as_ref(), range_type.as_deref()) {
+                    Some(ch) => body.text.push(ch),
+                    None => body.foreign = true,
+                }
+                body.events.push(Event::PI(pi.into_owned()));
+            }
             other => {
                 if body.active {
-                    // PI (e.g. InDesign's <?ACE 18?> marker) or other
-                    // markup inside the span — buffer in order and
-                    // never rewrite over it.
+                    // A processing instruction that is no marker (or one
+                    // inside a footnote), or other markup inside the
+                    // span — buffer in order and never rewrite over it.
                     body.foreign = true;
                     body.events.push(other.into_owned());
                 } else {
@@ -6070,6 +6134,90 @@ fn rewrite_story_part(
     }
 
     Ok(writer.into_inner().into_inner())
+}
+
+/// The model character an inline `<?ACE n?>` reads as inside a range
+/// whose `PageNumberType` is `range_type` — `idml_import::story`'s rule:
+/// `ACE 18` is a page number of the range's flavour, `ACE 19` the
+/// section marker. `None` for any other instruction (the parser keeps
+/// nothing of it).
+fn marker_of_pi(body: &[u8], range_type: Option<&str>) -> Option<char> {
+    match std::str::from_utf8(body).ok()?.trim() {
+        "ACE 18" => Some(match range_type {
+            Some("NextPageNumber") => paged_model::NEXT_PAGE_NUMBER_MARKER,
+            Some("PreviousPageNumber") => paged_model::PREVIOUS_PAGE_NUMBER_MARKER,
+            _ => paged_model::AUTO_PAGE_NUMBER_MARKER,
+        }),
+        "ACE 19" => Some(paged_model::SECTION_MARKER),
+        _ => None,
+    }
+}
+
+/// Re-serialise `text` — a run's replaced body — when it holds a next or
+/// previous page number, or the open range names one: InDesign keeps
+/// each in a range of its own that names the flavour (see
+/// [`crate::emit::page_number_pieces`]). The open range `open` takes the
+/// first piece when it fits; every later piece closes the range it is in
+/// and opens one from `open`'s attributes with the flavour set (or
+/// dropped). The last range is left open for the caller's
+/// `</CharacterStyleRange>`. A hyperlink source covers the first piece.
+fn write_page_number_pieces(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    r: &CharacterRun,
+    open: Option<&BytesStart<'static>>,
+    wrap_source: bool,
+) -> Result<(), quick_xml::Error> {
+    let open_type = open
+        .and_then(|s| attr_value(s, b"PageNumberType"))
+        .and_then(|t| match t.as_str() {
+            "NextPageNumber" => Some("NextPageNumber"),
+            "PreviousPageNumber" => Some("PreviousPageNumber"),
+            _ => None,
+        });
+    let mut current = open_type;
+    let mut wrote = false;
+    for (i, (kind, piece)) in crate::emit::page_number_pieces(text)
+        .into_iter()
+        .enumerate()
+    {
+        // Text without a flavoured page number may stay in the range it
+        // was in, whatever that range names (the name flavours only an
+        // `<?ACE 18?>`); a current page number may not.
+        let fits = kind == current
+            || (!wrote && kind.is_none() && !piece.contains(paged_model::AUTO_PAGE_NUMBER_MARKER));
+        if !fits {
+            writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+            let start = match open {
+                Some(open) => patch_start(
+                    open,
+                    |k, _| {
+                        (k == b"PageNumberType").then(|| match kind {
+                            Some(v) => Patch::Set(v.to_string()),
+                            None => Patch::Remove,
+                        })
+                    },
+                    &kind
+                        .map(|v| vec![("PageNumberType", v.to_string())])
+                        .unwrap_or_default(),
+                )?,
+                None => {
+                    let mut attrs = crate::emit::character_run_attrs(r);
+                    if let Some(v) = kind {
+                        attrs.push(("PageNumberType", v.to_string()));
+                    }
+                    tag_with_attrs("CharacterStyleRange", &attrs)?
+                }
+            };
+            writer.write_event(Event::Start(start))?;
+            crate::emit::emit_applied_font(writer, &r.font)?;
+            current = kind;
+        }
+        let source = r.hyperlink_source.as_deref().filter(|_| i == 0);
+        crate::emit::write_text_body(writer, source, piece, wrap_source)?;
+        wrote = true;
+    }
+    Ok(())
 }
 
 /// Buffered inline body (`<Content>` / `<Br/>` / `<Tab/>` leaves) of one
@@ -6179,6 +6327,7 @@ fn flush_run_body(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     body: &mut RunBody,
     run: Option<&CharacterRun>,
+    open: Option<&BytesStart<'static>>,
     prev_br: &mut bool,
     hold_br: bool,
     wrap_source: bool,
@@ -6217,23 +6366,21 @@ fn flush_run_body(
     if replace {
         let r = run.expect("checked above");
         let text = model_text(r);
-        match (&r.hyperlink_source, wrap_source) {
-            (Some(src), true) => {
-                emit_start_with_attrs(
-                    writer,
-                    "HyperlinkTextSource",
-                    &[
-                        ("Self", src.clone()),
-                        ("Name", src.rsplit('/').next().unwrap_or(src).to_string()),
-                        ("Hidden", "false".to_string()),
-                    ],
-                )?;
-                write_run_content(writer, &text)?;
-                writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
-                    "HyperlinkTextSource",
-                )))?;
-            }
-            _ => write_run_content(writer, &text)?,
+        let flavoured = |t: Option<String>| {
+            matches!(
+                t.as_deref(),
+                Some("NextPageNumber") | Some("PreviousPageNumber")
+            )
+        };
+        if flavoured(open.and_then(|s| attr_value(s, b"PageNumberType")))
+            || text
+                .chars()
+                .any(|c| crate::emit::page_number_type(c).is_some())
+        {
+            write_page_number_pieces(writer, &text, r, open, wrap_source)?;
+        } else {
+            let source = r.hyperlink_source.as_deref();
+            crate::emit::write_text_body(writer, source, &text, wrap_source)?;
         }
         if ends_with_br && !hold_br {
             writer.write_event(Event::Empty(BytesStart::new("Br")))?;
@@ -6447,6 +6594,78 @@ fn model_paragraph_index(scope: &[Paragraph], parse_index: usize) -> Option<usiz
     (parse_index < scope.len()).then_some(parse_index)
 }
 
+/// What the model did to a story-level source `<Table>` since the part
+/// was written (see [`story_table_fate`]).
+enum TableFate<'a> {
+    /// The paragraph holds no table any more.
+    Dropped,
+    /// The paragraph holds this table instead.
+    Replaced(&'a idml_import::Table),
+}
+
+/// The fate of the story-level `<Table>` start `e` inside a range that
+/// maps to the model paragraph `para`; `None` keeps the source table.
+///
+/// Only the table the model was READ with is judged — `read`, the one the
+/// parser attached to this range's paragraph. A range can hold more than
+/// one, and the parser keeps the last; the others never reached the
+/// model, so nothing the model holds speaks for them and they pass
+/// through as before. The read table is matched by `Self`: the model
+/// still holding it keeps it (its cells patch in place), a different
+/// table on the paragraph replaces it, none drops it.
+///
+/// The model's own table is rewritten too when none of its cells has a
+/// `Self`. The engine mints cells without one, and this writer names
+/// them after their table (`emit::write_table`), so a model reloaded
+/// from its native part never meets a cell of the part by id: every
+/// cell replayed the text the part was written with, whatever the model
+/// poured into it since. Such a table was written whole from the model,
+/// so writing it again from the model drops nothing.
+fn story_table_fate<'a>(
+    e: &BytesStart,
+    para: Option<&'a Paragraph>,
+    read: Option<&str>,
+) -> Option<TableFate<'a>> {
+    let id = attr_value(e, b"Self")?;
+    if read != Some(id.as_str()) {
+        return None;
+    }
+    match para?.table.as_ref() {
+        Some(t)
+            if t.self_id.as_deref() == Some(id.as_str())
+                && (t.cells.is_empty() || t.cells.iter().any(|c| c.self_id.is_some())) =>
+        {
+            None
+        }
+        Some(t) => Some(TableFate::Replaced(t)),
+        None => Some(TableFate::Dropped),
+    }
+}
+
+/// Read past the rest of an element whose start tag `name` was just
+/// read, through its matching end tag.
+fn skip_element(
+    reader: &mut Reader<&[u8]>,
+    buf: &mut Vec<u8>,
+    name: &[u8],
+) -> Result<(), quick_xml::Error> {
+    let mut depth = 1usize;
+    loop {
+        buf.clear();
+        match reader.read_event_into(buf)? {
+            Event::Start(e) if e.name().as_ref() == name => depth += 1,
+            Event::End(e) if e.name().as_ref() == name => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
+            Event::Eof => return Ok(()),
+            _ => {}
+        }
+    }
+}
+
 /// The model run the `<CharacterStyleRange>` at `pos` produced inside
 /// `para`, plus whether the parser SPLIT that one element across several
 /// runs (see [`idml_import::RunSlot`]).
@@ -6535,20 +6754,7 @@ fn write_split_run(
     wrap_source: bool,
     mark: bool,
 ) -> Result<(), quick_xml::Error> {
-    emit_start_with_attrs(
-        writer,
-        "CharacterStyleRange",
-        &crate::emit::character_run_attrs(r),
-    )?;
-    crate::emit::emit_applied_font(writer, &r.font)?;
-    crate::emit::write_run_body(writer, r, wrap_source)?;
-    if mark {
-        writer.write_event(Event::Empty(BytesStart::new("Br")))?;
-    }
-    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
-        "CharacterStyleRange",
-    )))?;
-    Ok(())
+    crate::emit::write_run_ranges(writer, r, wrap_source, mark)
 }
 
 fn patch_paragraph_range(

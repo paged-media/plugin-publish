@@ -210,13 +210,7 @@ pub(crate) fn write_paragraphs(
         let mark_on_runs = mark && p.table.is_none();
         let last_run = p.runs.len().saturating_sub(1);
         for (ri, r) in p.runs.iter().enumerate() {
-            rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
-            emit_applied_font(writer, &r.font)?;
-            write_run_body(writer, r, true)?;
-            if mark_on_runs && ri == last_run {
-                writer.write_event(Event::Empty(BytesStart::new("Br")))?;
-            }
-            writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+            write_run_ranges(writer, r, true, mark_on_runs && ri == last_run)?;
         }
         if let Some(table) = &p.table {
             rewrite::emit_start_with_attrs(
@@ -1087,6 +1081,117 @@ pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String
 /// story they are writing).
 pub(crate) const NEW_INSTANCE_SELF: &str = "paged-new-text-variable-instance";
 
+/// The `PageNumberType` of the range InDesign keeps `ch` in. All three
+/// page numbers are the same `<?ACE 18?>`; the next and the previous one
+/// each sit in a range of their own that names the flavour (InDesign
+/// 20.0.1, `text_variable_roundtrip.rs`), the current page number and
+/// every other character in a range that names none.
+pub(crate) fn page_number_type(ch: char) -> Option<&'static str> {
+    match ch {
+        paged_model::NEXT_PAGE_NUMBER_MARKER => Some("NextPageNumber"),
+        paged_model::PREVIOUS_PAGE_NUMBER_MARKER => Some("PreviousPageNumber"),
+        _ => None,
+    }
+}
+
+/// `text` cut where InDesign cuts it into ranges: maximal pieces whose
+/// characters share a [`page_number_type`].
+pub(crate) fn page_number_pieces(text: &str) -> Vec<(Option<&'static str>, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut kind = None;
+    for (i, ch) in text.char_indices() {
+        let k = page_number_type(ch);
+        if i == 0 {
+            kind = k;
+        } else if k != kind {
+            out.push((kind, &text[start..i]));
+            start = i;
+            kind = k;
+        }
+    }
+    if !text.is_empty() {
+        out.push((kind, &text[start..]));
+    }
+    out
+}
+
+/// One model run as `<CharacterStyleRange>`s, the paragraph mark after
+/// its text when `mark`. One range, unless the run holds a next or
+/// previous page number: then each [`page_number_pieces`] piece takes a
+/// range with the run's attributes, the flavour named on the marker's.
+/// A hyperlink source is one stretch of text inside one range in
+/// InDesign's spelling, so a source over a cut run covers its first
+/// piece.
+pub(crate) fn write_run_ranges(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    r: &CharacterRun,
+    wrap_source: bool,
+    mark: bool,
+) -> Result<(), quick_xml::Error> {
+    let pieces = if r.text_variable.is_some() {
+        Vec::new()
+    } else {
+        page_number_pieces(&r.text)
+    };
+    if pieces.iter().all(|(kind, _)| kind.is_none()) {
+        rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
+        emit_applied_font(writer, &r.font)?;
+        write_run_body(writer, r, wrap_source)?;
+        if mark {
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+        return Ok(());
+    }
+    let last = pieces.len() - 1;
+    for (i, (kind, text)) in pieces.into_iter().enumerate() {
+        let mut attrs = character_run_attrs(r);
+        if let Some(kind) = kind {
+            attrs.push(("PageNumberType", kind.to_string()));
+        }
+        rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &attrs)?;
+        emit_applied_font(writer, &r.font)?;
+        let source = r.hyperlink_source.as_deref().filter(|_| i == 0);
+        write_text_body(writer, source, text, wrap_source)?;
+        if mark && i == last {
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+    }
+    Ok(())
+}
+
+/// `text` as a range's inline body, inside an inner
+/// `<HyperlinkTextSource>` when `source` names one and `wrap_source`.
+pub(crate) fn write_text_body(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    source: Option<&str>,
+    text: &str,
+    wrap_source: bool,
+) -> Result<(), quick_xml::Error> {
+    match source {
+        Some(source) if wrap_source => {
+            rewrite::emit_start_with_attrs(
+                writer,
+                "HyperlinkTextSource",
+                &[
+                    ("Self", source.to_string()),
+                    (
+                        "Name",
+                        source.rsplit('/').next().unwrap_or(source).to_string(),
+                    ),
+                    ("Hidden", "false".to_string()),
+                ],
+            )?;
+            rewrite::write_run_content(writer, text)?;
+            writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
+        }
+        _ => rewrite::write_run_content(writer, text)?,
+    }
+    Ok(())
+}
+
 /// A run's inline body: a text variable instance (a run tagged
 /// `text_variable`), a hyperlink source around the text (a run tagged
 /// `hyperlink_source`, when `wrap_source`), or the plain text.
@@ -1113,26 +1218,7 @@ pub(crate) fn write_run_body(
             ],
         );
     }
-    match (&r.hyperlink_source, wrap_source) {
-        (Some(source), true) => {
-            rewrite::emit_start_with_attrs(
-                writer,
-                "HyperlinkTextSource",
-                &[
-                    ("Self", source.clone()),
-                    (
-                        "Name",
-                        source.rsplit('/').next().unwrap_or(source).to_string(),
-                    ),
-                    ("Hidden", "false".to_string()),
-                ],
-            )?;
-            rewrite::write_run_content(writer, &r.text)?;
-            writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
-        }
-        _ => rewrite::write_run_content(writer, &r.text)?,
-    }
-    Ok(())
+    write_text_body(writer, r.hyperlink_source.as_deref(), &r.text, wrap_source)
 }
 
 /// Give every `<TextVariableInstance>` this writer minted (see
