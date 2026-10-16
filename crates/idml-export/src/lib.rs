@@ -1197,6 +1197,7 @@ fn navigation_plan<'a>(
         destinations,
         hyperlinks: &doc.designmap.hyperlinks,
         bookmarks: &doc.designmap.bookmarks,
+        bookmark_parents: &doc.designmap.bookmark_parents,
         conditions: &doc.styles.conditions,
         condition_sets: &doc.styles.condition_sets,
         indicator_colors,
