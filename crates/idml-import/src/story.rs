@@ -54,8 +54,9 @@ pub use paged_model::{
 };
 
 pub use paged_model::{
-    AUTO_PAGE_NUMBER_MARKER, FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER,
-    PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
+    AUTO_PAGE_NUMBER_MARKER, ENDNOTE_NUMBER_MARKER, ENDNOTE_REFERENCE_MARKER,
+    FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER, PREVIOUS_PAGE_NUMBER_MARKER,
+    SECTION_MARKER,
 };
 
 pub use paged_model::Story;
@@ -300,6 +301,8 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // single slot) because IDML technically permits nesting, though
     // it's exotic — the innermost source wins.
     let mut source_stack: Vec<String> = Vec::new();
+    // Inside an `<EndnoteRange>` of an endnote story (core ADR 170).
+    let mut in_endnote_range = false;
     let mut in_content = false;
     let mut buf = Vec::new();
     // `<Properties>` child elements appear *inside* a CharacterStyleRange
@@ -558,6 +561,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         }
                         out.applied_toc_style =
                             attr(&e, b"AppliedTOCStyle").filter(|v| v != "n" && !v.is_empty());
+                        // The story InDesign collects endnotes in (core
+                        // ADR 170).
+                        out.is_endnote_story =
+                            attr(&e, b"IsEndnoteStory").as_deref() == Some("true");
                     }
                     // W1.4 — a hyperlink / cross-reference source span
                     // wraps the character ranges it covers. Push its
@@ -565,6 +572,18 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // the matching End pops it. (Self-closing sources
                     // arrive via `Event::Empty` and never reach here, so
                     // they don't unbalance the stack.)
+                    // An endnote's text in the endnote story (core ADR
+                    // 170): its `<?ACE 4?>` prints the note's number.
+                    b"EndnoteRange" => {
+                        let range = paged_model::EndnoteRangeDef {
+                            self_id: attr(&e, b"Self").unwrap_or_default(),
+                            source: attr(&e, b"SourceEndnote"),
+                        };
+                        if let Some(p) = current_paragraph.as_mut() {
+                            p.endnote_ranges.push(range);
+                        }
+                        in_endnote_range = true;
+                    }
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
                         let self_id = attr(&e, b"Self").unwrap_or_default();
                         // A cross-reference's format (core ADR 169): the
@@ -1453,6 +1472,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             }
                         }
                     }
+                    b"EndnoteRange" => in_endnote_range = false,
                     // W1.4 — close the hyperlink / cross-reference
                     // source span so following runs stop inheriting it.
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
@@ -1619,6 +1639,23 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     || matches!(name, b"HiddenText" | b"Note")
                     || is_tracked_deletion(&e)
                 {
+                    buf.clear();
+                    continue;
+                }
+                // An endnote's reference (core ADR 170): a character of the
+                // host text where the `<Endnote>` stands, as a footnote's
+                // is; the renderer prints the note's number there.
+                if name == b"Endnote" {
+                    let _ = anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
+                    if let Some(run) = current_run.as_mut() {
+                        run.text.push(ENDNOTE_REFERENCE_MARKER);
+                    }
+                    if let Some(p) = current_paragraph.as_mut() {
+                        p.endnote_references.push(paged_model::EndnoteReference {
+                            self_id: attr(&e, b"Self").unwrap_or_default(),
+                            text_range: attr(&e, b"EndnoteTextRange"),
+                        });
+                    }
                     buf.clear();
                     continue;
                 }
@@ -1964,6 +2001,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             });
                         } else if body_str == "ACE 19" {
                             run.text.push(SECTION_MARKER);
+                        } else if body_str == "ACE 4" && in_endnote_range {
+                            // An endnote's number in the endnote story
+                            // (core ADR 170).
+                            run.text.push(ENDNOTE_NUMBER_MARKER);
                         } else if body_str == "ACE 4" && !footnote_stack.is_empty() {
                             // The note's own number, opening its text
                             // (the separator follows as text): the
@@ -3935,6 +3976,64 @@ mod tests {
         assert_eq!(
             para.index_markers[1].applied_topic.as_deref(),
             Some("Topic/u42")
+        );
+    }
+
+    /// InDesign 20.0.1's endnotes (`endnote-probe`, core ADR 170): a
+    /// reference is an `<Endnote>` on a superscript range of its own; the
+    /// endnote story holds each note in an `<EndnoteRange>` whose
+    /// `<?ACE 4?>` is the note's number.
+    #[test]
+    fn endnote_references_and_ranges_are_read() {
+        let host = r#"<Story Self="ue5" IsEndnoteStory="false">
+<ParagraphStyleRange>
+	<CharacterStyleRange><Content>First paragraph with a note.</Content></CharacterStyleRange>
+	<CharacterStyleRange Position="Superscript"><Endnote Self="u117" EndnoteTextRange="u118" /></CharacterStyleRange>
+	<CharacterStyleRange><Content> More.</Content></CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>"#;
+        let s = parse_story(host.as_bytes()).unwrap();
+        assert!(!s.is_endnote_story);
+        let p = &s.paragraphs[0];
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            text,
+            format!("First paragraph with a note.{ENDNOTE_REFERENCE_MARKER} More.")
+        );
+        assert_eq!(
+            p.endnote_references,
+            [paged_model::EndnoteReference {
+                self_id: "u117".into(),
+                text_range: Some("u118".into()),
+            }]
+        );
+        let notes = "<Story Self=\"u101\" IsEndnoteStory=\"true\">
+<ParagraphStyleRange>
+\t<CharacterStyleRange>
+\t\t<Content>Endnoten</Content>
+\t\t<Br />
+\t\t<EndnoteRange Self=\"u118\" SourceEndnote=\"u117\">
+\t\t\t<Content>\u{FEFF}<?ACE 4?>\tThe first endnote.\u{FEFF}</Content>
+\t\t</EndnoteRange>
+\t</CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>";
+        let s = parse_story(notes.as_bytes()).unwrap();
+        assert!(s.is_endnote_story);
+        // A `<Br/>` inside the range is a `\n` of the one model paragraph
+        // (the renderer splits it into segments).
+        let p = &s.paragraphs[0];
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            text,
+            format!("Endnoten\n\u{FEFF}{ENDNOTE_NUMBER_MARKER}\tThe first endnote.\u{FEFF}")
+        );
+        assert_eq!(
+            p.endnote_ranges,
+            [paged_model::EndnoteRangeDef {
+                self_id: "u118".into(),
+                source: Some("u117".into()),
+            }]
         );
     }
 

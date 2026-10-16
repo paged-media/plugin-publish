@@ -51,6 +51,8 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // The open `<CrossReferenceFormat>` (index into
     // `out.cross_reference_formats`), whose `<BuildingBlock>`s fold in.
     let mut current_xref_format: Option<usize> = None;
+    // Inside `<EndnoteOption>`: its typed children fold in (core ADR 170).
+    let mut in_endnote_option = false;
     // W1.4 — the `<TextVariable>` currently being parsed (the
     // wrapping form parks here so its `<TextVariablePreference>`
     // child can fold in before `</TextVariable>` pushes it).
@@ -135,6 +137,13 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 }
                 b"CrossReferenceFormat" => current_xref_format = None,
                 b"PageNumberStyle" | b"Destination" => pending = None,
+                b"EndnoteOption" => in_endnote_option = false,
+                b"EndnoteNumberingStyle"
+                | b"RestartEndnoteNumbering"
+                | b"EndnoteMarkerPositioning"
+                | b"ScopeValue"
+                | b"FrameCreateOption"
+                | b"ShowEndnotePrefixSuffix" => pending = None,
                 _ => {}
             }
         }
@@ -338,6 +347,37 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 {
                     pending = Some(PendingProperty::SectionPageNumberStyle);
                 }
+                // `<EndnoteOption>` (core ADR 170): attributes here, the
+                // enumerations as typed `<Properties>` children below.
+                if e.name().as_ref() == b"EndnoteOption" {
+                    let raw = |name: &[u8]| crate::util::attr_unescaped(&e, name);
+                    out.endnote_options = Some(paged_model::EndnoteOptions {
+                        title: raw(b"EndnoteTitle"),
+                        title_style: attr(&e, b"EndnoteTitleStyle"),
+                        start_at: attr(&e, b"StartEndnoteNumberAt").and_then(|s| s.parse().ok()),
+                        marker_style: attr(&e, b"EndnoteMarkerStyle"),
+                        text_style: attr(&e, b"EndnoteTextStyle"),
+                        separator_text: raw(b"EndnoteSeparatorText"),
+                        prefix: raw(b"EndnotePrefix"),
+                        suffix: raw(b"EndnoteSuffix"),
+                        ..Default::default()
+                    });
+                    in_endnote_option = is_start;
+                }
+                if in_endnote_option && is_start {
+                    let field = match e.name().as_ref() {
+                        b"EndnoteNumberingStyle" => Some("numbering_style"),
+                        b"RestartEndnoteNumbering" => Some("restart"),
+                        b"EndnoteMarkerPositioning" => Some("marker_positioning"),
+                        b"ScopeValue" => Some("scope"),
+                        b"FrameCreateOption" => Some("frame_create"),
+                        b"ShowEndnotePrefixSuffix" => Some("show_prefix_suffix"),
+                        _ => None,
+                    };
+                    if let Some(field) = field {
+                        pending = Some(PendingProperty::Endnote(field));
+                    }
+                }
                 if e.name().as_ref() == b"Destination" && is_start && current_hyperlink.is_some() {
                     pending = Some(PendingProperty::HyperlinkDestination);
                 }
@@ -517,6 +557,19 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                                     current_section.and_then(|i| out.sections.get_mut(i))
                                 {
                                     sec.numbering_style = NumberingStyle::from_idml(text);
+                                }
+                            }
+                            PendingProperty::Endnote(field) => {
+                                if let Some(o) = out.endnote_options.as_mut() {
+                                    let v = Some(text.to_string());
+                                    match field {
+                                        "numbering_style" => o.numbering_style = v,
+                                        "restart" => o.restart = v,
+                                        "marker_positioning" => o.marker_positioning = v,
+                                        "scope" => o.scope = v,
+                                        "frame_create" => o.frame_create = v,
+                                        _ => o.show_prefix_suffix = v,
+                                    }
                                 }
                             }
                             PendingProperty::HyperlinkDestination => {
@@ -835,6 +888,8 @@ fn read_decoration(var: &mut TextVariable, e: &quick_xml::events::BytesStart) {
 enum PendingProperty {
     SectionPageNumberStyle,
     HyperlinkDestination,
+    /// A typed `<Properties>` child of `<EndnoteOption>` (core ADR 170).
+    Endnote(&'static str),
 }
 
 #[cfg(test)]
@@ -921,6 +976,37 @@ mod tests {
         assert_eq!(o.before_cross_reference_separator.as_deref(), Some(". "));
         assert_eq!(o.page_range_separator.as_deref(), Some("^="));
         assert_eq!(o.entry_end_separator.as_deref(), Some(""));
+    }
+
+    /// `<EndnoteOption>` as InDesign 20.0.1 writes it (core ADR 170).
+    #[test]
+    fn reads_the_endnote_options() {
+        let dm = parse_designmap(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<EndnoteOption EndnoteTitle="Endnotes" EndnoteTitleStyle="ParagraphStyle/$ID/NormalParagraphStyle" StartEndnoteNumberAt="3" EndnoteMarkerStyle="CharacterStyle/$ID/[No character style]" EndnoteTextStyle="ParagraphStyle/$ID/NormalParagraphStyle" EndnoteSeparatorText="&#x9;" EndnotePrefix="" EndnoteSuffix="">
+		<Properties>
+			<EndnoteNumberingStyle type="enumeration">LowerRoman</EndnoteNumberingStyle>
+			<RestartEndnoteNumbering type="enumeration">Continuous</RestartEndnoteNumbering>
+			<EndnoteMarkerPositioning type="enumeration">SuperscriptMarker</EndnoteMarkerPositioning>
+			<ScopeValue type="enumeration">EndnoteDocumentScope</ScopeValue>
+			<FrameCreateOption type="enumeration">NewPage</FrameCreateOption>
+			<ShowEndnotePrefixSuffix type="enumeration">NoPrefixSuffix</ShowEndnotePrefixSuffix>
+		</Properties>
+	</EndnoteOption>
+</Document>"#,
+        )
+        .unwrap();
+        let o = dm.endnote_options.expect("EndnoteOption");
+        assert_eq!(o.title.as_deref(), Some("Endnotes"));
+        assert_eq!(o.start_at, Some(3));
+        assert_eq!(o.separator_text.as_deref(), Some("\t"));
+        assert_eq!(o.numbering_style.as_deref(), Some("LowerRoman"));
+        assert_eq!(o.restart.as_deref(), Some("Continuous"));
+        assert_eq!(o.scope.as_deref(), Some("EndnoteDocumentScope"));
+        assert_eq!(o.frame_create.as_deref(), Some("NewPage"));
+        assert_eq!(o.show_prefix_suffix.as_deref(), Some("NoPrefixSuffix"));
+        assert_eq!(o.label(1), "iii");
     }
 
     /// InDesign 20.0.1's cross-reference formats (`xref-probe`, core ADR

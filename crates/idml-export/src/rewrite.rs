@@ -2685,13 +2685,21 @@ pub(crate) fn owned_ids(spread: &Spread) -> std::collections::HashSet<&str> {
     owned
 }
 
-/// True for the six element names that are page items. `<Group>` counts:
-/// it is a page item too, just a container one, and it occupies a z-slot
-/// among its siblings exactly like a rectangle does.
+/// True for the element names that are page items. `<Group>` counts: it
+/// is a page item too, just a container one, and it occupies a z-slot
+/// among its siblings exactly like a rectangle does. So does the
+/// `<EndnoteTextFrame>` the endnote story stands in (core ADR 170), which
+/// the reader takes for a text frame: known here, it is not minted again.
 pub(crate) fn is_page_item_name(name: &[u8]) -> bool {
     matches!(
         name,
-        b"TextFrame" | b"Rectangle" | b"Oval" | b"GraphicLine" | b"Polygon" | b"Group"
+        b"TextFrame"
+            | b"EndnoteTextFrame"
+            | b"Rectangle"
+            | b"Oval"
+            | b"GraphicLine"
+            | b"Polygon"
+            | b"Group"
     )
 }
 
@@ -6334,9 +6342,19 @@ fn write_run_with_notes(
     source: &[(Option<String>, Vec<Event<'static>>)],
 ) -> Result<(), quick_xml::Error> {
     const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
-    if !text.contains(MARK) {
+    const ENDNOTE: char = paged_model::ENDNOTE_REFERENCE_MARKER;
+    if !text.contains(MARK) && !text.contains(ENDNOTE) {
         return write_run_content(writer, text);
     }
+    // The paragraph's endnote references before this run (core ADR 170).
+    let endnotes_before = para.map_or(0, |p| {
+        p.runs
+            .iter()
+            .take_while(|r| !std::ptr::eq(*r, run))
+            .map(|r| r.text.matches(ENDNOTE).count())
+            .sum::<usize>()
+    });
+    let mut e = 0usize;
     // The paragraph's notes, and how many references come before this run.
     let (notes, before): (&[idml_import::story::Footnote], usize) = match para {
         Some(p) => {
@@ -6362,6 +6380,24 @@ fn write_run_with_notes(
     let mut segment = String::new();
     let mut k = 0usize;
     for ch in text.chars() {
+        if ch == ENDNOTE {
+            // InDesign's own element, written from the model: an empty
+            // `<Endnote Self EndnoteTextRange/>` (core ADR 170).
+            if !segment.is_empty() {
+                write_run_content(writer, &segment)?;
+                segment.clear();
+            }
+            if let Some(r) = para.and_then(|p| p.endnote_references.get(endnotes_before + e)) {
+                let mut el = BytesStart::new("Endnote");
+                el.push_attribute(("Self", r.self_id.as_str()));
+                if let Some(range) = &r.text_range {
+                    el.push_attribute(("EndnoteTextRange", range.as_str()));
+                }
+                writer.write_event(Event::Empty(el))?;
+            }
+            e += 1;
+            continue;
+        }
         if ch != MARK {
             segment.push(ch);
             continue;
@@ -6500,6 +6536,24 @@ pub(crate) fn write_run_content_as(
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             }
             paged_model::FOOTNOTE_REFERENCE_MARKER if !in_note => {}
+            // An endnote's reference is its `<Endnote>` element
+            // (`write_run_with_notes`): nothing here.
+            paged_model::ENDNOTE_REFERENCE_MARKER => {}
+            // An endnote's number in the endnote story: `<?ACE 4?>` inside
+            // `<Content>`, the text around it in the same element, as
+            // InDesign writes it (`<Content>\u{FEFF}<?ACE 4?>\ttext…`).
+            paged_model::ENDNOTE_NUMBER_MARKER => {
+                if open {
+                    flush(writer, &mut buf, &mut open)?;
+                }
+                writer.write_event(Event::Start(BytesStart::new("Content")))?;
+                if !buf.is_empty() {
+                    writer.write_event(Event::Text(BytesText::new(&buf)))?;
+                    buf.clear();
+                }
+                writer.write_event(Event::PI(quick_xml::events::BytesPI::new("ACE 4")))?;
+                open = true;
+            }
             paged_model::FOOTNOTE_REFERENCE_MARKER => {
                 flush(writer, &mut buf, &mut open)?;
                 writer.write_event(Event::Start(BytesStart::new("Content")))?;
