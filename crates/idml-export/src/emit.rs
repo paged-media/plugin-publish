@@ -757,9 +757,10 @@ pub(crate) fn paragraph_attrs(p: &idml_import::Paragraph) -> Vec<(&'static str, 
     // children too (`list-overrides`, 2026-10-01). The four list
     // attributes below it reads off the range exactly as off a style,
     // and writes them this way in its own files.
-    let string_attrs: [(&'static str, &Option<String>); 4] = [
+    // Nor `KinsokuSet`, a typed child in InDesign's files (kept as it
+    // stands by the story patch).
+    let string_attrs: [(&'static str, &Option<String>); 3] = [
         ("BulletsAndNumberingListType", &p.bullets_list_type),
-        ("KinsokuSet", &p.kinsoku_set),
         ("BulletsTextAfter", &p.bullets_text_after),
         ("NumberingExpression", &p.numbering_expression),
     ];

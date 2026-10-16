@@ -6135,6 +6135,16 @@ fn rewrite_story_part(
                         };
                         let mark = body.ends_with_br;
                         let wrap = open_sources == 0;
+                        // A range past the model paragraph's last run: its
+                        // text is no longer in the story (the paragraph was
+                        // rewritten whole — an updated table of contents —
+                        // or the run deleted).
+                        let orphan = !current_run_split
+                            && text_run.is_none()
+                            && matches!(
+                                (scope, current_first),
+                                (Some(p), Some(i)) if i >= p.runs.len()
+                            );
                         flush_run_body(
                             &mut writer,
                             &mut body,
@@ -6144,6 +6154,7 @@ fn rewrite_story_part(
                             &mut prev_ended_with_br,
                             !extras.is_empty(),
                             wrap,
+                            orphan,
                         )?;
                         writer.write_event(Event::End(e))?;
                         if let Some(para) = scope {
@@ -6539,6 +6550,9 @@ fn push_run_text(out: &mut String, decoded: &str) {
 /// do not write it here. `wrap_source`: a replaced run tagged with a
 /// hyperlink source may take InDesign's inner `<HyperlinkTextSource>`
 /// (false while a wrapping-form source is open around the range).
+/// `orphan`: the model paragraph has no run at this range's place, so its
+/// text is gone; only its paragraph mark is written (a body holding
+/// foreign markup still replays, rather than lose an object).
 impl RunBody {
     /// Buffer an event of an open `<Footnote>`: into the run's verbatim
     /// replay and into the note's own events.
@@ -6560,6 +6574,7 @@ fn flush_run_body(
     prev_br: &mut bool,
     hold_br: bool,
     wrap_source: bool,
+    orphan: bool,
 ) -> Result<(), quick_xml::Error> {
     if !body.active {
         return Ok(());
@@ -6610,6 +6625,11 @@ fn flush_run_body(
         } else {
             write_text_with_notes(writer, &text, r, para, &body.notes, 0, wrap_source)?;
         }
+        if ends_with_br && !hold_br {
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+        }
+    } else if orphan && !body.foreign {
+        body.events.clear();
         if ends_with_br && !hold_br {
             writer.write_event(Event::Empty(BytesStart::new("Br")))?;
         }

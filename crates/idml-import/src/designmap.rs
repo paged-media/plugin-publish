@@ -27,8 +27,8 @@ pub use paged_model::DesignMap;
 
 pub use paged_model::{
     Article, Bookmark, ColorSettings, CrossReference, DocumentPreference, FootnoteOptions,
-    GridPreference, Hyperlink, HyperlinkDestination, HyperlinkDestinationKind, IndexTopic, Layer,
-    NumberingStyle, Section, SpreadRef, StoryRef, TextVariable,
+    GridPreference, Hyperlink, HyperlinkDestination, HyperlinkDestinationKind, IndexCrossReference,
+    IndexOptions, IndexTopic, Layer, NumberingStyle, Section, SpreadRef, StoryRef, TextVariable,
 };
 
 /// Parse a `designmap.xml` byte slice.
@@ -44,6 +44,9 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // flat common case) records `parent_id` from the stack top but
     // doesn't push, keeping flat documents byte-identical.
     let mut layer_stack: Vec<String> = Vec::new();
+    // Open `<Topic>` elements: InDesign nests a subtopic inside its parent
+    // (core ADR 166), and a topic's `<CrossReference>`s inside it.
+    let mut topic_stack: Vec<String> = Vec::new();
     // W1.4 — the `<TextVariable>` currently being parsed (the
     // wrapping form parks here so its `<TextVariablePreference>`
     // child can fold in before `</TextVariable>` pushes it).
@@ -123,6 +126,9 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 }
                 b"Section" => current_section = None,
                 b"Hyperlink" => current_hyperlink = None,
+                b"Topic" => {
+                    topic_stack.pop();
+                }
                 b"PageNumberStyle" | b"Destination" => pending = None,
                 _ => {}
             }
@@ -394,10 +400,31 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 }
                 if e.name().as_ref() == b"Topic" {
                     if let Some(self_id) = attr(&e, b"Self") {
+                        if let Some(parent) = topic_stack.last() {
+                            out.index_topic_parents
+                                .insert(self_id.clone(), parent.clone());
+                        }
+                        if is_start {
+                            topic_stack.push(self_id.clone());
+                        }
                         out.index_topics.push(IndexTopic {
                             self_id,
                             name: attr(&e, b"Name"),
                             sort_order: attr(&e, b"SortOrder"),
+                        });
+                    }
+                }
+                // A topic's See / See also reference (not a text
+                // `<CrossReferenceSource>`, nor a `<CrossReferenceFormat>`).
+                if e.name().as_ref() == b"CrossReference" {
+                    if let (Some(self_id), Some(topic)) = (attr(&e, b"Self"), topic_stack.last()) {
+                        out.index_cross_references.push(IndexCrossReference {
+                            self_id,
+                            topic: topic.clone(),
+                            referenced_topic: attr(&e, b"ReferencedTopic"),
+                            kind: attr(&e, b"CrossReferenceType"),
+                            custom_type_string: attr(&e, b"CustomTypeString")
+                                .filter(|s| !s.is_empty()),
                         });
                     }
                 }
@@ -493,6 +520,39 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
 /// documents) and the engine's own older fixtures wrote into
 /// `designmap.xml`. One reader serves both parts.
 fn read_preference(e: &quick_xml::events::BytesStart, out: &mut DesignMap) {
+    // `<IndexOptions>`: how Generate Index writes the index (core ADR
+    // 166). Its separators are verbatim: leading and trailing spaces are
+    // the value.
+    if e.name().as_ref() == b"IndexOptions" {
+        let b = |name: &[u8]| attr(e, name).and_then(|s| s.parse::<bool>().ok());
+        let raw = |name: &[u8]| crate::util::attr_unescaped(e, name);
+        out.index_options = Some(IndexOptions {
+            title: raw(b"Title"),
+            title_style: attr(e, b"TitleStyle"),
+            replace_existing_index: b(b"ReplaceExistingIndex"),
+            include_book_documents: b(b"IncludeBookDocuments"),
+            include_hidden_entries: b(b"IncludeHiddenEntries"),
+            index_format: attr(e, b"IndexFormat"),
+            include_section_headings: b(b"IncludeSectionHeadings"),
+            include_empty_index_sections: b(b"IncludeEmptyIndexSections"),
+            level_styles: [
+                attr(e, b"Level1Style"),
+                attr(e, b"Level2Style"),
+                attr(e, b"Level3Style"),
+                attr(e, b"Level4Style"),
+            ],
+            section_heading_style: attr(e, b"SectionHeadingStyle"),
+            page_number_style: attr(e, b"PageNumberStyle"),
+            cross_reference_style: attr(e, b"CrossReferenceStyle"),
+            cross_reference_topic_style: attr(e, b"CrossReferenceTopicStyle"),
+            following_topic_separator: raw(b"FollowingTopicSeparator"),
+            between_entries_separator: raw(b"BetweenEntriesSeparator"),
+            page_range_separator: raw(b"PageRangeSeparator"),
+            between_page_numbers_separator: raw(b"BetweenPageNumbersSeparator"),
+            before_cross_reference_separator: raw(b"BeforeCrossReferenceSeparator"),
+            entry_end_separator: raw(b"EntryEndSeparator"),
+        });
+    }
     if e.name().as_ref() == b"DocumentPreference" {
         let f = |name: &[u8]| -> f32 { attr(e, name).and_then(|s| s.parse().ok()).unwrap_or(0.0) };
         out.document_preference = DocumentPreference {
@@ -762,6 +822,70 @@ mod tests {
         assert_eq!(dm.master_spreads.len(), 1);
         assert_eq!(dm.spreads[0].src, "Spreads/Spread_u1.xml");
         assert_eq!(dm.stories[0].src, "Stories/Story_u10.xml");
+    }
+
+    /// InDesign 20.0.1's index (`index-probe`, core ADR 166): a subtopic
+    /// nests inside its parent, a See reference inside its topic, and the
+    /// options live in `Preferences.xml`.
+    #[test]
+    fn reads_the_index_as_indesign_writes_it() {
+        let dm = parse_designmap(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<Index Self="u135">
+		<Topic Self="u135TopicnApples" SortOrder="" Name="Apples" />
+		<Topic Self="u135TopicnCherries" SortOrder="" Name="Cherries">
+			<Topic Self="u135TopicnCherriesTopicnSour" SortOrder="" Name="Sour" />
+		</Topic>
+		<Topic Self="u135TopicnFruit" SortOrder="" Name="Fruit">
+			<CrossReference Self="u159" ReferencedTopic="u135TopicnApples" CrossReferenceType="See" CustomTypeString="" />
+		</Topic>
+	</Index>
+</Document>"#,
+        )
+        .unwrap();
+        assert_eq!(dm.index_topics.len(), 4);
+        assert_eq!(
+            dm.index_topic_parents
+                .get("u135TopicnCherriesTopicnSour")
+                .map(String::as_str),
+            Some("u135TopicnCherries")
+        );
+        assert_eq!(dm.index_topic_parents.len(), 1);
+        let x = &dm.index_cross_references;
+        assert_eq!(x.len(), 1);
+        assert_eq!(x[0].topic, "u135TopicnFruit");
+        assert_eq!(x[0].referenced_topic.as_deref(), Some("u135TopicnApples"));
+        assert_eq!(x[0].kind.as_deref(), Some("See"));
+        assert_eq!(x[0].custom_type_string, None);
+
+        let mut dm = DesignMap::default();
+        parse_preferences_part(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Preferences xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<IndexOptions Title="Index" TitleStyle="ParagraphStyle/$ID/Index Title" ReplaceExistingIndex="true" IncludeBookDocuments="false" IncludeHiddenEntries="false" IndexFormat="NestedFormat" IncludeSectionHeadings="true" IncludeEmptyIndexSections="false" Level1Style="ParagraphStyle/$ID/Index Level 1" Level2Style="ParagraphStyle/$ID/Index Level 2" Level3Style="ParagraphStyle/$ID/[No paragraph style]" Level4Style="ParagraphStyle/$ID/[No paragraph style]" SectionHeadingStyle="ParagraphStyle/$ID/Index Section Head" PageNumberStyle="CharacterStyle/$ID/[No character style]" CrossReferenceStyle="CharacterStyle/$ID/Index Cross-reference" CrossReferenceTopicStyle="CharacterStyle/$ID/[No character style]" FollowingTopicSeparator="  " BetweenEntriesSeparator="; " PageRangeSeparator="^=" BetweenPageNumbersSeparator=", " BeforeCrossReferenceSeparator=". " EntryEndSeparator="" />
+</idPkg:Preferences>"#,
+            &mut dm,
+        )
+        .unwrap();
+        let o = dm.index_options.expect("IndexOptions");
+        assert_eq!(o.title.as_deref(), Some("Index"));
+        assert_eq!(o.include_section_headings, Some(true));
+        assert_eq!(o.include_empty_index_sections, Some(false));
+        assert_eq!(o.index_format.as_deref(), Some("NestedFormat"));
+        assert_eq!(
+            o.level_styles[1].as_deref(),
+            Some("ParagraphStyle/$ID/Index Level 2")
+        );
+        assert_eq!(
+            o.cross_reference_style.as_deref(),
+            Some("CharacterStyle/$ID/Index Cross-reference")
+        );
+        assert_eq!(o.following_topic_separator.as_deref(), Some("  "));
+        assert_eq!(o.between_page_numbers_separator.as_deref(), Some(", "));
+        assert_eq!(o.before_cross_reference_separator.as_deref(), Some(". "));
+        assert_eq!(o.page_range_separator.as_deref(), Some("^="));
+        assert_eq!(o.entry_end_separator.as_deref(), Some(""));
     }
 
     const LAYERS_SAMPLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>

@@ -63,6 +63,7 @@ fn push_otf(out: &mut Vec<(&'static str, String)>, otf: &idml_import::OtfFeature
             ("OTFContextualAlternate", otf.contextual_alternates),
             ("OTFStylisticAlternate", otf.stylistic_alternate),
             ("OTFHistorical", otf.historical),
+            ("OTFProportionalMetrics", otf.proportional_metrics),
         ],
     );
     push_strs(out, &[("OTFFigureStyle", &otf.figure_style)]);
@@ -196,7 +197,9 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
     push_strs(
         &mut out,
         &[
-            ("KinsokuSet", &s.kinsoku_set),
+            // Not `KinsokuSet`: InDesign writes it as a typed child,
+            // which an unchanged style keeps; an attribute of the
+            // engine's older spelling is still patched.
             ("KinsokuType", &s.kinsoku_type),
             ("MojikumiTable", &s.mojikumi_table),
             ("MojikumiSet", &s.mojikumi_set),
@@ -263,6 +266,8 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
             ("KerningMethod", &s.kerning_method),
             ("RubyPosition", &s.marks.ruby_position),
             ("RubyAlignment", &s.marks.ruby_alignment),
+            ("RubyParentSpacing", &s.marks.ruby_parent_spacing),
+            ("RubyParentOverhangAmount", &s.marks.ruby_overhang_amount),
             ("KentenPosition", &s.marks.kenten_position),
             ("KentenAlignment", &s.marks.kenten_alignment),
         ],
@@ -280,8 +285,10 @@ pub(crate) fn character_style_attrs(s: &CharacterStyleDef) -> Vec<(&'static str,
             ("KentenXScale", m.kenten_x_scale),
             ("KentenYScale", m.kenten_y_scale),
             ("KentenPlacement", m.kenten_placement),
+            ("RubyParentScalingPercent", m.ruby_parent_scaling_percent),
         ],
     );
+    push_bools(&mut out, &[("RubyAutoScaling", m.ruby_auto_scaling)]);
     push_otf(&mut out, &s.otf);
     out
 }
@@ -439,6 +446,13 @@ pub(crate) fn character_style_attr_patch(
         b"RubyYOffset" => Some(preserving_f32_patch(raw, s.marks.ruby_y_offset)),
         b"RubyPosition" => Some(opt_string_patch(&s.marks.ruby_position)),
         b"RubyAlignment" => Some(opt_string_patch(&s.marks.ruby_alignment)),
+        b"RubyParentSpacing" => Some(opt_string_patch(&s.marks.ruby_parent_spacing)),
+        b"RubyParentOverhangAmount" => Some(opt_string_patch(&s.marks.ruby_overhang_amount)),
+        b"RubyAutoScaling" => Some(preserving_bool_patch(raw, s.marks.ruby_auto_scaling)),
+        b"RubyParentScalingPercent" => Some(preserving_f32_patch(
+            raw,
+            s.marks.ruby_parent_scaling_percent,
+        )),
         b"KentenXScale" => Some(preserving_f32_patch(raw, s.marks.kenten_x_scale)),
         b"KentenYScale" => Some(preserving_f32_patch(raw, s.marks.kenten_y_scale)),
         b"KentenPlacement" => Some(preserving_f32_patch(raw, s.marks.kenten_placement)),
@@ -608,6 +622,39 @@ mod tests {
         assert!(matches!(
             character_style_attr_patch(b"RubyFlag", b"1", &off),
             Some(Patch::Set(ref v)) if v == "0"
+        ));
+    }
+
+    /// A ruby's parent spacing, overhang and auto-scaling go out as
+    /// InDesign spells them, and an unchanged source spelling stays.
+    #[test]
+    fn ruby_parent_settings_are_style_attributes() {
+        let s = CharacterStyleDef {
+            marks: paged_model::MarkSettings {
+                ruby_parent_spacing: Some("RubyParentEqualAki".into()),
+                ruby_overhang_amount: Some("RubyOverhangNoLimit".into()),
+                ruby_auto_scaling: Some(true),
+                ruby_parent_scaling_percent: Some(80.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let attrs = character_style_attrs(&s);
+        for (k, v) in [
+            ("RubyParentSpacing", "RubyParentEqualAki"),
+            ("RubyParentOverhangAmount", "RubyOverhangNoLimit"),
+            ("RubyAutoScaling", "true"),
+            ("RubyParentScalingPercent", "80"),
+        ] {
+            assert!(attrs.contains(&(k, v.to_string())), "{k}: {attrs:?}");
+        }
+        assert!(matches!(
+            character_style_attr_patch(b"RubyParentScalingPercent", b"80.0", &s),
+            Some(Patch::Keep)
+        ));
+        assert!(matches!(
+            character_style_attr_patch(b"RubyParentSpacing", b"RubyParent121Aki", &s),
+            Some(Patch::Set(ref v)) if v == "RubyParentEqualAki"
         ));
     }
 

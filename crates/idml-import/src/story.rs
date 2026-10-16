@@ -80,6 +80,7 @@ pub(crate) fn parse_otf_features(e: &quick_xml::events::BytesStart) -> OtfFeatur
         stylistic_sets: attr(e, b"OTFStylisticSets").and_then(|s| s.parse::<i32>().ok()),
         stylistic_alternate: b(b"OTFStylisticAlternate"),
         historical: b(b"OTFHistorical"),
+        proportional_metrics: b(b"OTFProportionalMetrics"),
     }
 }
 
@@ -1317,6 +1318,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             // InDesign ignores the attribute spelling.
                             // An enumeration child, never an attribute:
                             // InDesign ignores `BalanceRaggedLines="true"`.
+                            // InDesign writes the kinsoku set as a typed
+                            // child: `HardKinsoku`, or `Nothing` for none.
+                            (2, b"KinsokuSet") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    if !value.is_empty() {
+                                        p.kinsoku_set = Some(value);
+                                    }
+                                }
+                            }
                             (2, b"BalanceRaggedLines") => {
                                 if let Some(p) = current_paragraph.as_mut() {
                                     p.line_setting.balance =
@@ -2118,7 +2128,9 @@ pub(crate) fn parse_anchored_object_setting(
 /// `AppliedTopic` — without one of those there's nothing to index.
 fn parse_index_marker(e: &quick_xml::events::BytesStart) -> Option<IndexMarker> {
     let topic_name = attr(e, b"TopicName");
-    let applied_topic = attr(e, b"AppliedTopic");
+    // InDesign 20.0.1 names the topic `ReferencedTopic` (core ADR 166);
+    // `AppliedTopic` is the engine's older spelling.
+    let applied_topic = attr(e, b"AppliedTopic").or_else(|| attr(e, b"ReferencedTopic"));
     // At least one of the two is required for the marker to mean
     // something. When both are absent the element is a structural
     // placeholder we can safely drop.
@@ -3551,6 +3563,30 @@ mod tests {
         );
     }
 
+    /// InDesign 20.0.1 writes the kinsoku set as a typed child
+    /// (core vertical-text-probe; the census finds no other spelling).
+    #[test]
+    fn the_kinsoku_set_reads_as_indesign_writes_it() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange KinsokuType="KinsokuPushInFirst">
+            <Properties><KinsokuSet type="enumeration">HardKinsoku</KinsokuSet></Properties>
+            <CharacterStyleRange><Content>x</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let p = &parse_story(xml).unwrap().paragraphs[0];
+        assert_eq!(p.kinsoku_set.as_deref(), Some("HardKinsoku"));
+        let styles = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+<ParagraphStyle Self="ParagraphStyle/P" Name="P" KinsokuType="KinsokuPushInFirst"><Properties><KinsokuSet type="enumeration">Nothing</KinsokuSet></Properties></ParagraphStyle>
+</RootParagraphStyleGroup></idPkg:Styles>"#;
+        let sheet = crate::styles::parse_stylesheet(styles).unwrap();
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/P"]
+                .kinsoku_set
+                .as_deref(),
+            Some("Nothing")
+        );
+    }
+
     #[test]
     fn kinsoku_and_mojikumi_default_to_none_when_absent() {
         let xml = br#"<Story Self="u1">
@@ -3724,6 +3760,10 @@ mod tests {
                 RubyYOffset="-2"
                 RubyPosition="BelowLeft"
                 RubyAlignment="RubyEqualAki"
+                RubyParentSpacing="RubyParentFullJustify"
+                RubyParentOverhangAmount="RubyOverhangHalfRuby"
+                RubyAutoScaling="true"
+                RubyParentScalingPercent="80"
                 KentenKind="Custom"
                 KentenCustomCharacter="★"
                 KentenFontSize="12"
@@ -3764,6 +3804,10 @@ mod tests {
                 ruby_alignment: Some("RubyEqualAki".into()),
                 ruby_font: Some("Kozuka Gothic Pr6N".into()),
                 ruby_font_style: Some("B".into()),
+                ruby_parent_spacing: Some("RubyParentFullJustify".into()),
+                ruby_overhang_amount: Some("RubyOverhangHalfRuby".into()),
+                ruby_auto_scaling: Some(true),
+                ruby_parent_scaling_percent: Some(80.0),
                 kenten_x_scale: Some(50.0),
                 kenten_y_scale: Some(200.0),
                 kenten_placement: Some(5.0),
@@ -3887,6 +3931,27 @@ mod tests {
         assert_eq!(
             para.index_markers[1].applied_topic.as_deref(),
             Some("Topic/u42")
+        );
+    }
+
+    /// InDesign 20.0.1 writes a page reference's topic as
+    /// `ReferencedTopic` (`index-probe`, core ADR 166).
+    #[test]
+    fn a_page_reference_names_its_topic_as_indesign_writes_it() {
+        let xml = br#"<Story>
+          <ParagraphStyleRange>
+            <CharacterStyleRange>
+              <PageReference Self="u151" PageReferenceType="CurrentPage" ReferencedTopic="u135TopicnApples" Id="1" />
+              <Content>Apples and cherries grow here.</Content>
+            </CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let markers = &s.paragraphs[0].index_markers;
+        assert_eq!(markers.len(), 1);
+        assert_eq!(
+            markers[0].applied_topic.as_deref(),
+            Some("u135TopicnApples")
         );
     }
 
