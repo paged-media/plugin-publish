@@ -277,8 +277,17 @@ pub fn import_idml_archive(archive: &SourceArchive) -> Result<paged_scene::Docum
         let raw = archive
             .entry(&story_ref.src)
             .ok_or_else(|| OpenError::MissingEntry(story_ref.src.clone()))?;
-        let parsed = parse_story(raw)?;
+        let mut parsed = parse_story(raw)?;
         let self_id = paged_scene::derive_story_id(&story_ref.src);
+        // An editorial note's id is its story's ordinal; with the story's
+        // id it is the document's (core ADR 172).
+        for note in parsed
+            .paragraphs
+            .iter_mut()
+            .flat_map(|p| p.notes.iter_mut())
+        {
+            note.id = format!("{self_id}{}", note.id);
+        }
         // Inline text-destination markers (InDesign's spelling) become
         // text-anchor destinations naming this story — the designmap
         // spelling the engine's older fixtures used maps to the same

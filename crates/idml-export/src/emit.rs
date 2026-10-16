@@ -36,7 +36,7 @@ use std::io::Cursor;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
-use idml_import::{CharacterRun, Spread, Story};
+use idml_import::{CharacterRun, Paragraph, Spread, Story};
 
 use crate::rewrite;
 
@@ -212,7 +212,7 @@ pub(crate) fn write_paragraphs(
         for (ri, r) in p.runs.iter().enumerate() {
             rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
             emit_applied_font(writer, &r.font)?;
-            write_run_body(writer, r, true)?;
+            write_run_body(writer, r, Some(p), true)?;
             if mark_on_runs && ri == last_run {
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             }
@@ -1127,6 +1127,7 @@ pub(crate) const NEW_INSTANCE_SELF: &str = "paged-new-text-variable-instance";
 pub(crate) fn write_run_body(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     r: &CharacterRun,
+    para: Option<&Paragraph>,
     wrap_source: bool,
 ) -> Result<(), quick_xml::Error> {
     if let Some(variable) = &r.text_variable {
@@ -1163,6 +1164,18 @@ pub(crate) fn write_run_body(
             )?;
             rewrite::write_run_content(writer, &r.text)?;
             writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
+        }
+        _ if r.text.contains(paged_model::NOTE_MARKER) => {
+            // An editorial note in a story with no source part (core ADR
+            // 172): written from the model.
+            rewrite::write_run_with_notes(
+                writer,
+                &r.text,
+                r,
+                para,
+                &rewrite::RunSources::default(),
+                &mut rewrite::RunMarkers::default(),
+            )?
         }
         _ => rewrite::write_run_content(writer, &r.text)?,
     }

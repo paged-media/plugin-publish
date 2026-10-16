@@ -55,7 +55,7 @@ pub use paged_model::{
 
 pub use paged_model::{
     AUTO_PAGE_NUMBER_MARKER, ENDNOTE_NUMBER_MARKER, ENDNOTE_REFERENCE_MARKER,
-    FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER, PREVIOUS_PAGE_NUMBER_MARKER,
+    FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER, NOTE_MARKER, PREVIOUS_PAGE_NUMBER_MARKER,
     SECTION_MARKER,
 };
 
@@ -364,6 +364,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // itself does not insert any character into the host run, so
     // the surrounding flow is uninterrupted.
     let mut suppress_depth: u32 = 0;
+    // The editorial `<Note>` being read (core ADR 172): suppressed from
+    // the flow like the rest, but its text is the note's. `note_content`
+    // is true inside one of its `<Content>`s; `notes_read` numbers the
+    // story's notes for their ids.
+    let mut note: Option<paged_model::Note> = None;
+    let mut note_content = false;
+    let mut notes_read = 0usize;
     // Parallel to `anchored_stack`: tracks whether the top frame's
     // `bounds` were derived from a `<PathPointType>` chain (`true`)
     // or from a `GeometricBounds` attribute (`false`). The
@@ -444,6 +451,35 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
             .map_or(0, |p| p.runs.iter().map(|r| r.text.chars().count()).sum());
         let open = current_run.as_ref().map_or(0, |r| r.text.chars().count());
         (pushed + open) as u32
+    }
+
+    // An editorial note opening (core ADR 172): its place, a
+    // `NOTE_MARKER` in the host run, and the note with InDesign's
+    // attributes. Its id is the story's ordinal (`Note<k>`); the package
+    // reader prefixes the story's id.
+    fn open_note(
+        e: &quick_xml::events::BytesStart,
+        current_paragraph: &Option<Paragraph>,
+        current_run: &mut Option<CharacterRun>,
+        pending_breaks: &mut usize,
+        notes_read: &mut usize,
+    ) -> paged_model::Note {
+        let anchor = anchor_here(current_paragraph, current_run, pending_breaks);
+        if let Some(run) = current_run.as_mut() {
+            run.text.push(NOTE_MARKER);
+        }
+        let id = format!("Note{notes_read}");
+        *notes_read += 1;
+        paged_model::Note {
+            id,
+            anchor,
+            text: String::new(),
+            collapsed: attr(e, b"Collapsed").as_deref() == Some("true"),
+            user_name: attr(e, b"UserName"),
+            document_user: attr(e, b"AppliedDocumentUser"),
+            creation_date: attr(e, b"CreationDate"),
+            modification_date: attr(e, b"ModificationDate"),
+        }
     }
 
     // Helper: pop the top anchored frame and attach it to its
@@ -532,6 +568,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // depth on every child so the matching End pairs
                 // up. Skip the body handlers entirely.
                 if suppress_depth > 0 {
+                    if note.is_some() && name == b"Content" {
+                        note_content = true;
+                    }
                     suppress_depth += 1;
                     buf.clear();
                     continue;
@@ -543,6 +582,18 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // nested paragraph and character ranges, which read as body
                 // text derailed the whole story. Inserted and moved text is
                 // the story's text; its `<Change>` wrapper is transparent.
+                // An editorial note (core ADR 172) is a character of the
+                // text where it stands — InDesign keeps a U+FEFF there —
+                // that prints nothing; its text is the note's.
+                if name == b"Note" {
+                    note = Some(open_note(
+                        &e,
+                        &current_paragraph,
+                        &mut current_run,
+                        &mut pending_breaks,
+                        &mut notes_read,
+                    ));
+                }
                 if matches!(name, b"HiddenText" | b"Note") || is_tracked_deletion(&e) {
                     suppress_depth = 1;
                     buf.clear();
@@ -1242,7 +1293,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     continue;
                 }
                 if suppress_depth > 0 {
+                    if name == b"Content" {
+                        note_content = false;
+                    }
                     suppress_depth -= 1;
+                    if suppress_depth == 0 {
+                        if let (Some(n), Some(p)) = (note.take(), current_paragraph.as_mut()) {
+                            p.notes.push(n);
+                        }
+                    }
                     buf.clear();
                     continue;
                 }
@@ -1635,6 +1694,24 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // (`<Br/>` / `<Tab/>` / `<TextVariableInstance/>`)
                 // nested inside an open suppressed subtree are
                 // also dropped to keep the wrapper truly silent.
+                // A note's paragraphs break at its `<Br/>`s; an empty
+                // `<Note/>` is a note of no text.
+                if name == b"Br" {
+                    if let Some(n) = note.as_mut() {
+                        n.text.push('\r');
+                    }
+                } else if name == b"Note" && suppress_depth == 0 {
+                    let n = open_note(
+                        &e,
+                        &current_paragraph,
+                        &mut current_run,
+                        &mut pending_breaks,
+                        &mut notes_read,
+                    );
+                    if let Some(p) = current_paragraph.as_mut() {
+                        p.notes.push(n);
+                    }
+                }
                 if suppress_depth > 0
                     || matches!(name, b"HiddenText" | b"Note")
                     || is_tracked_deletion(&e)
@@ -1928,7 +2005,14 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 } // close inner `match name { ... }`
             }
             Event::Text(t) => {
-                if in_content {
+                if note_content {
+                    if let Some(n) = note.as_mut() {
+                        let raw = t
+                            .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                            .unwrap_or_default();
+                        n.text.push_str(&raw);
+                    }
+                } else if in_content {
                     if let Some(run) = current_run.as_mut() {
                         // A mark with content after it was interior after
                         // all: it is a break inside the paragraph, so it
@@ -1958,7 +2042,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // text (apostrophes never parsed → never rendered,
                 // never round-tripped). Resolve the predefined
                 // five + numeric references and append.
-                if in_content || properties_field.is_some() {
+                if note_content {
+                    let name = String::from_utf8_lossy(r.as_ref());
+                    if let (Some(n), Ok(c)) = (
+                        note.as_mut(),
+                        quick_xml::escape::unescape(&format!("&{name};")),
+                    ) {
+                        n.text.push_str(&c);
+                    }
+                } else if in_content || properties_field.is_some() {
                     let name = String::from_utf8_lossy(r.as_ref());
                     let resolved = quick_xml::escape::unescape(&format!("&{name};"))
                         .map(|c| c.into_owned())
@@ -2613,7 +2705,10 @@ mod tests {
     }
 
     #[test]
-    fn track5c_note_skipped() {
+    fn track5c_note_is_its_place_and_its_text_is_the_notes() {
+        // A note prints nothing, but it is a character of the text where
+        // it stands, as InDesign keeps one (core ADR 172): its marker,
+        // and its text on the paragraph's note.
         let xml = br#"<Story>
           <ParagraphStyleRange>
             <CharacterStyleRange>
@@ -2624,7 +2719,13 @@ mod tests {
         </Story>"#;
         let s = parse_story(xml).unwrap();
         assert_eq!(s.paragraphs[0].runs.len(), 1);
-        assert_eq!(s.paragraphs[0].runs[0].text, "visible");
+        assert_eq!(
+            s.paragraphs[0].runs[0].text,
+            format!("{NOTE_MARKER}visible")
+        );
+        let notes = &s.paragraphs[0].notes;
+        assert_eq!(notes.len(), 1);
+        assert_eq!((notes[0].anchor, notes[0].text.as_str()), (0, "annotation"));
     }
 
     #[test]
