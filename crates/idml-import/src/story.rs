@@ -1318,6 +1318,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             // InDesign ignores the attribute spelling.
                             // An enumeration child, never an attribute:
                             // InDesign ignores `BalanceRaggedLines="true"`.
+                            // InDesign writes the kinsoku set as a typed
+                            // child: `HardKinsoku`, or `Nothing` for none.
+                            (2, b"KinsokuSet") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    if !value.is_empty() {
+                                        p.kinsoku_set = Some(value);
+                                    }
+                                }
+                            }
                             (2, b"BalanceRaggedLines") => {
                                 if let Some(p) = current_paragraph.as_mut() {
                                     p.line_setting.balance =
@@ -3510,6 +3519,30 @@ mod tests {
         assert_eq!(
             p.mojikumi_set.as_deref(),
             Some("MojikumiSet/$ID/SomeOldSet")
+        );
+    }
+
+    /// InDesign 20.0.1 writes the kinsoku set as a typed child
+    /// (core vertical-text-probe; the census finds no other spelling).
+    #[test]
+    fn the_kinsoku_set_reads_as_indesign_writes_it() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange KinsokuType="KinsokuPushInFirst">
+            <Properties><KinsokuSet type="enumeration">HardKinsoku</KinsokuSet></Properties>
+            <CharacterStyleRange><Content>x</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let p = &parse_story(xml).unwrap().paragraphs[0];
+        assert_eq!(p.kinsoku_set.as_deref(), Some("HardKinsoku"));
+        let styles = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+<ParagraphStyle Self="ParagraphStyle/P" Name="P" KinsokuType="KinsokuPushInFirst"><Properties><KinsokuSet type="enumeration">Nothing</KinsokuSet></Properties></ParagraphStyle>
+</RootParagraphStyleGroup></idPkg:Styles>"#;
+        let sheet = crate::styles::parse_stylesheet(styles).unwrap();
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/P"]
+                .kinsoku_set
+                .as_deref(),
+            Some("Nothing")
         );
     }
 

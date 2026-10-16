@@ -225,6 +225,9 @@ enum CurrentProperty {
     /// `<BalanceRaggedLines type="enumeration">FullyBalanced</…>` —
     /// InDesign's only spelling (ADR 153). Paragraph-only.
     BalanceRaggedLines,
+    /// `<KinsokuSet type="enumeration">HardKinsoku</…>` (or `Nothing`, no
+    /// kinsoku) — the spelling InDesign writes. Paragraph-only.
+    KinsokuSet,
     /// `<BulletsCharacterStyle type="object">CharacterStyle/X</…>` — the
     /// only spelling InDesign reads (`list-overrides` o14/o15, 2026-10-01).
     /// Paragraph-only.
@@ -448,6 +451,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"BalanceRaggedLines" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
                     pending_property = Some(CurrentProperty::BalanceRaggedLines);
                 }
+                b"KinsokuSet" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
+                    pending_property = Some(CurrentProperty::KinsokuSet);
+                }
                 b"BulletsCharacterStyle"
                     if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
                 {
@@ -575,6 +581,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                             p.line_setting.balance =
                                                 paged_model::BalanceRaggedLines::from_idml(&text);
                                         }
+                                        CurrentProperty::KinsokuSet => {
+                                            p.kinsoku_set = Some(text);
+                                        }
                                         // The child beats an attribute of
                                         // ours: InDesign ignores the latter.
                                         CurrentProperty::BulletsCharacterStyle => {
@@ -640,6 +649,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         | CurrentProperty::AppliedNumberingList
                                         | CurrentProperty::SpanSplitColumnCount
                                         | CurrentProperty::BalanceRaggedLines
+                                        | CurrentProperty::KinsokuSet
                                         | CurrentProperty::BulletsCharacterStyle
                                         | CurrentProperty::NumberingCharacterStyle
                                         | CurrentProperty::BulletsTextAfter => {}

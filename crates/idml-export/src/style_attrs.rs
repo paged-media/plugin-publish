@@ -197,7 +197,9 @@ pub(crate) fn paragraph_style_attrs(s: &ParagraphStyleDef) -> Vec<(&'static str,
     push_strs(
         &mut out,
         &[
-            ("KinsokuSet", &s.kinsoku_set),
+            // Not `KinsokuSet`: InDesign writes it as a typed child,
+            // which an unchanged style keeps; an attribute of the
+            // engine's older spelling is still patched.
             ("KinsokuType", &s.kinsoku_type),
             ("MojikumiTable", &s.mojikumi_table),
             ("MojikumiSet", &s.mojikumi_set),
