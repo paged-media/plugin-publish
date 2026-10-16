@@ -85,11 +85,14 @@ mod emit;
 pub mod face;
 pub mod fonts;
 mod footnote_option;
+mod frame_fitting;
 pub mod guides;
 pub mod images;
+mod inline_objects;
 mod masters;
 mod navigation;
 pub mod nested_styles;
+mod overprint;
 mod page_labels;
 mod paged;
 mod paragraph_props;
@@ -180,6 +183,25 @@ pub enum WriteError {
         #[source]
         source: quick_xml::Error,
     },
+}
+
+/// Cut every run of `doc` where this writer cuts it in IDML: at its next
+/// and previous page numbers, each of which InDesign keeps in a range of
+/// its own that names the flavour (`PageNumberType`). Story text and
+/// table cells, nested tables included.
+///
+/// For a model restored from a `.paged` NATIVE part. Its runs are the
+/// engine's own — a next page number typed into a sentence is one run —
+/// while the IDML parts saved beside it hold that run as several ranges,
+/// and the next export patches those parts range by range: the run met
+/// its own pieces as runs it did not have and was written twice. Cut, the
+/// model agrees run for run with the parts, as a re-parse of them would.
+/// Text and attributes are unchanged; a hyperlink source stays on the
+/// first piece, as it is written.
+pub fn cut_page_number_runs(doc: &mut Document) {
+    for story in &mut doc.stories {
+        emit::cut_page_number_runs(&mut story.story.paragraphs);
+    }
 }
 
 /// Re-serialize `doc` back into an IDML package, carrying through the
