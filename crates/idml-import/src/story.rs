@@ -80,6 +80,7 @@ pub(crate) fn parse_otf_features(e: &quick_xml::events::BytesStart) -> OtfFeatur
         stylistic_sets: attr(e, b"OTFStylisticSets").and_then(|s| s.parse::<i32>().ok()),
         stylistic_alternate: b(b"OTFStylisticAlternate"),
         historical: b(b"OTFHistorical"),
+        proportional_metrics: b(b"OTFProportionalMetrics"),
     }
 }
 
@@ -1317,6 +1318,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             // InDesign ignores the attribute spelling.
                             // An enumeration child, never an attribute:
                             // InDesign ignores `BalanceRaggedLines="true"`.
+                            // InDesign writes the kinsoku set as a typed
+                            // child: `HardKinsoku`, or `Nothing` for none.
+                            (2, b"KinsokuSet") => {
+                                if let Some(p) = current_paragraph.as_mut() {
+                                    if !value.is_empty() {
+                                        p.kinsoku_set = Some(value);
+                                    }
+                                }
+                            }
                             (2, b"BalanceRaggedLines") => {
                                 if let Some(p) = current_paragraph.as_mut() {
                                     p.line_setting.balance =
@@ -3512,6 +3522,30 @@ mod tests {
         );
     }
 
+    /// InDesign 20.0.1 writes the kinsoku set as a typed child
+    /// (core vertical-text-probe; the census finds no other spelling).
+    #[test]
+    fn the_kinsoku_set_reads_as_indesign_writes_it() {
+        let xml = br#"<Story Self="u1">
+          <ParagraphStyleRange KinsokuType="KinsokuPushInFirst">
+            <Properties><KinsokuSet type="enumeration">HardKinsoku</KinsokuSet></Properties>
+            <CharacterStyleRange><Content>x</Content></CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let p = &parse_story(xml).unwrap().paragraphs[0];
+        assert_eq!(p.kinsoku_set.as_deref(), Some("HardKinsoku"));
+        let styles = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
+<ParagraphStyle Self="ParagraphStyle/P" Name="P" KinsokuType="KinsokuPushInFirst"><Properties><KinsokuSet type="enumeration">Nothing</KinsokuSet></Properties></ParagraphStyle>
+</RootParagraphStyleGroup></idPkg:Styles>"#;
+        let sheet = crate::styles::parse_stylesheet(styles).unwrap();
+        assert_eq!(
+            sheet.paragraph_styles["ParagraphStyle/P"]
+                .kinsoku_set
+                .as_deref(),
+            Some("Nothing")
+        );
+    }
+
     #[test]
     fn kinsoku_and_mojikumi_default_to_none_when_absent() {
         let xml = br#"<Story Self="u1">
@@ -3685,6 +3719,10 @@ mod tests {
                 RubyYOffset="-2"
                 RubyPosition="BelowLeft"
                 RubyAlignment="RubyEqualAki"
+                RubyParentSpacing="RubyParentFullJustify"
+                RubyParentOverhangAmount="RubyOverhangHalfRuby"
+                RubyAutoScaling="true"
+                RubyParentScalingPercent="80"
                 KentenKind="Custom"
                 KentenCustomCharacter="★"
                 KentenFontSize="12"
@@ -3725,6 +3763,10 @@ mod tests {
                 ruby_alignment: Some("RubyEqualAki".into()),
                 ruby_font: Some("Kozuka Gothic Pr6N".into()),
                 ruby_font_style: Some("B".into()),
+                ruby_parent_spacing: Some("RubyParentFullJustify".into()),
+                ruby_overhang_amount: Some("RubyOverhangHalfRuby".into()),
+                ruby_auto_scaling: Some(true),
+                ruby_parent_scaling_percent: Some(80.0),
                 kenten_x_scale: Some(50.0),
                 kenten_y_scale: Some(200.0),
                 kenten_placement: Some(5.0),

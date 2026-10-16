@@ -225,6 +225,9 @@ enum CurrentProperty {
     /// `<BalanceRaggedLines type="enumeration">FullyBalanced</…>` —
     /// InDesign's only spelling (ADR 153). Paragraph-only.
     BalanceRaggedLines,
+    /// `<KinsokuSet type="enumeration">HardKinsoku</…>` (or `Nothing`, no
+    /// kinsoku) — the spelling InDesign writes. Paragraph-only.
+    KinsokuSet,
     /// `<BulletsCharacterStyle type="object">CharacterStyle/X</…>` — the
     /// only spelling InDesign reads (`list-overrides` o14/o15, 2026-10-01).
     /// Paragraph-only.
@@ -448,6 +451,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"BalanceRaggedLines" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
                     pending_property = Some(CurrentProperty::BalanceRaggedLines);
                 }
+                b"KinsokuSet" if matches!(current_style, Some(CurrentStyle::Paragraph)) => {
+                    pending_property = Some(CurrentProperty::KinsokuSet);
+                }
                 b"BulletsCharacterStyle"
                     if matches!(current_style, Some(CurrentStyle::Paragraph)) =>
                 {
@@ -575,6 +581,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                             p.line_setting.balance =
                                                 paged_model::BalanceRaggedLines::from_idml(&text);
                                         }
+                                        CurrentProperty::KinsokuSet => {
+                                            p.kinsoku_set = Some(text);
+                                        }
                                         // The child beats an attribute of
                                         // ours: InDesign ignores the latter.
                                         CurrentProperty::BulletsCharacterStyle => {
@@ -640,6 +649,7 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                                         | CurrentProperty::AppliedNumberingList
                                         | CurrentProperty::SpanSplitColumnCount
                                         | CurrentProperty::BalanceRaggedLines
+                                        | CurrentProperty::KinsokuSet
                                         | CurrentProperty::BulletsCharacterStyle
                                         | CurrentProperty::NumberingCharacterStyle
                                         | CurrentProperty::BulletsTextAfter => {}
@@ -1008,7 +1018,9 @@ fn qualify_parent(kind: &str, parent: String) -> String {
 /// `tools/indesign-export/ruby-kenten-probe`): `RubyFontSize`,
 /// `RubyXScale` / `RubyYScale`, `RubyXOffset` / `RubyYOffset`,
 /// `RubyPosition`, `RubyAlignment`, `KentenXScale` / `KentenYScale`,
-/// `KentenPlacement`, `KentenPosition`, `KentenAlignment`. The faces
+/// `KentenPlacement`, `KentenPosition`, `KentenAlignment`,
+/// `RubyParentSpacing`, `RubyParentOverhangAmount`, `RubyAutoScaling`,
+/// `RubyParentScalingPercent`. The faces
 /// (`RubyFont`, `KentenFont` and their styles) are `<Properties>`
 /// children in InDesign's IDML, as `AppliedFont` is, and are read there.
 pub(crate) fn mark_settings(e: &quick_xml::events::BytesStart) -> paged_model::MarkSettings {
@@ -1021,15 +1033,18 @@ pub(crate) fn mark_settings(e: &quick_xml::events::BytesStart) -> paged_model::M
         ruby_y_offset: num(b"RubyYOffset"),
         ruby_position: attr(e, b"RubyPosition"),
         ruby_alignment: attr(e, b"RubyAlignment"),
-        ruby_font: None,
-        ruby_font_style: None,
         kenten_x_scale: num(b"KentenXScale"),
         kenten_y_scale: num(b"KentenYScale"),
         kenten_placement: num(b"KentenPlacement"),
         kenten_position: attr(e, b"KentenPosition"),
         kenten_alignment: attr(e, b"KentenAlignment"),
-        kenten_font: None,
-        kenten_font_style: None,
+        ruby_parent_spacing: attr(e, b"RubyParentSpacing"),
+        ruby_overhang_amount: attr(e, b"RubyParentOverhangAmount"),
+        ruby_auto_scaling: attr(e, b"RubyAutoScaling").and_then(|s| s.parse().ok()),
+        ruby_parent_scaling_percent: num(b"RubyParentScalingPercent"),
+        // The faces are read from <Properties>; anything core adds later
+        // starts unset here rather than failing to build.
+        ..Default::default()
     }
 }
 
@@ -3232,7 +3247,7 @@ mod tests {
     #[test]
     fn a_paragraph_style_reads_ligatures_kerning_and_opentype() {
         let xml = br#"<idPkg:Styles xmlns:idPkg="x"><RootParagraphStyleGroup>
-          <ParagraphStyle Self="ParagraphStyle/OTF" Name="OTF" Ligatures="false" KerningMethod="$ID/Optical" OTFFigureStyle="ProportionalOldstyle" OTFOrdinal="true" OTFFraction="true" OTFDiscretionaryLigature="true" OTFTitling="true" OTFSlashedZero="true" OTFStylisticSets="5" OTFHistorical="true" OTFContextualAlternate="false" OTFSwash="true" OTFStylisticAlternate="true"/>
+          <ParagraphStyle Self="ParagraphStyle/OTF" Name="OTF" Ligatures="false" KerningMethod="$ID/Optical" OTFFigureStyle="ProportionalOldstyle" OTFOrdinal="true" OTFFraction="true" OTFDiscretionaryLigature="true" OTFTitling="true" OTFSlashedZero="true" OTFStylisticSets="5" OTFHistorical="true" OTFContextualAlternate="false" OTFSwash="true" OTFStylisticAlternate="true" OTFProportionalMetrics="true"/>
           <ParagraphStyle Self="ParagraphStyle/Child" Name="Child" OTFSwash="false"><Properties><BasedOn type="object">ParagraphStyle/OTF</BasedOn></Properties></ParagraphStyle>
         </RootParagraphStyleGroup></idPkg:Styles>"#;
         let s = parse_stylesheet(xml).unwrap();
@@ -3240,6 +3255,7 @@ mod tests {
         assert_eq!(p.ligatures_on, Some(false));
         assert_eq!(p.kerning_method.as_deref(), Some("$ID/Optical"));
         assert_eq!(p.otf.historical, Some(true));
+        assert_eq!(p.otf.proportional_metrics, Some(true));
         assert_eq!(p.otf.stylistic_alternate, Some(true));
         assert_eq!(p.otf.contextual_alternates, Some(false));
         assert_eq!(p.otf.figure_style.as_deref(), Some("ProportionalOldstyle"));
