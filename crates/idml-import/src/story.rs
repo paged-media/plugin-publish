@@ -2107,7 +2107,9 @@ pub(crate) fn parse_anchored_object_setting(
 /// `AppliedTopic` — without one of those there's nothing to index.
 fn parse_index_marker(e: &quick_xml::events::BytesStart) -> Option<IndexMarker> {
     let topic_name = attr(e, b"TopicName");
-    let applied_topic = attr(e, b"AppliedTopic");
+    // InDesign 20.0.1 names the topic `ReferencedTopic` (core ADR 166);
+    // `AppliedTopic` is the engine's older spelling.
+    let applied_topic = attr(e, b"AppliedTopic").or_else(|| attr(e, b"ReferencedTopic"));
     // At least one of the two is required for the marker to mean
     // something. When both are absent the element is a structural
     // placeholder we can safely drop.
@@ -3846,6 +3848,27 @@ mod tests {
         assert_eq!(
             para.index_markers[1].applied_topic.as_deref(),
             Some("Topic/u42")
+        );
+    }
+
+    /// InDesign 20.0.1 writes a page reference's topic as
+    /// `ReferencedTopic` (`index-probe`, core ADR 166).
+    #[test]
+    fn a_page_reference_names_its_topic_as_indesign_writes_it() {
+        let xml = br#"<Story>
+          <ParagraphStyleRange>
+            <CharacterStyleRange>
+              <PageReference Self="u151" PageReferenceType="CurrentPage" ReferencedTopic="u135TopicnApples" Id="1" />
+              <Content>Apples and cherries grow here.</Content>
+            </CharacterStyleRange>
+          </ParagraphStyleRange>
+        </Story>"#;
+        let s = parse_story(xml).unwrap();
+        let markers = &s.paragraphs[0].index_markers;
+        assert_eq!(markers.len(), 1);
+        assert_eq!(
+            markers[0].applied_topic.as_deref(),
+            Some("u135TopicnApples")
         );
     }
 
