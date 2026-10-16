@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 122141,
+      "covered": 128376,
       "total": 633952,
-      "value": 0.192666
+      "value": 0.202501
     },
     "impactImport": {
-      "covered": 25403,
+      "covered": 25407,
       "total": 54667,
-      "value": 0.464686
+      "value": 0.464759
     },
     "weightedExport": {
       "covered": 90555,
@@ -23,7 +23,7 @@
       "value": 0.142842
     },
     "misplacedReads": 30,
-    "unseenReads": 340,
+    "unseenReads": 347,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -276,6 +276,28 @@
     "Resources/Preferences|GridPreference@BaselineStart|attr",
     "Resources/Preferences|GridPreference@HorizontalGridlineDivision|attr",
     "Resources/Preferences|GridPreference@VerticalGridlineDivision|attr",
+    "Resources/Preferences|IndexOptions@BeforeCrossReferenceSeparator|attr",
+    "Resources/Preferences|IndexOptions@BetweenEntriesSeparator|attr",
+    "Resources/Preferences|IndexOptions@BetweenPageNumbersSeparator|attr",
+    "Resources/Preferences|IndexOptions@CrossReferenceStyle|attr",
+    "Resources/Preferences|IndexOptions@CrossReferenceTopicStyle|attr",
+    "Resources/Preferences|IndexOptions@EntryEndSeparator|attr",
+    "Resources/Preferences|IndexOptions@FollowingTopicSeparator|attr",
+    "Resources/Preferences|IndexOptions@IncludeBookDocuments|attr",
+    "Resources/Preferences|IndexOptions@IncludeEmptyIndexSections|attr",
+    "Resources/Preferences|IndexOptions@IncludeHiddenEntries|attr",
+    "Resources/Preferences|IndexOptions@IncludeSectionHeadings|attr",
+    "Resources/Preferences|IndexOptions@IndexFormat|attr",
+    "Resources/Preferences|IndexOptions@Level1Style|attr",
+    "Resources/Preferences|IndexOptions@Level2Style|attr",
+    "Resources/Preferences|IndexOptions@Level3Style|attr",
+    "Resources/Preferences|IndexOptions@Level4Style|attr",
+    "Resources/Preferences|IndexOptions@PageNumberStyle|attr",
+    "Resources/Preferences|IndexOptions@PageRangeSeparator|attr",
+    "Resources/Preferences|IndexOptions@ReplaceExistingIndex|attr",
+    "Resources/Preferences|IndexOptions@SectionHeadingStyle|attr",
+    "Resources/Preferences|IndexOptions@TitleStyle|attr",
+    "Resources/Preferences|IndexOptions@Title|attr",
     "Resources/Preferences|TransparencyPreference@GlobalLightAltitude|attr",
     "Resources/Preferences|TransparencyPreference@GlobalLightAngle|attr",
     "Resources/Styles|AnchoredObjectSetting@AnchorPoint|attr",
@@ -523,6 +545,7 @@
     "Resources/Styles|Stripe@Width|attr",
     "Resources/Styles|StripedStrokeStyle@Name|attr",
     "Resources/Styles|StripedStrokeStyle@Self|attr",
+    "Resources/Styles|TOCStyle@CreateBookmarks|attr",
     "Resources/Styles|TOCStyle@IncludeBookDocuments|attr",
     "Resources/Styles|TOCStyle@IncludeHidden|attr",
     "Resources/Styles|TOCStyle@Name|attr",
@@ -537,6 +560,7 @@
     "Resources/Styles|TOCStyleEntry@PageNumberPosition|attr",
     "Resources/Styles|TOCStyleEntry@PageNumber|attr",
     "Resources/Styles|TOCStyleEntry@Separator|attr",
+    "Resources/Styles|TOCStyleEntry@SortAlphabet|attr",
     "Resources/Styles|TableStyle@AlternatingFills|attr",
     "Resources/Styles|TableStyle@BasedOn|attr",
     "Resources/Styles|TableStyle@BasedOn|properties-child",

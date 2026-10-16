@@ -278,10 +278,11 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
     // because they don't share the AppliedFont / BasedOn /
     // NumberingExpression property elements the others do.
     let mut current_toc_style: Option<String> = None;
-    // Inside an element-form `<TOCStyleEntry>`, and inside its
-    // `<Properties><FormatStyle>` child: InDesign's spelling of the format.
+    // Inside an element-form `<TOCStyleEntry>`, and which of its typed
+    // `<Properties>` children is open: InDesign's spelling of the entry's
+    // format, page-number and separator styles.
     let mut in_toc_entry = false;
-    let mut toc_format_text = false;
+    let mut toc_field: Option<&'static str> = None;
     // Track an open element-form `<StripedStrokeStyle>` so its
     // `<Stripe>` children attach to the right definition (W1.2).
     let mut current_stroke_style: Option<String> = None;
@@ -378,7 +379,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                         }
                     }
                 }
-                b"FormatStyle" if in_toc_entry => toc_format_text = true,
+                b"FormatStyle" if in_toc_entry => toc_field = Some("FormatStyle"),
+                b"PageNumberStyle" if in_toc_entry => toc_field = Some("PageNumberStyle"),
+                b"SeparatorStyle" if in_toc_entry => toc_field = Some("SeparatorStyle"),
                 // Nested, line and GREP styles: typed lists in the
                 // style's `<Properties>` (see [`crate::style_lists`]).
                 b"AllNestedStyles" | b"AllLineStyles" | b"AllGREPStyles"
@@ -503,8 +506,8 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                     }
                 }
             }
-            Event::Text(t) if toc_format_text => {
-                toc_format_text = false;
+            Event::Text(t) if toc_field.is_some() => {
+                let field = toc_field.take();
                 let text = t
                     .xml_content(quick_xml::XmlVersion::Implicit1_0)
                     .map(|c| c.trim().to_string())
@@ -513,9 +516,15 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                     .as_deref()
                     .and_then(|id| out.toc_styles.get_mut(id))
                     .and_then(|t| t.entries.last_mut());
-                if let Some(entry) = entry {
-                    if entry.format_style.is_none() && !text.is_empty() {
-                        entry.format_style = Some(text);
+                if let (Some(entry), false) = (entry, text.is_empty()) {
+                    let slot = match field {
+                        Some("FormatStyle") => &mut entry.format_style,
+                        Some("PageNumberStyle") => &mut entry.page_number_style,
+                        _ => &mut entry.separator_style,
+                    };
+                    // An attribute of the older spelling wins.
+                    if slot.is_none() {
+                        *slot = Some(text);
                     }
                 }
             }
@@ -854,9 +863,9 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 }
                 b"TOCStyleEntry" => {
                     in_toc_entry = false;
-                    toc_format_text = false;
+                    toc_field = None;
                 }
-                b"FormatStyle" => toc_format_text = false,
+                b"FormatStyle" | b"PageNumberStyle" | b"SeparatorStyle" => toc_field = None,
                 b"AppliedFont"
                 | b"BasedOn"
                 | b"Leading"
@@ -1501,6 +1510,7 @@ fn parse_toc_style(e: &quick_xml::events::BytesStart) -> Option<TOCStyleDef> {
         include_hidden: attr(e, b"IncludeHidden").and_then(|s| s.parse().ok()),
         run_in: attr(e, b"RunIn").and_then(|s| s.parse().ok()),
         entries: Vec::new(),
+        create_bookmarks: attr(e, b"CreateBookmarks").and_then(|s| s.parse().ok()),
         ..TOCStyleDef::default()
     })
 }
@@ -1537,6 +1547,8 @@ fn parse_toc_style_entry(e: &quick_xml::events::BytesStart) -> Option<TOCStyleEn
         level: attr(e, b"Level").and_then(|s| s.parse().ok()),
         page_number,
         separator,
+        page_number_position: attr(e, b"PageNumberPosition"),
+        sort_alphabet: attr(e, b"SortAlphabet").and_then(|s| s.parse().ok()),
         ..TOCStyleEntryDef::default()
     })
 }
@@ -2634,6 +2646,19 @@ mod tests {
         assert_eq!(e[1].separator.as_deref(), Some(" "));
         assert_eq!(e[2].page_number.as_deref(), Some("NoPageNumber"));
         assert_eq!(e[2].separator.as_deref(), Some(""));
+        // Where the number stands, and the styles it and the separator
+        // are set in.
+        assert_eq!(e[0].page_number_position.as_deref(), Some("AfterEntry"));
+        assert_eq!(e[1].page_number_position.as_deref(), Some("BeforeEntry"));
+        assert_eq!(e[2].page_number_position.as_deref(), Some("None"));
+        assert_eq!(
+            e[0].page_number_style.as_deref(),
+            Some("CharacterStyle/TOC Page")
+        );
+        assert_eq!(e[0].separator_style.as_deref(), Some("$ID/[Same Style]"));
+        assert_eq!(e[1].page_number_style, None);
+        assert_eq!(e[0].sort_alphabet, Some(false));
+        assert_eq!(toc.create_bookmarks, Some(true));
     }
 
     #[test]

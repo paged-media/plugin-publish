@@ -1445,3 +1445,13 @@ keys = [
   "CharacterStyleRange@NoBreak",
   "CharacterStyle@NoBreak",
 ]
+
+[[unseen]]
+reason = "An index's See references and the topic a page reference names: no corpus document has an index. Their spelling was asked of InDesign 20.0.1 (core tools/indesign-export/index-probe, 2026-10-16: a topic's <CrossReference ReferencedTopic CrossReferenceType CustomTypeString> nests inside its <Topic>, and a <PageReference> names its topic as ReferencedTopic)."
+keys = [
+  "CrossReference@CrossReferenceType",
+  "CrossReference@CustomTypeString",
+  "CrossReference@ReferencedTopic",
+  "CrossReference@Self",
+  "PageReference@ReferencedTopic",
+]
