@@ -48,6 +48,8 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // Open `<Topic>` elements: InDesign nests a subtopic inside its parent
     // (core ADR 168), and a topic's `<CrossReference>`s inside it.
     let mut topic_stack: Vec<String> = Vec::new();
+    // Open `<Bookmark>` elements: a nested bookmark's parent (L-12).
+    let mut bookmark_stack: Vec<String> = Vec::new();
     // The open `<CrossReferenceFormat>` (index into
     // `out.cross_reference_formats`), whose `<BuildingBlock>`s fold in.
     let mut current_xref_format: Option<usize> = None;
@@ -134,6 +136,9 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 b"Hyperlink" => current_hyperlink = None,
                 b"Topic" => {
                     topic_stack.pop();
+                }
+                b"Bookmark" => {
+                    bookmark_stack.pop();
                 }
                 b"CrossReferenceFormat" => current_xref_format = None,
                 b"PageNumberStyle" | b"Destination" => pending = None,
@@ -426,6 +431,14 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 }
                 if e.name().as_ref() == b"Bookmark" {
                     if let Some(self_id) = attr(&e, b"Self") {
+                        // InDesign nests a bookmark inside its parent's
+                        // element (core L-12).
+                        if let Some(parent) = bookmark_stack.last() {
+                            out.bookmark_parents.insert(self_id.clone(), parent.clone());
+                        }
+                        if is_start {
+                            bookmark_stack.push(self_id.clone());
+                        }
                         out.bookmarks.push(Bookmark {
                             self_id,
                             name: attr(&e, b"Name"),
@@ -976,6 +989,36 @@ mod tests {
         assert_eq!(o.before_cross_reference_separator.as_deref(), Some(". "));
         assert_eq!(o.page_range_separator.as_deref(), Some("^="));
         assert_eq!(o.entry_end_separator.as_deref(), Some(""));
+    }
+
+    /// Bookmarks nest as InDesign writes them (core L-12): a child's
+    /// `<Bookmark>` inside its parent's.
+    #[test]
+    fn nested_bookmarks_record_their_parent() {
+        let dm = parse_designmap(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<Bookmark Self="u29532" Name="INTRODUCTION" Destination="HyperlinkPageDestination/.169265">
+		<Bookmark Self="u29538" Name="Message from The Chairman" Destination="HyperlinkPageDestination/.169271" />
+	</Bookmark>
+	<Bookmark Self="u2953c" Name="OVERVIEW" Destination="HyperlinkPageDestination/.169275" />
+</Document>"#,
+        )
+        .unwrap();
+        let names: Vec<_> = dm.bookmarks.iter().map(|b| b.name.as_deref()).collect();
+        assert_eq!(
+            names,
+            [
+                Some("INTRODUCTION"),
+                Some("Message from The Chairman"),
+                Some("OVERVIEW")
+            ]
+        );
+        assert_eq!(
+            dm.bookmark_parents.get("u29538").map(String::as_str),
+            Some("u29532")
+        );
+        assert_eq!(dm.bookmark_parents.len(), 1);
     }
 
     /// `<EndnoteOption>` as InDesign 20.0.1 writes it (core ADR 170).
