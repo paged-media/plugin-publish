@@ -278,6 +278,10 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
     // because they don't share the AppliedFont / BasedOn /
     // NumberingExpression property elements the others do.
     let mut current_toc_style: Option<String> = None;
+    // Inside an element-form `<TOCStyleEntry>`, and inside its
+    // `<Properties><FormatStyle>` child: InDesign's spelling of the format.
+    let mut in_toc_entry = false;
+    let mut toc_format_text = false;
     // Track an open element-form `<StripedStrokeStyle>` so its
     // `<Stripe>` children attach to the right definition (W1.2).
     let mut current_stroke_style: Option<String> = None;
@@ -362,18 +366,19 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                     }
                 }
                 b"TOCStyleEntry" => {
-                    // Element-form `<TOCStyleEntry>...</TOCStyleEntry>`
-                    // appears when InDesign attaches `<Properties>`
-                    // children. The attributes we care about all live
-                    // on the start tag, so reuse the same parser.
+                    // Element-form `<TOCStyleEntry>...</TOCStyleEntry>`:
+                    // InDesign's own, its format style a `<Properties>`
+                    // child read below.
                     if let (Some(id), Some(entry)) =
                         (current_toc_style.as_deref(), parse_toc_style_entry(&e))
                     {
                         if let Some(t) = out.toc_styles.get_mut(id) {
                             t.entries.push(entry);
+                            in_toc_entry = true;
                         }
                     }
                 }
+                b"FormatStyle" if in_toc_entry => toc_format_text = true,
                 // Nested, line and GREP styles: typed lists in the
                 // style's `<Properties>` (see [`crate::style_lists`]).
                 b"AllNestedStyles" | b"AllLineStyles" | b"AllGREPStyles"
@@ -495,6 +500,22 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                         TabField::Alignment => stop.alignment = Some(text),
                         TabField::AlignmentCharacter => stop.alignment_character = Some(text),
                         TabField::Leader => stop.leader = Some(text),
+                    }
+                }
+            }
+            Event::Text(t) if toc_format_text => {
+                toc_format_text = false;
+                let text = t
+                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                    .map(|c| c.trim().to_string())
+                    .unwrap_or_default();
+                let entry = current_toc_style
+                    .as_deref()
+                    .and_then(|id| out.toc_styles.get_mut(id))
+                    .and_then(|t| t.entries.last_mut());
+                if let Some(entry) = entry {
+                    if entry.format_style.is_none() && !text.is_empty() {
+                        entry.format_style = Some(text);
                     }
                 }
             }
@@ -831,6 +852,11 @@ pub fn parse_stylesheet(xml: &[u8]) -> Result<StyleSheet, ParseError> {
                 b"TOCStyle" => {
                     current_toc_style = None;
                 }
+                b"TOCStyleEntry" => {
+                    in_toc_entry = false;
+                    toc_format_text = false;
+                }
+                b"FormatStyle" => toc_format_text = false,
                 b"AppliedFont"
                 | b"BasedOn"
                 | b"Leading"
@@ -1462,6 +1488,9 @@ fn four(s: &str) -> Option<[f32; 4]> {
     (v.len() == 4).then(|| [v[0], v[1], v[2], v[3]])
 }
 
+// See `parse_toc_style_entry`: the struct update keeps this literal
+// compiling as the model grows.
+#[allow(clippy::needless_update)]
 fn parse_toc_style(e: &quick_xml::events::BytesStart) -> Option<TOCStyleDef> {
     Some(TOCStyleDef {
         self_id: attr(e, b"Self")?,
@@ -1472,17 +1501,43 @@ fn parse_toc_style(e: &quick_xml::events::BytesStart) -> Option<TOCStyleDef> {
         include_hidden: attr(e, b"IncludeHidden").and_then(|s| s.parse().ok()),
         run_in: attr(e, b"RunIn").and_then(|s| s.parse().ok()),
         entries: Vec::new(),
+        ..TOCStyleDef::default()
     })
 }
 
+/// A `<TOCStyleEntry>` start tag. InDesign 20.0.1 writes the style an
+/// entry collects as the entry's `Name` (the paragraph style's name, no
+/// `IncludeStyle`), its format style as a `<Properties>` child (read by the
+/// walker), where the page number stands as `PageNumberPosition`
+/// (`AfterEntry`, `BeforeEntry`, `None`) and the separator behind `$ID/`
+/// (`$ID/^t`). The engine's older attributes (`IncludeStyle`,
+/// `FormatStyle`, `PageNumber`) still read, and win where present.
+// The model grows TOC entry fields core-first; the struct update keeps this
+// literal compiling against the next model as well as this one.
+#[allow(clippy::needless_update)]
 fn parse_toc_style_entry(e: &quick_xml::events::BytesStart) -> Option<TOCStyleEntryDef> {
+    let name = attr(e, b"Name");
+    let include_style = attr(e, b"IncludeStyle").or_else(|| {
+        name.as_deref()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!("ParagraphStyle/{}", n.replace(':', "%3a")))
+    });
+    let page_number = attr(e, b"PageNumber").or_else(|| {
+        (attr(e, b"PageNumberPosition").as_deref() == Some("None"))
+            .then(|| "NoPageNumber".to_string())
+    });
+    let separator = attr(e, b"Separator").map(|s| match s.strip_prefix("$ID/") {
+        Some(rest) => rest.to_string(),
+        None => s,
+    });
     Some(TOCStyleEntryDef {
-        name: attr(e, b"Name"),
-        include_style: attr(e, b"IncludeStyle"),
+        name,
+        include_style,
         format_style: attr(e, b"FormatStyle"),
         level: attr(e, b"Level").and_then(|s| s.parse().ok()),
-        page_number: attr(e, b"PageNumber"),
-        separator: attr(e, b"Separator"),
+        page_number,
+        separator,
+        ..TOCStyleEntryDef::default()
     })
 }
 
@@ -2534,13 +2589,57 @@ mod tests {
         assert_eq!(r.font.as_deref(), Some("Open Sans"));
     }
 
+    /// InDesign 20.0.1's own spelling (`toc-probe`, core ADR 165): the
+    /// collected style is the entry's `Name`, the format a `<Properties>`
+    /// child, the number position `PageNumberPosition`, the separator
+    /// behind `$ID/`.
     #[test]
-    fn parses_toc_style_with_entries() {
-        // Real-world `<TOCStyle>` carries a `<TOCStyleEntry>` per
-        // outline level. The parser must capture the title, the
-        // title-style ref, and each entry's IncludeStyle /
-        // FormatStyle / Level / PageNumber / Separator (separator
-        // defaults to a tab `^t` at resolve time when absent).
+    fn parses_indesigns_toc_style_spelling() {
+        let xml =
+            br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+	<TOCStyle Self="TOCStyle/Contents" TitleStyle="ParagraphStyle/TOC Title" Title="Contents" Name="Contents" RunIn="false" IncludeHidden="false" IncludeBookDocuments="false" CreateBookmarks="true" SetStoryDirection="Horizontal" NumberedParagraphs="ExcludeNumbers" MakeAnchor="false" RemoveForcedLineBreak="false">
+		<TOCStyleEntry Self="u145TOCStyleEntry0" Name="H1" Level="1" PageNumberPosition="AfterEntry" Separator="$ID/^t" SortAlphabet="false">
+			<Properties>
+				<FormatStyle type="object">ParagraphStyle/TOC 1</FormatStyle>
+				<PageNumberStyle type="object">CharacterStyle/TOC Page</PageNumberStyle>
+				<SeparatorStyle type="string">$ID/[Same Style]</SeparatorStyle>
+			</Properties>
+		</TOCStyleEntry>
+		<TOCStyleEntry Self="u145TOCStyleEntry1" Name="Group:H2" Level="2" PageNumberPosition="BeforeEntry" Separator="$ID/ " SortAlphabet="false">
+			<Properties>
+				<FormatStyle type="object">ParagraphStyle/TOC 2</FormatStyle>
+			</Properties>
+		</TOCStyleEntry>
+		<TOCStyleEntry Self="u145TOCStyleEntry2" Name="H3" Level="3" PageNumberPosition="None" Separator="$ID/" SortAlphabet="false">
+			<Properties>
+				<FormatStyle type="object">ParagraphStyle/TOC 3</FormatStyle>
+			</Properties>
+		</TOCStyleEntry>
+	</TOCStyle>
+</idPkg:Styles>"#;
+        let s = parse_stylesheet(xml).unwrap();
+        let toc = s.toc_styles.get("TOCStyle/Contents").unwrap();
+        assert_eq!(toc.title.as_deref(), Some("Contents"));
+        let e = &toc.entries;
+        assert_eq!(e.len(), 3);
+        assert_eq!(e[0].include_style.as_deref(), Some("ParagraphStyle/H1"));
+        assert_eq!(e[0].format_style.as_deref(), Some("ParagraphStyle/TOC 1"));
+        assert_eq!(e[0].separator.as_deref(), Some("^t"));
+        assert_eq!(e[0].page_number, None);
+        assert_eq!(
+            e[1].include_style.as_deref(),
+            Some("ParagraphStyle/Group%3aH2")
+        );
+        assert_eq!(e[1].format_style.as_deref(), Some("ParagraphStyle/TOC 2"));
+        assert_eq!(e[1].separator.as_deref(), Some(" "));
+        assert_eq!(e[2].page_number.as_deref(), Some("NoPageNumber"));
+        assert_eq!(e[2].separator.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn legacy_parses_toc_style_with_entries() {
+        // The engine's older spelling: `IncludeStyle`, `FormatStyle` and
+        // `PageNumber` as attributes. It still reads.
         let xml =
             br#"<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
           <RootParagraphStyleGroup>

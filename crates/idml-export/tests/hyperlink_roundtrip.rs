@@ -279,3 +279,65 @@ fn a_hyperlink_the_model_carries_twice_is_written_once() {
     );
     assert_eq!(pkg::open(&out).designmap.hyperlinks.len(), 1);
 }
+
+/// InDesign's own spelling, with appearance settings the writer's defaults
+/// do not share (a visible outline in red).
+const INDESIGN_BLOCK: &str = r#"<HyperlinkURLDestination Self="HyperlinkURLDestination/a" Name="https://paged.media" DestinationURL="https://paged.media" Hidden="true" DestinationUniqueKey="1"/>
+<Hyperlink Self="Hyperlink/a" Name="url-link" Source="HyperlinkTextSource/a" Visible="true" Highlight="Outline" Width="Thick" BorderStyle="Dashed" Hidden="false" DestinationUniqueKey="1"><Properties><BorderColor type="enumeration">Red</BorderColor><Destination type="object">HyperlinkURLDestination/a</Destination></Properties></Hyperlink>
+"#;
+const INDESIGN_STORY: &str = r#"<ParagraphStyleRange><HyperlinkTextSource Self="HyperlinkTextSource/a" Name="a" Hidden="false"><CharacterStyleRange><Content>paged</Content></CharacterStyleRange></HyperlinkTextSource></ParagraphStyleRange>"#;
+
+/// v73 (core ADR 164) — renaming a link and sending it to a new
+/// destination edits the element in place: its appearance stays.
+#[test]
+fn an_edited_hyperlink_keeps_its_appearance() {
+    let source = pkg::simple(INDESIGN_BLOCK, INDESIGN_STORY, pkg::STYLES);
+    let mut doc = pkg::open(&source);
+    doc.designmap
+        .hyperlink_destinations
+        .push(HyperlinkDestination {
+            self_id: "HyperlinkURLDestination/n".into(),
+            kind: HyperlinkDestinationKind::Url("https://docs.paged.media".into()),
+        });
+    let link = doc
+        .designmap
+        .hyperlinks
+        .iter_mut()
+        .find(|h| h.self_id == "Hyperlink/a")
+        .expect("the link");
+    link.name = Some("Docs".into());
+    link.destination = Some("HyperlinkURLDestination/n".into());
+
+    let out = write_idml(&doc, &source).expect("write");
+    let dm = pkg::entry(&out, "designmap.xml").expect("designmap");
+    let at = pkg::pos(&dm, "<Hyperlink Self=\"Hyperlink/a\"");
+    let element = &dm[at..at + dm[at..].find("</Hyperlink>").expect("closed")];
+    for kept in [
+        "Visible=\"true\"",
+        "Highlight=\"Outline\"",
+        "Width=\"Thick\"",
+        "BorderStyle=\"Dashed\"",
+        "<BorderColor type=\"enumeration\">Red</BorderColor>",
+    ] {
+        assert!(element.contains(kept), "{kept} lost: {element}");
+    }
+    assert!(element.contains("Name=\"Docs\""), "{element}");
+    assert!(
+        element.contains("<Destination type=\"object\">HyperlinkURLDestination/n</Destination>"),
+        "{element}"
+    );
+    let re = pkg::open(&out);
+    let link = re
+        .designmap
+        .hyperlinks
+        .iter()
+        .find(|h| h.self_id == "Hyperlink/a")
+        .expect("read back");
+    assert_eq!(link.name.as_deref(), Some("Docs"));
+    assert_eq!(
+        link.destination.as_deref(),
+        Some("HyperlinkURLDestination/n")
+    );
+    // An unedited save of that output is byte-identical.
+    assert_eq!(out, write_idml(&re, &out).expect("re-write"));
+}

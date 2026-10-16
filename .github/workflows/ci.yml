@@ -87,14 +87,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
 
-      # Red results must still publish (the matrix wants the ✗), so the run
-      # does not abort here — the gate at the end fails the build once the
-      # artifacts are safely uploaded.
       # idml-coverage reads `cargo metadata --offline`, which needs every crate
       # of the graph on disk; rust-cache prunes the ones the build never
       # compiles (zip's optional `arbitrary`), so fetch the whole graph first.
       - name: fetch the dependency graph
         run: cargo fetch
+
+      # Red results must still publish (the matrix wants the ✗), so the run
+      # does not abort here — the gate at the end fails the build once the
+      # artifacts are safely uploaded.
       - name: nextest → JUnit
         run: |
           set -uo pipefail
