@@ -5649,13 +5649,25 @@ fn rewrite_story_part(
                         // `<Content>`), so the buffer captures it.
                         footnote_depth += 1;
                         body.active = true;
-                        body.foreign = true;
-                        body.events.push(Event::Start(e.into_owned()));
+                        let start = Event::Start(e.into_owned());
+                        if footnote_depth == 1 {
+                            // The reference: one character of the host
+                            // run's text (the parser's reading).
+                            body.text.push(paged_model::FOOTNOTE_REFERENCE_MARKER);
+                            let id = match &start {
+                                Event::Start(s) => attr_value(s, b"Self"),
+                                _ => None,
+                            };
+                            body.notes.push((id, vec![start.clone()]));
+                        } else if let Some(note) = body.notes.last_mut() {
+                            note.1.push(start.clone());
+                        }
+                        body.events.push(start);
                     }
                     // Inside a footnote, every element is opaque host-run
                     // markup — buffer it, don't patch it against the story.
                     _ if footnote_depth > 0 => {
-                        body.events.push(Event::Start(e.into_owned()));
+                        body.push_in_note(Event::Start(e.into_owned()));
                     }
                     b"Story" if table_depth == 0 => {
                         writer.write_event(Event::Start(patch_story_start(&e, story)?))?;
@@ -5845,7 +5857,7 @@ fn rewrite_story_part(
                 // cursors. A self-closing `<Footnote/>` (no body) opens and
                 // closes in one event, so it never changes `footnote_depth`.
                 if footnote_depth > 0 {
-                    body.events.push(Event::Empty(e.into_owned()));
+                    body.push_in_note(Event::Empty(e.into_owned()));
                     buf.clear();
                     continue;
                 }
@@ -5986,6 +5998,12 @@ fn rewrite_story_part(
                     buf.clear();
                     continue;
                 }
+                if footnote_depth > 0 {
+                    // The note's own text: not the host run's.
+                    body.push_in_note(Event::Text(t.into_owned()));
+                    buf.clear();
+                    continue;
+                }
                 if body.active && body.in_content {
                     // Buffer — the replace decision happens at the run
                     // close once the whole (possibly entity-split) span
@@ -6006,6 +6024,11 @@ fn rewrite_story_part(
                 }
             }
             Event::GeneralRef(r) => {
+                if footnote_depth > 0 {
+                    body.push_in_note(Event::GeneralRef(r.into_owned()));
+                    buf.clear();
+                    continue;
+                }
                 if body.active && body.in_content {
                     // Resolve the reference (predefined five + numeric)
                     // so the comparison sees the parsed run's chars.
@@ -6036,12 +6059,12 @@ fn rewrite_story_part(
                 // must NOT touch the story cursors.
                 if e.name().as_ref() == b"Footnote" {
                     footnote_depth = footnote_depth.saturating_sub(1);
-                    body.events.push(Event::End(e.into_owned()));
+                    body.push_in_note(Event::End(e.into_owned()));
                     buf.clear();
                     continue;
                 }
                 if footnote_depth > 0 {
-                    body.events.push(Event::End(e.into_owned()));
+                    body.push_in_note(Event::End(e.into_owned()));
                     buf.clear();
                     continue;
                 }
@@ -6117,6 +6140,7 @@ fn rewrite_story_part(
                             &mut body,
                             text_run,
                             open_csr.take().as_ref(),
+                            scope,
                             &mut prev_ended_with_br,
                             !extras.is_empty(),
                             wrap,
@@ -6286,10 +6310,14 @@ fn rewrite_story_part(
                 body.events.push(Event::PI(pi.into_owned()));
             }
             other => {
-                if body.active {
-                    // A processing instruction that is no marker (or one
-                    // inside a footnote), or other markup inside the
-                    // span — buffer in order and never rewrite over it.
+                if footnote_depth > 0 {
+                    // A note's own number (`<?ACE 4?>`) and the rest of its
+                    // markup belong to the note, not the host run.
+                    body.push_in_note(other.into_owned());
+                } else if body.active {
+                    // A processing instruction that is no marker, or other
+                    // markup inside the span — buffer in order and never
+                    // rewrite over it.
                     body.foreign = true;
                     body.events.push(other.into_owned());
                 } else {
@@ -6328,11 +6356,14 @@ fn marker_of_pi(body: &[u8], range_type: Option<&str>) -> Option<char> {
 /// and opens one from `open`'s attributes with the flavour set (or
 /// dropped). The last range is left open for the caller's
 /// `</CharacterStyleRange>`. A hyperlink source covers the first piece.
+#[allow(clippy::too_many_arguments)]
 fn write_page_number_pieces(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     text: &str,
     r: &CharacterRun,
     open: Option<&BytesStart<'static>>,
+    para: Option<&Paragraph>,
+    notes: &[(Option<String>, Vec<Event<'static>>)],
     wrap_source: bool,
 ) -> Result<(), quick_xml::Error> {
     let open_type = open
@@ -6344,6 +6375,7 @@ fn write_page_number_pieces(
         });
     let mut current = open_type;
     let mut wrote = false;
+    let mut written_notes = 0usize;
     for (i, (kind, piece)) in crate::emit::page_number_pieces(text)
         .into_iter()
         .enumerate()
@@ -6380,8 +6412,20 @@ fn write_page_number_pieces(
             crate::emit::emit_applied_font(writer, &r.font)?;
             current = kind;
         }
-        let source = r.hyperlink_source.as_deref().filter(|_| i == 0);
-        crate::emit::write_text_body(writer, source, piece, wrap_source)?;
+        // The run's hyperlink source covers its first piece; its notes go
+        // where their references fall, piece by piece.
+        write_text_with_notes(
+            writer,
+            piece,
+            r,
+            para,
+            notes,
+            written_notes,
+            wrap_source && i == 0,
+        )?;
+        written_notes += piece
+            .matches(paged_model::FOOTNOTE_REFERENCE_MARKER)
+            .count();
         wrote = true;
     }
     Ok(())
@@ -6425,6 +6469,11 @@ struct RunBody {
     /// before the fix are corrected as they pass through instead of
     /// keeping a spelling the reference cannot read.
     has_tab_leaf: bool,
+    /// The run's `<Footnote>` subtrees, in order: the note's `Self` and
+    /// its events, kept so a run rewritten from the model writes each
+    /// note it still references as it was (core ADR 163). A footnote is
+    /// the reference character in the run's text, as the parser reads it.
+    notes: Vec<(Option<String>, Vec<Event<'static>>)>,
 }
 
 /// Append one decoded `<Content>` fragment to a run's reconstructed
@@ -6490,11 +6539,24 @@ fn push_run_text(out: &mut String, decoded: &str) {
 /// do not write it here. `wrap_source`: a replaced run tagged with a
 /// hyperlink source may take InDesign's inner `<HyperlinkTextSource>`
 /// (false while a wrapping-form source is open around the range).
+impl RunBody {
+    /// Buffer an event of an open `<Footnote>`: into the run's verbatim
+    /// replay and into the note's own events.
+    fn push_in_note(&mut self, event: Event<'static>) {
+        if let Some(note) = self.notes.last_mut() {
+            note.1.push(event.clone());
+        }
+        self.events.push(event);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn flush_run_body(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     body: &mut RunBody,
     run: Option<&CharacterRun>,
     open: Option<&BytesStart<'static>>,
+    para: Option<&Paragraph>,
     prev_br: &mut bool,
     hold_br: bool,
     wrap_source: bool,
@@ -6544,10 +6606,9 @@ fn flush_run_body(
                 .chars()
                 .any(|c| crate::emit::page_number_type(c).is_some())
         {
-            write_page_number_pieces(writer, &text, r, open, wrap_source)?;
+            write_page_number_pieces(writer, &text, r, open, para, &body.notes, wrap_source)?;
         } else {
-            let source = r.hyperlink_source.as_deref();
-            crate::emit::write_text_body(writer, source, &text, wrap_source)?;
+            write_text_with_notes(writer, &text, r, para, &body.notes, 0, wrap_source)?;
         }
         if ends_with_br && !hold_br {
             writer.write_event(Event::Empty(BytesStart::new("Br")))?;
@@ -6563,6 +6624,154 @@ fn flush_run_body(
     body.ends_with_br = false;
     body.has_tab_leaf = false;
     body.events.clear();
+    body.notes.clear();
+    Ok(())
+}
+
+/// A run's text written back with its footnotes (core ADR 163): the text
+/// around each reference character as `<Content>`, and at each reference
+/// its `<Footnote>` — the note's own source subtree when the run held it
+/// already (byte for byte), the model's note otherwise (a note the model
+/// added). The run's notes are the paragraph's, matched to its reference
+/// characters by order (the renderer's reading); a reference with no note
+/// writes nothing.
+/// `offset`: references of the same run already written (a run cut into
+/// several ranges at its page numbers writes its notes piece by piece).
+fn write_run_with_notes(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    run: &CharacterRun,
+    para: Option<&Paragraph>,
+    source: &[(Option<String>, Vec<Event<'static>>)],
+    offset: usize,
+) -> Result<(), quick_xml::Error> {
+    const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
+    if !text.contains(MARK) {
+        return write_run_content(writer, text);
+    }
+    // The paragraph's notes, and how many references come before this run.
+    let (notes, before): (&[idml_import::story::Footnote], usize) = match para {
+        Some(p) => {
+            let marks = p
+                .runs
+                .iter()
+                .map(|r| r.text.matches(MARK).count())
+                .sum::<usize>();
+            let before = p
+                .runs
+                .iter()
+                .take_while(|r| !std::ptr::eq(*r, run))
+                .map(|r| r.text.matches(MARK).count())
+                .sum::<usize>();
+            if marks == p.footnotes.len() {
+                (&p.footnotes, before)
+            } else {
+                (&[], 0)
+            }
+        }
+        None => (&[], 0),
+    };
+    let mut segment = String::new();
+    let mut k = 0usize;
+    for ch in text.chars() {
+        if ch != MARK {
+            segment.push(ch);
+            continue;
+        }
+        if !segment.is_empty() {
+            write_run_content(writer, &segment)?;
+            segment.clear();
+        }
+        if let Some(note) = notes.get(before + offset + k) {
+            match source
+                .iter()
+                .find(|(id, _)| id.is_some() && *id == note.self_id)
+            {
+                Some((_, events)) => {
+                    for ev in events {
+                        writer.write_event(ev.clone())?;
+                    }
+                }
+                None => write_footnote(writer, note)?,
+            }
+        }
+        k += 1;
+    }
+    if !segment.is_empty() {
+        write_run_content(writer, &segment)?;
+    }
+    Ok(())
+}
+
+/// A replaced run's text with its notes, inside the run's own
+/// `<HyperlinkTextSource>` when it is tagged with one and `wrap_source`.
+#[allow(clippy::too_many_arguments)]
+fn write_text_with_notes(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    run: &CharacterRun,
+    para: Option<&Paragraph>,
+    notes: &[(Option<String>, Vec<Event<'static>>)],
+    offset: usize,
+    wrap_source: bool,
+) -> Result<(), quick_xml::Error> {
+    match (&run.hyperlink_source, wrap_source) {
+        (Some(src), true) => {
+            emit_start_with_attrs(
+                writer,
+                "HyperlinkTextSource",
+                &[
+                    ("Self", src.clone()),
+                    ("Name", src.rsplit('/').next().unwrap_or(src).to_string()),
+                    ("Hidden", "false".to_string()),
+                ],
+            )?;
+            write_run_with_notes(writer, text, run, para, notes, offset)?;
+            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                "HyperlinkTextSource",
+            )))?;
+            Ok(())
+        }
+        _ => write_run_with_notes(writer, text, run, para, notes, offset),
+    }
+}
+
+/// A `<Footnote>` from the model, as InDesign writes one: its paragraphs as
+/// ranges, its number (the reference character opening its text) as
+/// `<?ACE 4?>`, a paragraph mark `<Br/>` closing every paragraph but the
+/// last.
+pub(crate) fn write_footnote(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    note: &idml_import::story::Footnote,
+) -> Result<(), quick_xml::Error> {
+    let mut start = BytesStart::new("Footnote");
+    if let Some(id) = &note.self_id {
+        start.push_attribute(("Self", id.as_str()));
+    }
+    writer.write_event(Event::Start(start))?;
+    let last = note.paragraphs.len().saturating_sub(1);
+    for (pi, p) in note.paragraphs.iter().enumerate() {
+        emit_start_with_attrs(
+            writer,
+            "ParagraphStyleRange",
+            &crate::emit::paragraph_attrs(p),
+        )?;
+        let last_run = p.runs.len().saturating_sub(1);
+        for (ri, r) in p.runs.iter().enumerate() {
+            emit_start_with_attrs(
+                writer,
+                "CharacterStyleRange",
+                &crate::emit::character_run_attrs(r),
+            )?;
+            write_run_content_as(writer, &r.text, true)?;
+            if pi < last && ri == last_run {
+                writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+            }
+            writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("Footnote")))?;
     Ok(())
 }
 
@@ -6575,11 +6784,32 @@ pub(crate) fn write_run_content(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     text: &str,
 ) -> Result<(), quick_xml::Error> {
+    write_run_content_as(writer, text, false)
+}
+
+/// [`write_run_content`]; in a footnote's own text (`in_note`) the
+/// reference character is the note's number, `<?ACE 4?>`.
+pub(crate) fn write_run_content_as(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    in_note: bool,
+) -> Result<(), quick_xml::Error> {
+    // `open`: a `<Content>` the note's number opened is still open, and the
+    // text after the number goes into it (`<Content><?ACE 4?>\ttext</…>`,
+    // as InDesign writes a note).
     fn flush(
         writer: &mut Writer<Cursor<Vec<u8>>>,
         buf: &mut String,
+        open: &mut bool,
     ) -> Result<(), quick_xml::Error> {
-        if !buf.is_empty() {
+        if *open {
+            if !buf.is_empty() {
+                writer.write_event(Event::Text(BytesText::new(buf)))?;
+            }
+            writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Content")))?;
+            *open = false;
+            buf.clear();
+        } else if !buf.is_empty() {
             writer.write_event(Event::Start(BytesStart::new("Content")))?;
             writer.write_event(Event::Text(BytesText::new(buf)))?;
             writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Content")))?;
@@ -6604,15 +6834,23 @@ pub(crate) fn write_run_content(
     // The private-use characters the reader leaves for InDesign's markers
     // go back to InDesign's spelling: a page number is `<?ACE 18?>` and a
     // section marker `<?ACE 19?>` inside `<Content>` (InDesign 20.0.1). A
-    // footnote reference is written by its `<Footnote>` element, which the
-    // patch path carries through, so its character writes nothing.
+    // footnote reference is written by its `<Footnote>` element
+    // (`write_run_with_notes`), so its character writes nothing here — except
+    // in a note's own text, where it is the note's number, `<?ACE 4?>`.
+    let mut open = false;
     for ch in text.chars() {
         match ch {
             '\n' => {
-                flush(writer, &mut buf)?;
+                flush(writer, &mut buf, &mut open)?;
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             }
-            paged_model::FOOTNOTE_REFERENCE_MARKER => {}
+            paged_model::FOOTNOTE_REFERENCE_MARKER if !in_note => {}
+            paged_model::FOOTNOTE_REFERENCE_MARKER => {
+                flush(writer, &mut buf, &mut open)?;
+                writer.write_event(Event::Start(BytesStart::new("Content")))?;
+                writer.write_event(Event::PI(quick_xml::events::BytesPI::new("ACE 4")))?;
+                open = true;
+            }
             paged_model::AUTO_PAGE_NUMBER_MARKER
             | paged_model::NEXT_PAGE_NUMBER_MARKER
             | paged_model::PREVIOUS_PAGE_NUMBER_MARKER
@@ -6622,6 +6860,9 @@ pub(crate) fn write_run_content(
                 } else {
                     "ACE 18"
                 };
+                if open {
+                    flush(writer, &mut buf, &mut open)?;
+                }
                 writer.write_event(Event::Start(BytesStart::new("Content")))?;
                 if !buf.is_empty() {
                     writer.write_event(Event::Text(BytesText::new(&buf)))?;
@@ -6633,7 +6874,7 @@ pub(crate) fn write_run_content(
             _ => buf.push(ch),
         }
     }
-    flush(writer, &mut buf)?;
+    flush(writer, &mut buf, &mut open)?;
     Ok(())
 }
 
@@ -6900,6 +7141,7 @@ fn write_adopted_range(
         &mut body,
         Some(run),
         Some(&start),
+        Some(para),
         &mut prev_br,
         false,
         wrap_source,
@@ -7737,6 +7979,105 @@ mod tests {
             !out.contains("SpaceAfter"),
             "a cleared override is dropped: {out}"
         );
+    }
+
+    /// Core ADR 163: a footnote is its reference character in the host
+    /// run. An unchanged run replays byte for byte; a note the model
+    /// deleted leaves with its reference, the other note in the run keeps
+    /// its own bytes; a note the model inserted is written as InDesign
+    /// writes one and reads back.
+    #[test]
+    fn footnotes_follow_the_model_through_a_save() {
+        const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>one</Content><Footnote Self="n1"><ParagraphStyleRange><CharacterStyleRange><Content><?ACE 4?>	First note.</Content></CharacterStyleRange></ParagraphStyleRange></Footnote><Content> two</Content><Footnote Self="n2"><ParagraphStyleRange><CharacterStyleRange><Content><?ACE 4?>	Second note.</Content></CharacterStyleRange></ParagraphStyleRange></Footnote><Content> three</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let story = idml_import::parse_story(src).unwrap();
+        assert_eq!(story.paragraphs[0].footnotes.len(), 2);
+        assert_eq!(
+            std::str::from_utf8(&rewrite_story(src, &story).unwrap()).unwrap(),
+            std::str::from_utf8(src).unwrap(),
+            "unmutated: byte-identical"
+        );
+
+        // Delete the first note: its reference and its note.
+        let mut deleted = story.clone();
+        let para = &mut deleted.paragraphs[0];
+        let text = &mut para.runs[0].text;
+        let at = text.find(MARK).unwrap();
+        text.remove(at);
+        para.footnotes.remove(0);
+        let out = String::from_utf8(rewrite_story(src, &deleted).unwrap()).unwrap();
+        assert!(!out.contains("First note."), "{out}");
+        assert!(
+            out.contains(r#"<Footnote Self="n2"><ParagraphStyleRange><CharacterStyleRange><Content><?ACE 4?>	Second note.</Content>"#),
+            "the kept note keeps its bytes: {out}"
+        );
+        let back = idml_import::parse_story(out.as_bytes()).unwrap();
+        assert_eq!(back.paragraphs[0].footnotes.len(), 1);
+        assert_eq!(back.paragraphs[0].runs[0].text.matches(MARK).count(), 1);
+
+        // Insert a note after "three".
+        let mut inserted = story.clone();
+        let para = &mut inserted.paragraphs[0];
+        para.runs[0].text.push(MARK);
+        let anchor = para.runs[0].text.chars().count() as u32 - 1;
+        para.footnotes.push(idml_import::story::Footnote {
+            self_id: Some("u9".into()),
+            anchor: Some(anchor),
+            paragraphs: vec![idml_import::Paragraph {
+                runs: vec![idml_import::CharacterRun {
+                    text: format!("{MARK}\tAn inserted note."),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        });
+        let out = String::from_utf8(rewrite_story(src, &inserted).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Footnote Self="u9"><ParagraphStyleRange><CharacterStyleRange><Content><?ACE 4?>	An inserted note.</Content></CharacterStyleRange></ParagraphStyleRange></Footnote>"#),
+            "{out}"
+        );
+        let back = idml_import::parse_story(out.as_bytes()).unwrap();
+        let notes = &back.paragraphs[0].footnotes;
+        assert_eq!(notes.len(), 3);
+        assert_eq!(notes[2].self_id.as_deref(), Some("u9"));
+        let note_text: String = notes[2].paragraphs[0]
+            .runs
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect();
+        assert_eq!(note_text, format!("{MARK}\tAn inserted note."));
+    }
+
+    /// A next page number typed into a run that holds a footnote: the run
+    /// is cut at the page number into a range naming its flavour, and the
+    /// note — kept byte for byte — is written where its reference falls in
+    /// the later piece.
+    #[test]
+    fn a_page_number_typed_beside_a_note_keeps_both() {
+        const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
+        const NEXT: char = paged_model::NEXT_PAGE_NUMBER_MARKER;
+        let src = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>see page  for more</Content><Footnote Self="n1"><ParagraphStyleRange><CharacterStyleRange><Content><?ACE 4?>	The note.</Content></CharacterStyleRange></ParagraphStyleRange></Footnote><Content>.</Content></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#;
+        let story = idml_import::parse_story(src).unwrap();
+        assert_eq!(
+            story.paragraphs[0].runs[0].text,
+            format!("see page  for more{MARK}.")
+        );
+        let mut edited = story.clone();
+        edited.paragraphs[0].runs[0].text = format!("see page {NEXT} for more{MARK}.");
+        let out = String::from_utf8(rewrite_story(src, &edited).unwrap()).unwrap();
+        assert!(out.contains(r#"PageNumberType="NextPageNumber""#), "{out}");
+        assert!(
+            out.contains(r#"<Footnote Self="n1"><ParagraphStyleRange><CharacterStyleRange><Content><?ACE 4?>	The note.</Content>"#),
+            "the note keeps its bytes: {out}"
+        );
+        let back = idml_import::parse_story(out.as_bytes()).unwrap();
+        let back_text: String = back.paragraphs[0]
+            .runs
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect();
+        assert_eq!(back_text, format!("see page {NEXT} for more{MARK}."));
+        assert_eq!(back.paragraphs[0].footnotes.len(), 1);
     }
 
     #[test]

@@ -20,13 +20,13 @@
     "elements": 123,
     "attributes": 701,
     "imported": 1310,
-    "exported": 1023,
-    "importedAndExported": 854,
-    "importOnly": 456,
+    "exported": 1024,
+    "importedAndExported": 855,
+    "importOnly": 455,
     "exportOnly": 169,
     "propertiesChild": 60,
     "importerReadSites": 993,
-    "exporterWriteSites": 1028,
+    "exporterWriteSites": 1032,
     "unresolved": 0,
     "partRows": 4150,
     "misplaced": 30,
@@ -44,9 +44,9 @@
       "value": 0.464668
     },
     "weightedExport": {
-      "covered": 91774,
+      "covered": 91775,
       "total": 633952,
-      "value": 0.144765
+      "value": 0.144766
     },
     "misplacedReads": 30,
     "unseenReads": 340,
@@ -4275,7 +4275,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7359
+        "line": 7601
       }
     },
     {
@@ -8703,16 +8703,21 @@
       "importerField": "Footnote.self_id",
       "coarseType": "string",
       "imported": true,
-      "exported": false,
+      "exported": true,
       "importParts": [
         "Stories"
       ],
-      "exportParts": [],
+      "exportParts": [
+        "Stories"
+      ],
       "source": {
         "file": "crates/idml-import/src/story.rs",
         "line": 955
       },
-      "exportSource": null
+      "exportSource": {
+        "file": "crates/idml-export/src/rewrite.rs",
+        "line": 6749
+      }
     },
     {
       "element": "FootnoteOption",
@@ -21336,7 +21341,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7302
+        "line": 7544
       }
     },
     {
@@ -21704,7 +21709,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7255
+        "line": 7497
       }
     },
     {
@@ -36349,7 +36354,7 @@
     {"part":"Resources/Fonts","element":"FontFamily","attribute":"Name","kind":"attr","docCount":305,"nonModalDocs":305,"imported":false,"exported":true,"readElsewhere":false},
     {"part":"Resources/Fonts","element":"FontFamily","attribute":"Self","kind":"attr","docCount":305,"nonModalDocs":305,"imported":false,"exported":true,"readElsewhere":false},
     {"part":"Stories","element":"Footnote","attribute":"Hidden","kind":"attr","docCount":1,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
-    {"part":"Stories","element":"Footnote","attribute":"Self","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":false,"readElsewhere":false},
+    {"part":"Stories","element":"Footnote","attribute":"Self","kind":"attr","docCount":1,"nonModalDocs":1,"imported":true,"exported":true,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleColor","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleGapColor","kind":"properties-child","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
     {"part":"Resources/Preferences","element":"FootnoteOption","attribute":"ContinuingRuleGapOverprint","kind":"attr","docCount":271,"nonModalDocs":0,"imported":false,"exported":false,"readElsewhere":false},
