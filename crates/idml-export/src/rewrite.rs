@@ -7165,6 +7165,7 @@ fn write_adopted_range(
         &mut prev_br,
         false,
         wrap_source,
+        false,
     )?;
     writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
     for i in rest {
