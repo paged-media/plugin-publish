@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 122139,
+      "covered": 122141,
       "total": 633952,
-      "value": 0.192663
+      "value": 0.192666
     },
     "impactImport": {
-      "covered": 25402,
+      "covered": 25403,
       "total": 54667,
-      "value": 0.464668
+      "value": 0.464686
     },
     "weightedExport": {
       "covered": 90555,
@@ -534,6 +534,7 @@
     "Resources/Styles|TOCStyleEntry@IncludeStyle|attr",
     "Resources/Styles|TOCStyleEntry@Level|attr",
     "Resources/Styles|TOCStyleEntry@Name|attr",
+    "Resources/Styles|TOCStyleEntry@PageNumberPosition|attr",
     "Resources/Styles|TOCStyleEntry@PageNumber|attr",
     "Resources/Styles|TOCStyleEntry@Separator|attr",
     "Resources/Styles|TableStyle@AlternatingFills|attr",

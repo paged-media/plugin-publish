@@ -549,6 +549,22 @@ impl Subtree {
         }
         None
     }
+    /// Replace the text of the first `<NAME>` child (a typed Properties
+    /// child), keeping the element and its type attribute.
+    fn set_child_text(&mut self, name: &[u8], text: &str) {
+        let mut inside = false;
+        for ev in self.children.iter_mut() {
+            match ev {
+                Event::Start(e) if e.name().as_ref() == name => inside = true,
+                Event::Text(_) if inside => {
+                    *ev = Event::Text(BytesText::new(text).into_owned());
+                    return;
+                }
+                Event::End(e) if e.name().as_ref() == name => inside = false,
+                _ => {}
+            }
+        }
+    }
     fn has_child(&self, name: &[u8]) -> bool {
         self.children
             .iter()
@@ -712,17 +728,35 @@ fn emit_hyperlink(
 ) -> Result<(), quick_xml::Error> {
     let attr_dest = attr_value(&sub.start, b"Destination");
     let child_dest = sub.child_text(b"Destination");
-    let source_ok = attr_value(&sub.start, b"Source") == h.source;
-    let key_ok = match key {
-        Some(k) => attr_value(&sub.start, b"DestinationUniqueKey") == Some(k.to_string()),
-        None => true,
-    };
-    let canonical = attr_dest.is_none()
-        && child_dest.as_deref() == h.destination.as_deref()
-        && source_ok
-        && key_ok
-        && !sub.empty;
-    if canonical {
+    // InDesign's own spelling (the destination a typed `<Properties>`
+    // child, never an attribute) is edited IN PLACE: its name, source,
+    // key and destination brought to the model, every appearance setting
+    // (Visible, Highlight, BorderColor, …) kept. Rewriting it whole reset
+    // those to the writer's defaults on any edit of where it goes.
+    if attr_dest.is_none() && child_dest.is_some() && !sub.empty {
+        let name = h.name.as_deref();
+        let start = patch_start(
+            &sub.start,
+            |k, raw| match k {
+                b"Name" => Some(opt_str_patch(std::str::from_utf8(raw).ok(), name)),
+                b"Source" => Some(opt_str_patch(
+                    std::str::from_utf8(raw).ok(),
+                    h.source.as_deref(),
+                )),
+                b"DestinationUniqueKey" => {
+                    key.map(|k| opt_str_patch(std::str::from_utf8(raw).ok(), Some(&k.to_string())))
+                }
+                _ => None,
+            },
+            &[],
+        )?;
+        let start = unchanged_or(&sub.start, start);
+        let mut sub = Subtree { start, ..sub };
+        if let Some(dest) = h.destination.as_deref() {
+            if child_dest.as_deref() != Some(dest) {
+                sub.set_child_text(b"Destination", dest);
+            }
+        }
         return sub.replay(writer);
     }
     write_hyperlink(writer, h, key)
