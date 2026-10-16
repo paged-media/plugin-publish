@@ -8,9 +8,9 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 128376,
+      "covered": 128650,
       "total": 633952,
-      "value": 0.202501
+      "value": 0.202933
     },
     "impactImport": {
       "covered": 25407,
@@ -18,12 +18,12 @@
       "value": 0.464759
     },
     "weightedExport": {
-      "covered": 90555,
+      "covered": 90826,
       "total": 633952,
-      "value": 0.142842
+      "value": 0.14327
     },
     "misplacedReads": 30,
-    "unseenReads": 347,
+    "unseenReads": 357,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -472,6 +472,7 @@
     "Resources/Styles|ParagraphStyle@OTFFraction|attr",
     "Resources/Styles|ParagraphStyle@OTFHistorical|attr",
     "Resources/Styles|ParagraphStyle@OTFOrdinal|attr",
+    "Resources/Styles|ParagraphStyle@OTFProportionalMetrics|attr",
     "Resources/Styles|ParagraphStyle@OTFSlashedZero|attr",
     "Resources/Styles|ParagraphStyle@OTFStylisticAlternate|attr",
     "Resources/Styles|ParagraphStyle@OTFStylisticSets|attr",
@@ -1045,6 +1046,7 @@
     "Stories|ParagraphStyleRange@Hyphenation|attr",
     "Stories|ParagraphStyleRange@Justification|attr",
     "Stories|ParagraphStyleRange@KeepWithNext|attr",
+    "Stories|ParagraphStyleRange@KinsokuSet|properties-child",
     "Stories|ParagraphStyleRange@KinsokuType|attr",
     "Stories|ParagraphStyleRange@LastLineIndent|attr",
     "Stories|ParagraphStyleRange@LeftIndent|attr",
@@ -1551,6 +1553,7 @@
     "Resources/Styles|ParagraphStyle@OTFFraction|attr",
     "Resources/Styles|ParagraphStyle@OTFHistorical|attr",
     "Resources/Styles|ParagraphStyle@OTFOrdinal|attr",
+    "Resources/Styles|ParagraphStyle@OTFProportionalMetrics|attr",
     "Resources/Styles|ParagraphStyle@OTFSlashedZero|attr",
     "Resources/Styles|ParagraphStyle@OTFStylisticAlternate|attr",
     "Resources/Styles|ParagraphStyle@OTFStylisticSets|attr",
