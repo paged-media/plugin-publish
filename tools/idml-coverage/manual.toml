@@ -1477,3 +1477,7 @@ keys = [
   "ParagraphDestination@Name",
   "ParagraphDestination@Self",
 ]
+
+[[unseen]]
+reason = "Endnotes: no corpus document has one. Their spelling was asked of InDesign 20.0.1 (core endnote-probe, 2026-10-16): an <Endnote Self EndnoteTextRange/> reference in the host text, the endnote story's <EndnoteRange Self SourceEndnote>, and the <EndnoteTextFrame> that hosts the endnote story (read as a text frame, so every frame attribute counts as read on it)."
+elements = ["EndnoteTextFrame", "Endnote", "EndnoteRange"]

@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 130818,
+      "covered": 131574,
       "total": 633952,
-      "value": 0.206353
+      "value": 0.207546
     },
     "impactImport": {
-      "covered": 26491,
+      "covered": 26498,
       "total": 54667,
-      "value": 0.484589
+      "value": 0.484717
     },
     "weightedExport": {
       "covered": 90826,
@@ -23,7 +23,7 @@
       "value": 0.14327
     },
     "misplacedReads": 30,
-    "unseenReads": 359,
+    "unseenReads": 392,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -1074,6 +1074,7 @@
     "Stories|Row@Self|attr",
     "Stories|Row@SingleRowHeight|attr",
     "Stories|Story@AppliedTOCStyle|attr",
+    "Stories|Story@IsEndnoteStory|attr",
     "Stories|Story@StoryDirection|attr",
     "Stories|StoryPreference@OpticalMarginAlignment|attr",
     "Stories|StoryPreference@OpticalMarginSize|attr",
@@ -1149,6 +1150,14 @@
     "designmap|Document@Name|attr",
     "designmap|Document@RGBProfile|attr",
     "designmap|Document@SolidColorIntent|attr",
+    "designmap|EndnoteOption@EndnoteMarkerStyle|attr",
+    "designmap|EndnoteOption@EndnotePrefix|attr",
+    "designmap|EndnoteOption@EndnoteSeparatorText|attr",
+    "designmap|EndnoteOption@EndnoteSuffix|attr",
+    "designmap|EndnoteOption@EndnoteTextStyle|attr",
+    "designmap|EndnoteOption@EndnoteTitleStyle|attr",
+    "designmap|EndnoteOption@EndnoteTitle|attr",
+    "designmap|EndnoteOption@StartEndnoteNumberAt|attr",
     "designmap|FileNameVariablePreference@IncludeExtension|attr",
     "designmap|FileNameVariablePreference@IncludePath|attr",
     "designmap|FileNameVariablePreference@TextAfter|attr",
