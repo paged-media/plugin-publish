@@ -567,6 +567,16 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // they don't unbalance the stack.)
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
                         let self_id = attr(&e, b"Self").unwrap_or_default();
+                        // A cross-reference's format (core ADR 169): the
+                        // source's text is built from it on update.
+                        if e.name().as_ref() == b"CrossReferenceSource" {
+                            out.cross_reference_sources.push(
+                                paged_model::CrossReferenceSourceDef {
+                                    self_id: self_id.clone(),
+                                    format: attr(&e, b"AppliedFormat"),
+                                },
+                            );
+                        }
                         // A `<Br/>` held just before the source was interior
                         // after all — the source is content — and it belongs
                         // to the text BEFORE the source, not inside it. Held
@@ -1612,6 +1622,35 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     buf.clear();
                     continue;
                 }
+                // A destination standing in the story's text (core ADR
+                // 167): a paragraph destination, or a text anchor,
+                // recorded where it stands. In a table or a note it is
+                // not addressed by paragraph and is left to the
+                // designmap's page-level reading.
+                if matches!(name, b"ParagraphDestination" | b"HyperlinkTextDestination") {
+                    if let (Some(self_id), true) = (
+                        attr(&e, b"Self"),
+                        table_stack.is_empty() && footnote_stack.is_empty(),
+                    ) {
+                        let before: usize = current_paragraph
+                            .as_ref()
+                            .map(|p| p.runs.iter().map(|r| r.text.chars().count()).sum())
+                            .unwrap_or(0);
+                        let open = current_run
+                            .as_ref()
+                            .map(|r| r.text.chars().count())
+                            .unwrap_or(0);
+                        out.destinations.push(paged_model::StoryDestination {
+                            self_id,
+                            name: attr(&e, b"Name"),
+                            paragraph: out.paragraphs.len() as u32,
+                            offset: (before + open + pending_breaks) as u32,
+                            paragraph_destination: name == b"ParagraphDestination",
+                        });
+                    }
+                    buf.clear();
+                    continue;
+                }
                 // Phase 5 — `<PageReference>` / `<IndexEntry>` /
                 // `<Index>` self-closing markers. Capture the
                 // indexed term onto the current paragraph so the
@@ -2117,7 +2156,7 @@ pub(crate) fn parse_anchored_object_setting(
 /// `AppliedTopic` — without one of those there's nothing to index.
 fn parse_index_marker(e: &quick_xml::events::BytesStart) -> Option<IndexMarker> {
     let topic_name = attr(e, b"TopicName");
-    // InDesign 20.0.1 names the topic `ReferencedTopic` (core ADR 166);
+    // InDesign 20.0.1 names the topic `ReferencedTopic` (core ADR 168);
     // `AppliedTopic` is the engine's older spelling.
     let applied_topic = attr(e, b"AppliedTopic").or_else(|| attr(e, b"ReferencedTopic"));
     // At least one of the two is required for the marker to mean
@@ -2148,8 +2187,11 @@ fn parse_tab_stop(e: &quick_xml::events::BytesStart) -> Option<TabStop> {
     })
 }
 
-/// The inline `<HyperlinkTextDestination Self="…" Name="…"/>` markers a
-/// story carries, in document order, as `(self_id, name)`.
+/// The inline `<HyperlinkTextDestination Self="…" Name="…"/>` and
+/// `<ParagraphDestination …/>` markers a story carries, in document
+/// order, as `(self_id, name)`. A paragraph destination (where InDesign
+/// points a cross-reference to a paragraph, core ADR 169) resolves to its
+/// story's page the same way.
 ///
 /// InDesign keeps a text destination (the target of a cross-reference
 /// or a bookmark) as an EMPTY MARKER at the anchor position inside the
@@ -2166,7 +2208,10 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Start(ref e) | Event::Empty(ref e)
-                if e.name().as_ref() == b"HyperlinkTextDestination" =>
+                if matches!(
+                    e.name().as_ref(),
+                    b"HyperlinkTextDestination" | b"ParagraphDestination"
+                ) =>
             {
                 if let Some(id) = attr(e, b"Self") {
                     out.push((id, attr(e, b"Name")));
@@ -3893,8 +3938,66 @@ mod tests {
         );
     }
 
+    /// A cross-reference's source names its format, and a destination
+    /// is recorded where it stands (`xref-probe`, core ADR 169).
+    #[test]
+    fn cross_reference_sources_and_destinations_are_recorded() {
+        let xml = r#"<Story Self="u1">
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+	<CharacterStyleRange><Content>Full: </Content></CharacterStyleRange>
+	<CrossReferenceSource Self="u13d" AppliedFormat="u9f" Name="Hyperlink 1" Hidden="false" AppliedCharacterStyle="n">
+		<CharacterStyleRange><Content>“Where Things Are” on page </Content></CharacterStyleRange>
+		<CharacterStyleRange PageNumberType="TextVariable"><TextVariableInstance Self="u141" Name="&lt;?AID 001b?&gt;TV XRefPageNumber" ResultText="2" AssociatedTextVariable="dTextVariablen&lt;?AID 001b?&gt;TV XRefPageNumber" /></CharacterStyleRange>
+	</CrossReferenceSource>
+	<CharacterStyleRange><Br /></CharacterStyleRange>
+</ParagraphStyleRange>
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Heading">
+	<CharacterStyleRange>
+		<ParagraphDestination Self="ParagraphDestination/Anker 1" Name="Anker 1" Hidden="false" DestinationUniqueKey="1" />
+		<Content>Where Things Are</Content>
+		<Br />
+	</CharacterStyleRange>
+</ParagraphStyleRange>
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+	<CharacterStyleRange><Content>The </Content></CharacterStyleRange>
+	<CharacterStyleRange><HyperlinkTextDestination Self="HyperlinkTextDestination/the anchor" Name="the anchor" Hidden="false" DestinationUniqueKey="2" /></CharacterStyleRange>
+	<CharacterStyleRange><Content>anchored word.</Content></CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>"#;
+        let s = parse_story(xml.as_bytes()).unwrap();
+        assert_eq!(
+            s.cross_reference_sources,
+            [paged_model::CrossReferenceSourceDef {
+                self_id: "u13d".into(),
+                format: Some("u9f".into()),
+            }]
+        );
+        assert_eq!(s.destinations.len(), 2, "{:?}", s.destinations);
+        let p = &s.destinations[0];
+        assert_eq!(p.self_id, "ParagraphDestination/Anker 1");
+        assert_eq!(p.name.as_deref(), Some("Anker 1"));
+        assert_eq!(
+            (p.paragraph, p.offset, p.paragraph_destination),
+            (1, 0, true)
+        );
+        let t = &s.destinations[1];
+        assert_eq!(t.name.as_deref(), Some("the anchor"));
+        assert_eq!(
+            (t.paragraph, t.offset, t.paragraph_destination),
+            (2, 4, false)
+        );
+        // The paragraphs' text is untouched by the markers.
+        let text: Vec<String> = s
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert_eq!(text[1], "Where Things Are");
+        assert_eq!(text[2], "The anchored word.");
+    }
+
     /// InDesign 20.0.1 writes a page reference's topic as
-    /// `ReferencedTopic` (`index-probe`, core ADR 166).
+    /// `ReferencedTopic` (`index-probe`, core ADR 168).
     #[test]
     fn a_page_reference_names_its_topic_as_indesign_writes_it() {
         let xml = br#"<Story>

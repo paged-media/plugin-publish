@@ -26,9 +26,10 @@ use crate::ParseError;
 pub use paged_model::DesignMap;
 
 pub use paged_model::{
-    Article, Bookmark, ColorSettings, CrossReference, DocumentPreference, FootnoteOptions,
-    GridPreference, Hyperlink, HyperlinkDestination, HyperlinkDestinationKind, IndexCrossReference,
-    IndexOptions, IndexTopic, Layer, NumberingStyle, Section, SpreadRef, StoryRef, TextVariable,
+    Article, Bookmark, ColorSettings, CrossReference, CrossReferenceBlock, CrossReferenceFormat,
+    DocumentPreference, FootnoteOptions, GridPreference, Hyperlink, HyperlinkDestination,
+    HyperlinkDestinationKind, IndexCrossReference, IndexOptions, IndexTopic, Layer, NumberingStyle,
+    Section, SpreadRef, StoryRef, TextVariable,
 };
 
 /// Parse a `designmap.xml` byte slice.
@@ -45,8 +46,11 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // doesn't push, keeping flat documents byte-identical.
     let mut layer_stack: Vec<String> = Vec::new();
     // Open `<Topic>` elements: InDesign nests a subtopic inside its parent
-    // (core ADR 166), and a topic's `<CrossReference>`s inside it.
+    // (core ADR 168), and a topic's `<CrossReference>`s inside it.
     let mut topic_stack: Vec<String> = Vec::new();
+    // The open `<CrossReferenceFormat>` (index into
+    // `out.cross_reference_formats`), whose `<BuildingBlock>`s fold in.
+    let mut current_xref_format: Option<usize> = None;
     // W1.4 — the `<TextVariable>` currently being parsed (the
     // wrapping form parks here so its `<TextVariablePreference>`
     // child can fold in before `</TextVariable>` pushes it).
@@ -129,6 +133,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 b"Topic" => {
                     topic_stack.pop();
                 }
+                b"CrossReferenceFormat" => current_xref_format = None,
                 b"PageNumberStyle" | b"Destination" => pending = None,
                 _ => {}
             }
@@ -411,6 +416,36 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                             self_id,
                             name: attr(&e, b"Name"),
                             sort_order: attr(&e, b"SortOrder"),
+                        });
+                    }
+                }
+                // What a cross-reference says, as building blocks (core
+                // ADR 169). The custom text is verbatim: its spaces are
+                // part of it ("“ on page ").
+                if e.name().as_ref() == b"CrossReferenceFormat" {
+                    if let Some(self_id) = attr(&e, b"Self") {
+                        out.cross_reference_formats.push(CrossReferenceFormat {
+                            self_id,
+                            name: crate::util::attr_unescaped(&e, b"Name"),
+                            applied_character_style: attr(&e, b"AppliedCharacterStyle"),
+                            blocks: Vec::new(),
+                        });
+                        if is_start {
+                            current_xref_format = Some(out.cross_reference_formats.len() - 1);
+                        }
+                    }
+                }
+                if e.name().as_ref() == b"BuildingBlock" {
+                    if let Some(format) =
+                        current_xref_format.and_then(|i| out.cross_reference_formats.get_mut(i))
+                    {
+                        format.blocks.push(CrossReferenceBlock {
+                            block_type: attr(&e, b"BlockType").unwrap_or_default(),
+                            custom_text: crate::util::attr_unescaped(&e, b"CustomText"),
+                            applied_character_style: attr(&e, b"AppliedCharacterStyle"),
+                            applied_delimiter: crate::util::attr_unescaped(&e, b"AppliedDelimiter"),
+                            include_delimiter: attr(&e, b"IncludeDelimiter")
+                                .and_then(|s| s.parse().ok()),
                         });
                     }
                 }
@@ -824,7 +859,7 @@ mod tests {
         assert_eq!(dm.stories[0].src, "Stories/Story_u10.xml");
     }
 
-    /// InDesign 20.0.1's index (`index-probe`, core ADR 166): a subtopic
+    /// InDesign 20.0.1's index (`index-probe`, core ADR 168): a subtopic
     /// nests inside its parent, a See reference inside its topic, and the
     /// options live in `Preferences.xml`.
     #[test]
@@ -886,6 +921,45 @@ mod tests {
         assert_eq!(o.before_cross_reference_separator.as_deref(), Some(". "));
         assert_eq!(o.page_range_separator.as_deref(), Some("^="));
         assert_eq!(o.entry_end_separator.as_deref(), Some(""));
+    }
+
+    /// InDesign 20.0.1's cross-reference formats (`xref-probe`, core ADR
+    /// 169): building blocks, the custom text verbatim, in the document's
+    /// own words.
+    #[test]
+    fn reads_cross_reference_formats_as_indesign_writes_them() {
+        let dm = parse_designmap(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<CrossReferenceFormat Self="u9f" Name="Full Paragraph &amp; Page Number" AppliedCharacterStyle="n">
+		<BuildingBlock Self="u9fBuildingBlock0" BlockType="CustomStringBuildingBlock" AppliedCharacterStyle="n" CustomText="“" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+		<BuildingBlock Self="u9fBuildingBlock1" BlockType="FullParagraphBuildingBlock" AppliedCharacterStyle="n" CustomText="$ID/" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+		<BuildingBlock Self="u9fBuildingBlock2" BlockType="CustomStringBuildingBlock" AppliedCharacterStyle="n" CustomText="” on page " AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+		<BuildingBlock Self="u9fBuildingBlock3" BlockType="PageNumberBuildingBlock" AppliedCharacterStyle="n" CustomText="$ID/" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+	</CrossReferenceFormat>
+	<CrossReferenceFormat Self="ua5" Name="Page Number" AppliedCharacterStyle="n">
+		<BuildingBlock Self="ua5BuildingBlock0" BlockType="PageNumberBuildingBlock" AppliedCharacterStyle="n" CustomText="$ID/" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+	</CrossReferenceFormat>
+</Document>"#
+                .as_bytes(),
+        )
+        .unwrap();
+        let f = &dm.cross_reference_formats;
+        assert_eq!(f.len(), 2);
+        assert_eq!(f[0].name.as_deref(), Some("Full Paragraph & Page Number"));
+        let kinds: Vec<&str> = f[0].blocks.iter().map(|b| b.block_type.as_str()).collect();
+        assert_eq!(
+            kinds,
+            [
+                "CustomStringBuildingBlock",
+                "FullParagraphBuildingBlock",
+                "CustomStringBuildingBlock",
+                "PageNumberBuildingBlock"
+            ]
+        );
+        assert_eq!(f[0].blocks[2].custom_text.as_deref(), Some("” on page "));
+        assert_eq!(f[0].blocks[0].include_delimiter, Some(false));
+        assert_eq!(f[1].blocks.len(), 1);
     }
 
     const LAYERS_SAMPLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>

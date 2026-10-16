@@ -1470,3 +1470,10 @@ keys = [
   "CrossReference@Self",
   "PageReference@ReferencedTopic",
 ]
+
+[[unseen]]
+reason = "Paragraph destinations (where InDesign points a cross-reference at a paragraph): no corpus document has one. Their spelling was asked of InDesign 20.0.1 (core tools/indesign-export/xref-probe, 2026-10-16: an inline <ParagraphDestination Self Name Hidden DestinationUniqueKey/> at the start of the paragraph)."
+keys = [
+  "ParagraphDestination@Name",
+  "ParagraphDestination@Self",
+]
