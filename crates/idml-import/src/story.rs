@@ -1986,6 +1986,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                                 auto_grow: attr(&e, b"AutoGrow").and_then(|s| s.parse().ok()),
                                 keep_with_next_row: attr(&e, b"KeepWithNextRow")
                                     .and_then(|s| s.parse().ok()),
+                                // Where the row starts, as a paragraph's
+                                // StartParagraph (core ADR 175).
+                                start_row: attr(&e, b"StartRow")
+                                    .and_then(|s| StartParagraph::from_idml(&s)),
                                 ..TableRow::default()
                             });
                         }

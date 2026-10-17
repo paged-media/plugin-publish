@@ -12,20 +12,22 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-//! A source table row's `AutoGrow` and `KeepWithNextRow`, patched back.
+//! A source table row's `AutoGrow`, `KeepWithNextRow` and `StartRow`,
+//! patched back.
 //!
-//! Both decide where InDesign puts a row (core `tables-rows` pages
-//! 10-11, measured on InDesign 20.0.1): `AutoGrow="false"` keeps a row
-//! at its `SingleRowHeight` and oversets what does not fit, and
-//! `KeepWithNextRow="true"` moves a run of kept rows to the next frame
-//! together. They are model-owned (`TableRow::auto_grow` /
-//! `keep_with_next_row`), so a source `<Row>` whose model row says
-//! something else is patched: a changed value in place, a new one
-//! appended, a cleared one dropped (absent = InDesign's default,
-//! `AutoGrow` true and `KeepWithNextRow` false). A row whose model still
-//! says what its source spells keeps its bytes, so an unmutated save is
-//! byte-identical. Rows the model does not know (no `Self` match) pass
-//! through.
+//! All three decide where InDesign puts a row (core `tables-rows` pages
+//! 10-11 and `table-start-row`, measured on InDesign 20.0.1):
+//! `AutoGrow="false"` keeps a row at its `SingleRowHeight` and oversets
+//! what does not fit, `KeepWithNextRow="true"` moves a run of kept rows to
+//! the next frame together, and `StartRow` moves a row and the rows after
+//! it to the next column, frame or page. They are model-owned
+//! (`TableRow::auto_grow` / `keep_with_next_row` / `start_row`), so a
+//! source `<Row>` whose model row says something else is patched: a
+//! changed value in place, a new one appended, a cleared one dropped
+//! (absent = InDesign's default: `AutoGrow` true, `KeepWithNextRow` false,
+//! `StartRow` Anywhere). A row whose model still says what its source
+//! spells keeps its bytes, so an unmutated save is byte-identical. Rows
+//! the model does not know (no `Self` match) pass through.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -34,19 +36,34 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use idml_import::{Paragraph, Story};
+use paged_model::StartParagraph;
 
 use crate::rewrite::{patch_start, Patch};
 
-/// `(auto_grow, keep_with_next_row)` of every row in `story`, keyed by
-/// the row's `Self` — nested tables (a cell's paragraphs) and footnotes
-/// walked too.
-pub fn row_attrs_of(story: &Story) -> HashMap<String, (Option<bool>, Option<bool>)> {
-    fn walk(paragraphs: &[Paragraph], out: &mut HashMap<String, (Option<bool>, Option<bool>)>) {
+/// The model-owned placement attributes of one row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowAttrs {
+    pub auto_grow: Option<bool>,
+    pub keep_with_next_row: Option<bool>,
+    pub start_row: Option<StartParagraph>,
+}
+
+/// The [`RowAttrs`] of every row in `story`, keyed by the row's `Self` —
+/// nested tables (a cell's paragraphs) and footnotes walked too.
+pub fn row_attrs_of(story: &Story) -> HashMap<String, RowAttrs> {
+    fn walk(paragraphs: &[Paragraph], out: &mut HashMap<String, RowAttrs>) {
         for p in paragraphs {
             if let Some(t) = &p.table {
                 for r in &t.rows {
                     if let Some(id) = &r.self_id {
-                        out.insert(id.clone(), (r.auto_grow, r.keep_with_next_row));
+                        out.insert(
+                            id.clone(),
+                            RowAttrs {
+                                auto_grow: r.auto_grow,
+                                keep_with_next_row: r.keep_with_next_row,
+                                start_row: r.start_row,
+                            },
+                        );
                     }
                 }
                 for c in &t.cells {
@@ -66,6 +83,7 @@ pub fn row_attrs_of(story: &Story) -> HashMap<String, (Option<bool>, Option<bool
 const ROW: &[u8] = b"Row";
 const AUTO_GROW: &[u8] = b"AutoGrow";
 const KEEP_WITH_NEXT_ROW: &[u8] = b"KeepWithNextRow";
+const START_ROW: &[u8] = b"StartRow";
 
 fn self_of(e: &BytesStart) -> Option<String> {
     e.attributes()
@@ -92,31 +110,47 @@ fn bool_patch(raw: &[u8], model: Option<bool>) -> Patch {
     }
 }
 
-/// Whether `e` (a `<Row>`) spells something other than its model row.
-/// A source value that does not parse as a bool read as `None`, so the
-/// comparison is against what the reader made of it.
-fn differs(e: &BytesStart, model: (Option<bool>, Option<bool>)) -> bool {
-    let read =
-        |k| raw_of(e, k).and_then(|raw| std::str::from_utf8(&raw).ok()?.parse::<bool>().ok());
-    read(AUTO_GROW) != model.0 || read(KEEP_WITH_NEXT_ROW) != model.1
+fn read_start(raw: &[u8]) -> Option<StartParagraph> {
+    StartParagraph::from_idml(std::str::from_utf8(raw).ok()?)
 }
 
-fn patched(
-    e: &BytesStart,
-    model: (Option<bool>, Option<bool>),
-) -> Result<BytesStart<'static>, quick_xml::Error> {
+/// What the model's start rule asks of the source `StartRow` `raw`.
+fn start_patch(raw: &[u8], model: Option<StartParagraph>) -> Patch {
+    match model {
+        Some(v) if read_start(raw) == Some(v) => Patch::Keep,
+        Some(v) => Patch::Set(v.as_idml().to_string()),
+        None => Patch::Remove,
+    }
+}
+
+/// Whether `e` (a `<Row>`) spells something other than its model row.
+/// A source value that does not parse read as `None`, so the comparison
+/// is against what the reader made of it.
+fn differs(e: &BytesStart, model: RowAttrs) -> bool {
+    let read =
+        |k| raw_of(e, k).and_then(|raw| std::str::from_utf8(&raw).ok()?.parse::<bool>().ok());
+    read(AUTO_GROW) != model.auto_grow
+        || read(KEEP_WITH_NEXT_ROW) != model.keep_with_next_row
+        || raw_of(e, START_ROW).and_then(|raw| read_start(&raw)) != model.start_row
+}
+
+fn patched(e: &BytesStart, model: RowAttrs) -> Result<BytesStart<'static>, quick_xml::Error> {
     let mut extras: Vec<(&str, String)> = Vec::new();
-    if let Some(v) = model.0 {
+    if let Some(v) = model.auto_grow {
         extras.push(("AutoGrow", v.to_string()));
     }
-    if let Some(v) = model.1 {
+    if let Some(v) = model.keep_with_next_row {
         extras.push(("KeepWithNextRow", v.to_string()));
+    }
+    if let Some(v) = model.start_row {
+        extras.push(("StartRow", v.as_idml().to_string()));
     }
     patch_start(
         e,
         |k, raw| match k {
-            AUTO_GROW => Some(bool_patch(raw, model.0)),
-            KEEP_WITH_NEXT_ROW => Some(bool_patch(raw, model.1)),
+            AUTO_GROW => Some(bool_patch(raw, model.auto_grow)),
+            KEEP_WITH_NEXT_ROW => Some(bool_patch(raw, model.keep_with_next_row)),
+            START_ROW => Some(start_patch(raw, model.start_row)),
             _ => None,
         },
         &extras,
@@ -124,13 +158,13 @@ fn patched(
 }
 
 /// Patch every source `<Row>` whose model row (`known`, from
-/// [`row_attrs_of`]) spells a different `AutoGrow` / `KeepWithNextRow`.
-/// Byte-identical when none does.
+/// [`row_attrs_of`]) spells a different `AutoGrow` / `KeepWithNextRow` /
+/// `StartRow`. Byte-identical when none does.
 pub fn patch_row_attrs(
     original: &[u8],
-    known: &HashMap<String, (Option<bool>, Option<bool>)>,
+    known: &HashMap<String, RowAttrs>,
 ) -> Result<Vec<u8>, quick_xml::Error> {
-    let model_of = |e: &BytesStart| -> Option<(Option<bool>, Option<bool>)> {
+    let model_of = |e: &BytesStart| -> Option<RowAttrs> {
         if e.name().as_ref() != ROW {
             return None;
         }
@@ -187,22 +221,33 @@ pub fn patch_row_attrs(
 mod tests {
     use super::*;
 
-    const SRC: &str = r#"<Story Self="u1"><Table Self="t"><Row Self="r0" Name="0" SingleRowHeight="20" AutoGrow="false"/><Row Self="r1" Name="1" SingleRowHeight="20" KeepWithNextRow="true"/><Row Self="r2" Name="2" SingleRowHeight="20"/></Table></Story>"#;
+    const SRC: &str = r#"<Story Self="u1"><Table Self="t"><Row Self="r0" Name="0" SingleRowHeight="20" AutoGrow="false"/><Row Self="r1" Name="1" SingleRowHeight="20" KeepWithNextRow="true"/><Row Self="r2" Name="2" SingleRowHeight="20"/><Row Self="r3" Name="3" SingleRowHeight="20" StartRow="NextFrame"/></Table></Story>"#;
 
-    fn known(
-        rows: &[(&str, Option<bool>, Option<bool>)],
-    ) -> HashMap<String, (Option<bool>, Option<bool>)> {
+    /// `(Self, AutoGrow, KeepWithNextRow, StartRow)` of a model row.
+    type Row<'a> = (&'a str, Option<bool>, Option<bool>, Option<StartParagraph>);
+
+    fn known(rows: &[Row]) -> HashMap<String, RowAttrs> {
         rows.iter()
-            .map(|(id, a, k)| (id.to_string(), (*a, *k)))
+            .map(|(id, a, k, s)| {
+                (
+                    id.to_string(),
+                    RowAttrs {
+                        auto_grow: *a,
+                        keep_with_next_row: *k,
+                        start_row: *s,
+                    },
+                )
+            })
             .collect()
     }
 
     #[test]
     fn rows_the_model_still_agrees_with_are_byte_identical() {
         let k = known(&[
-            ("r0", Some(false), None),
-            ("r1", None, Some(true)),
-            ("r2", None, None),
+            ("r0", Some(false), None, None),
+            ("r1", None, Some(true), None),
+            ("r2", None, None, None),
+            ("r3", None, None, Some(StartParagraph::NextFrame)),
         ]);
         assert_eq!(patch_row_attrs(SRC.as_bytes(), &k).unwrap(), SRC.as_bytes());
     }
@@ -210,14 +255,25 @@ mod tests {
     #[test]
     fn a_changed_value_patches_in_place_a_new_one_appends_a_cleared_one_drops() {
         let k = known(&[
-            ("r0", Some(true), None),
-            ("r1", None, None),
-            ("r2", Some(false), Some(true)),
+            ("r0", Some(true), None, None),
+            ("r1", None, None, Some(StartParagraph::NextOddPage)),
+            ("r2", Some(false), Some(true), None),
+            ("r3", None, None, Some(StartParagraph::NextColumn)),
         ]);
         let out = String::from_utf8(patch_row_attrs(SRC.as_bytes(), &k).unwrap()).unwrap();
         assert_eq!(
             out,
-            r#"<Story Self="u1"><Table Self="t"><Row Self="r0" Name="0" SingleRowHeight="20" AutoGrow="true"/><Row Self="r1" Name="1" SingleRowHeight="20"/><Row Self="r2" Name="2" SingleRowHeight="20" AutoGrow="false" KeepWithNextRow="true"/></Table></Story>"#
+            r#"<Story Self="u1"><Table Self="t"><Row Self="r0" Name="0" SingleRowHeight="20" AutoGrow="true"/><Row Self="r1" Name="1" SingleRowHeight="20" StartRow="NextOddPage"/><Row Self="r2" Name="2" SingleRowHeight="20" AutoGrow="false" KeepWithNextRow="true"/><Row Self="r3" Name="3" SingleRowHeight="20" StartRow="NextColumn"/></Table></Story>"#
+        );
+    }
+
+    #[test]
+    fn a_cleared_start_row_drops_its_attribute() {
+        let k = known(&[("r3", None, None, None)]);
+        let out = String::from_utf8(patch_row_attrs(SRC.as_bytes(), &k).unwrap()).unwrap();
+        assert!(
+            out.contains(r#"<Row Self="r3" Name="3" SingleRowHeight="20"/>"#),
+            "{out}"
         );
     }
 
