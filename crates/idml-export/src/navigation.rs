@@ -101,6 +101,8 @@ pub(crate) struct NavigationPlan<'a> {
     pub destinations: Vec<&'a HyperlinkDestination>,
     pub hyperlinks: &'a [Hyperlink],
     pub bookmarks: &'a [Bookmark],
+    /// Each nested bookmark's parent (core ADR 173).
+    pub bookmark_parents: &'a BTreeMap<String, String>,
     pub conditions: &'a BTreeMap<String, ConditionDef>,
     pub condition_sets: &'a BTreeMap<String, ConditionSetDef>,
     /// Indicator colours the model does not carry, scraped from wherever
@@ -361,6 +363,7 @@ fn write_destination(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     d: &HyperlinkDestination,
     key: u64,
+    bookmark_only: bool,
 ) -> Result<(), quick_xml::Error> {
     let short = d
         .self_id
@@ -380,6 +383,39 @@ fn write_destination(
                 ("DestinationUniqueKey", key.to_string()),
             ],
         ),
+        // A page destination only bookmarks go to, as InDesign makes one
+        // for a bookmark (core ADR 173, `bookmarks-probe`): hidden, the
+        // page fitted to the window, its view bounds unset.
+        HyperlinkDestinationKind::Page(page) if bookmark_only => {
+            emit_start_with_attrs(
+                writer,
+                "HyperlinkPageDestination",
+                &[
+                    ("Self", d.self_id.clone()),
+                    ("Name", short),
+                    ("NameManually", "true".to_string()),
+                    ("DestinationPage", page.clone()),
+                    ("ViewSetting", "FitWindow".to_string()),
+                    ("ViewPercentage", "100".to_string()),
+                    ("Hidden", "true".to_string()),
+                    ("DestinationUniqueKey", key.to_string()),
+                ],
+            )?;
+            writer.write_event(Event::Start(BytesStart::new("Properties")))?;
+            emit_empty_with_attrs(
+                writer,
+                "ViewBounds",
+                &[
+                    ("Top", "1e+256".to_string()),
+                    ("Left", "1e+256".to_string()),
+                    ("Bottom", "1e+256".to_string()),
+                    ("Right", "1e+256".to_string()),
+                ],
+            )?;
+            writer.write_event(Event::End(BytesEnd::new("Properties")))?;
+            writer.write_event(Event::End(BytesEnd::new("HyperlinkPageDestination")))?;
+            Ok(())
+        }
         HyperlinkDestinationKind::Page(page) => emit_empty_with_attrs(
             writer,
             "HyperlinkPageDestination",
@@ -435,10 +471,7 @@ fn write_hyperlink(
     Ok(())
 }
 
-fn write_bookmark(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    b: &Bookmark,
-) -> Result<(), quick_xml::Error> {
+fn bookmark_attrs(b: &Bookmark) -> Vec<(&'static str, String)> {
     let mut attrs: Vec<(&str, String)> = vec![("Self", b.self_id.clone())];
     if let Some(n) = &b.name {
         attrs.push(("Name", n.clone()));
@@ -446,7 +479,60 @@ fn write_bookmark(
     if let Some(d) = &b.destination {
         attrs.push(("Destination", d.clone()));
     }
-    emit_empty_with_attrs(writer, "Bookmark", &attrs)
+    attrs
+}
+
+fn write_bookmark(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    b: &Bookmark,
+) -> Result<(), quick_xml::Error> {
+    emit_empty_with_attrs(writer, "Bookmark", &bookmark_attrs(b))
+}
+
+/// The model's bookmarks under `parent` (the top level for `None`), in
+/// order, each `<Bookmark>` holding its children's, as InDesign nests them
+/// (core ADR 173).
+fn write_bookmark_tree(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    bookmarks: &[Bookmark],
+    parents: &BTreeMap<String, String>,
+    parent: Option<&str>,
+) -> Result<(), quick_xml::Error> {
+    for b in bookmarks
+        .iter()
+        .filter(|b| parents.get(&b.self_id).map(String::as_str) == parent)
+    {
+        let has_children = bookmarks
+            .iter()
+            .any(|c| parents.get(&c.self_id) == Some(&b.self_id));
+        if has_children {
+            emit_start_with_attrs(writer, "Bookmark", &bookmark_attrs(b))?;
+            write_bookmark_tree(writer, bookmarks, parents, Some(&b.self_id))?;
+            writer.write_event(Event::End(BytesEnd::new("Bookmark")))?;
+        } else {
+            write_bookmark(writer, b)?;
+        }
+    }
+    Ok(())
+}
+
+/// A bookmark as a saved tree says it: `Self`, `Name`, `Destination` and
+/// its parent's `Self`.
+type BookmarkRow = (String, Option<String>, Option<String>, Option<String>);
+
+/// Each bookmark's row, in order.
+fn bookmark_rows(bookmarks: &[Bookmark], parents: &BTreeMap<String, String>) -> Vec<BookmarkRow> {
+    bookmarks
+        .iter()
+        .map(|b| {
+            (
+                b.self_id.clone(),
+                b.name.clone(),
+                b.destination.clone(),
+                parents.get(&b.self_id).cloned(),
+            )
+        })
+        .collect()
 }
 
 fn write_condition(
@@ -908,6 +994,25 @@ pub(crate) fn patch_designmap_navigation(
         .iter()
         .map(|b| (b.self_id.as_str(), b))
         .collect();
+    // The bookmarks are written from the model, whole and nested, with the
+    // new navigation, once the tree differs from the source's (a bookmark
+    // renamed, moved, added or deleted; core ADR 173); otherwise each
+    // replays.
+    let source_tree = idml_import::designmap::parse_designmap(original)
+        .map(|dm| bookmark_rows(&dm.bookmarks, &dm.bookmark_parents))
+        .unwrap_or_default();
+    let tree_changed = bookmark_rows(plan.bookmarks, plan.bookmark_parents) != source_tree;
+    // A page destination only bookmarks go to is written as InDesign
+    // writes a bookmark's.
+    let bookmark_only = |id: &str| {
+        plan.bookmarks
+            .iter()
+            .any(|b| b.destination.as_deref() == Some(id))
+            && !plan
+                .hyperlinks
+                .iter()
+                .any(|h| h.destination.as_deref() == Some(id))
+    };
     let sections_by_id: HashMap<&str, &SectionSpec> = plan
         .sections
         .iter()
@@ -970,6 +1075,10 @@ pub(crate) fn patch_designmap_navigation(
             }
             // Never a designmap element: it lives inline in its story.
             b"HyperlinkTextDestination" => Ok(()),
+            // Written whole with the new navigation instead, after every
+            // destination: InDesign drops a bookmark whose destination it
+            // has not read yet.
+            b"Bookmark" if tree_changed => Ok(()),
             b"Bookmark" => match id.as_deref().and_then(|i| bookmarks_by_id.get(i)) {
                 Some(_) => sub.replay(w),
                 None if id.is_some() => Ok(()),
@@ -1007,7 +1116,12 @@ pub(crate) fn patch_designmap_navigation(
         let mut written: HashSet<&str> = HashSet::new();
         for d in &plan.destinations {
             if !layout.destination_ids.contains(&d.self_id) && written.insert(&d.self_id) {
-                write_destination(w, d, key_of.get(&d.self_id).copied().unwrap_or(0))?;
+                write_destination(
+                    w,
+                    d,
+                    key_of.get(&d.self_id).copied().unwrap_or(0),
+                    bookmark_only(&d.self_id),
+                )?;
             }
         }
         for h in plan.hyperlinks {
@@ -1015,10 +1129,8 @@ pub(crate) fn patch_designmap_navigation(
                 write_hyperlink(w, h, hyperlink_key(h))?;
             }
         }
-        for b in plan.bookmarks {
-            if !layout.bookmark_ids.contains(&b.self_id) && written.insert(&b.self_id) {
-                write_bookmark(w, b)?;
-            }
+        if tree_changed {
+            write_bookmark_tree(w, plan.bookmarks, plan.bookmark_parents, None)?;
         }
         Ok(())
     };

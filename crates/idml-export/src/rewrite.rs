@@ -2698,13 +2698,21 @@ pub(crate) fn owned_ids(spread: &Spread) -> std::collections::HashSet<&str> {
     owned
 }
 
-/// True for the six element names that are page items. `<Group>` counts:
-/// it is a page item too, just a container one, and it occupies a z-slot
-/// among its siblings exactly like a rectangle does.
+/// True for the element names that are page items. `<Group>` counts: it
+/// is a page item too, just a container one, and it occupies a z-slot
+/// among its siblings exactly like a rectangle does. So does the
+/// `<EndnoteTextFrame>` the endnote story stands in (core ADR 170), which
+/// the reader takes for a text frame: known here, it is not minted again.
 pub(crate) fn is_page_item_name(name: &[u8]) -> bool {
     matches!(
         name,
-        b"TextFrame" | b"Rectangle" | b"Oval" | b"GraphicLine" | b"Polygon" | b"Group"
+        b"TextFrame"
+            | b"EndnoteTextFrame"
+            | b"Rectangle"
+            | b"Oval"
+            | b"GraphicLine"
+            | b"Polygon"
+            | b"Group"
     )
 }
 
@@ -5367,7 +5375,7 @@ fn resolve_run_skipping_new<'a>(
         let resolved = resolve_run(provenance, pos, para, *offset);
         match (resolved.2, para) {
             (Some(i), Some(p)) if is_new_run(new_runs, para, i) => {
-                write_split_run(writer, &p.runs[i], wrap, false)?;
+                write_split_run(writer, &p.runs[i], Some(p), wrap, false)?;
                 *offset += 1;
             }
             _ => return Ok(resolved),
@@ -5648,14 +5656,13 @@ fn rewrite_story_part(
                     // A note, hidden text or a tracked deletion: its ranges
                     // are its own, not the story's. Opening one activates
                     // the run's body so it is carried in order.
-                    let start = Event::Start(e.into_owned());
                     if opaque_depth == 0 {
                         opaque_direct = !csr_open;
                         if !opaque_direct {
-                            body.active = true;
-                            body.opaque.push((body.text.chars().count(), Vec::new()));
+                            body.open_opaque(&e);
                         }
                     }
+                    let start = Event::Start(e.into_owned());
                     opaque_depth += 1;
                     opaque_push(&mut writer, &mut body, opaque_direct, start)?;
                     buf.clear();
@@ -5896,9 +5903,9 @@ fn rewrite_story_part(
                 }
                 if is_opaque_subtree(&e) {
                     if csr_open {
-                        body.active = true;
-                        body.opaque.push((body.text.chars().count(), Vec::new()));
+                        body.open_opaque(&e);
                         body.push_in_opaque(Event::Empty(e.into_owned()));
+                        body.in_note = false;
                     } else {
                         writer.write_event(Event::Empty(e.into_owned()))?;
                     }
@@ -6142,6 +6149,9 @@ fn rewrite_story_part(
                         opaque_direct,
                         Event::End(e.into_owned()),
                     )?;
+                    if opaque_depth == 0 {
+                        body.in_note = false;
+                    }
                     buf.clear();
                     continue;
                 }
@@ -6240,6 +6250,7 @@ fn rewrite_story_part(
                                 write_split_run(
                                     &mut writer,
                                     &para.runs[*i],
+                                    Some(para),
                                     wrap,
                                     mark && n == last,
                                 )?;
@@ -6453,7 +6464,7 @@ fn write_page_number_pieces(
     r: &CharacterRun,
     open: Option<&BytesStart<'static>>,
     para: Option<&Paragraph>,
-    notes: &[(Option<String>, Vec<Event<'static>>)],
+    sources: &RunSources<'_>,
     wrap_source: bool,
 ) -> Result<(), quick_xml::Error> {
     let open_type = open
@@ -6465,7 +6476,7 @@ fn write_page_number_pieces(
         });
     let mut current = open_type;
     let mut wrote = false;
-    let mut written_notes = 0usize;
+    let mut before = Before::default();
     for (i, (kind, piece)) in crate::emit::page_number_pieces(text)
         .into_iter()
         .enumerate()
@@ -6509,13 +6520,11 @@ fn write_page_number_pieces(
             piece,
             r,
             para,
-            notes,
-            written_notes,
+            sources,
+            before,
             wrap_source && i == 0,
         )?;
-        written_notes += piece
-            .matches(paged_model::FOOTNOTE_REFERENCE_MARKER)
-            .count();
+        before = before.after(piece);
         wrote = true;
     }
     Ok(())
@@ -6569,6 +6578,14 @@ struct RunBody {
     /// character offset in the run's text where it stands, so a run
     /// rewritten from the model writes it back there.
     opaque: Vec<(usize, Vec<Event<'static>>)>,
+    /// The run's editorial `<Note>` subtrees, in order (core ADR 172): a
+    /// note is its place, a [`paged_model::NOTE_MARKER`] in the run's text
+    /// as the parser reads it, and a run rewritten from the model writes
+    /// each note it still holds as it was.
+    editorial: Vec<Vec<Event<'static>>>,
+    /// The open opaque subtree is a `<Note>`: its events are an
+    /// [`Self::editorial`] entry's.
+    in_note: bool,
 }
 
 /// Append one decoded `<Content>` fragment to a run's reconstructed
@@ -6649,10 +6666,27 @@ impl RunBody {
 
     /// Buffer an event of an open opaque subtree (see [`Self::opaque`]).
     fn push_in_opaque(&mut self, event: Event<'static>) {
-        if let Some(sub) = self.opaque.last_mut() {
+        if self.in_note {
+            if let Some(sub) = self.editorial.last_mut() {
+                sub.push(event.clone());
+            }
+        } else if let Some(sub) = self.opaque.last_mut() {
             sub.1.push(event.clone());
         }
         self.events.push(event);
+    }
+
+    /// An opaque subtree opening in the run (see [`Self::opaque`]); a
+    /// `<Note>` is the run's next note, one character of its text.
+    fn open_opaque(&mut self, e: &BytesStart) {
+        self.active = true;
+        self.in_note = e.name().as_ref() == b"Note";
+        if self.in_note {
+            self.text.push(paged_model::NOTE_MARKER);
+            self.editorial.push(Vec::new());
+        } else {
+            self.opaque.push((self.text.chars().count(), Vec::new()));
+        }
     }
 }
 
@@ -6714,18 +6748,16 @@ fn write_run_with_opaque(
     text: &str,
     run: &CharacterRun,
     para: Option<&Paragraph>,
-    notes: &[(Option<String>, Vec<Event<'static>>)],
+    sources: &RunSources<'_>,
     opaque: &[(usize, Vec<Event<'static>>)],
 ) -> Result<(), quick_xml::Error> {
-    const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
     let chars: Vec<char> = text.chars().collect();
     let mut at = 0usize;
-    // The footnote references written so far: a later piece's k-th is
-    // the run's (`write_run_with_notes`' `offset`).
-    let mut marks = 0usize;
+    // The markers written so far: a later piece's k-th is the run's.
+    let mut before = Before::default();
     let mut piece = |writer: &mut Writer<Cursor<Vec<u8>>>, segment: &str| {
-        let r = write_run_with_notes(writer, segment, run, para, notes, marks);
-        marks += segment.matches(MARK).count();
+        let r = write_run_with_notes(writer, segment, run, para, sources, before);
+        before = before.after(segment);
         r
     };
     for (offset, events) in opaque {
@@ -6746,10 +6778,180 @@ fn write_run_with_opaque(
     Ok(())
 }
 
+/// What a run held in its source part that a rewrite writes back: its
+/// footnotes (with their `Self`) and its editorial notes, each as its
+/// events.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct RunSources<'a> {
+    pub notes: &'a [(Option<String>, Vec<Event<'static>>)],
+    pub editorial: &'a [Vec<Event<'static>>],
+}
+
+/// The markers of a run written before the piece being written, when a
+/// run is written in pieces (around opaque subtrees, at page numbers):
+/// the piece's k-th of each kind is the run's `before + k`-th.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Before {
+    footnotes: usize,
+    endnotes: usize,
+    notes: usize,
+}
+
+impl Before {
+    /// The count after `piece` is written too.
+    fn after(self, piece: &str) -> Self {
+        let n = |c: char| piece.matches(c).count();
+        Before {
+            footnotes: self.footnotes + n(paged_model::FOOTNOTE_REFERENCE_MARKER),
+            endnotes: self.endnotes + n(paged_model::ENDNOTE_REFERENCE_MARKER),
+            notes: self.notes + n(paged_model::NOTE_MARKER),
+        }
+    }
+}
+
+/// The editorial notes of `para` whose places stand in `run`, by order
+/// (core ADR 172). Empty when the paragraph does not hold one note per
+/// marker.
+fn run_editorial_notes<'p>(
+    run: &CharacterRun,
+    para: Option<&'p Paragraph>,
+) -> &'p [paged_model::Note] {
+    const NOTE: char = paged_model::NOTE_MARKER;
+    let Some(p) = para else {
+        return &[];
+    };
+    let all = p
+        .runs
+        .iter()
+        .map(|r| r.text.matches(NOTE).count())
+        .sum::<usize>();
+    if all != p.notes.len() {
+        return &[];
+    }
+    let before = p
+        .runs
+        .iter()
+        .take_while(|r| !std::ptr::eq(*r, run))
+        .map(|r| r.text.matches(NOTE).count())
+        .sum::<usize>();
+    let here = run.text.matches(NOTE).count();
+    p.notes.get(before..before + here).unwrap_or(&[])
+}
+
+/// A `<Note>` subtree read back as the parser reads it: its attributes
+/// and its text, `<Br/>` as U+000D.
+fn note_of_events(events: &[Event<'static>]) -> paged_model::Note {
+    let mut note = paged_model::Note::default();
+    let mut in_content = false;
+    for ev in events {
+        match ev {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"Note" => {
+                note.collapsed = attr_value(e, b"Collapsed").as_deref() == Some("true");
+                note.user_name = attr_value(e, b"UserName");
+                note.document_user = attr_value(e, b"AppliedDocumentUser");
+                note.creation_date = attr_value(e, b"CreationDate");
+                note.modification_date = attr_value(e, b"ModificationDate");
+            }
+            Event::Start(e) if e.name().as_ref() == b"Content" => in_content = true,
+            Event::End(e) if e.name().as_ref() == b"Content" => in_content = false,
+            Event::Empty(e) if e.name().as_ref() == b"Br" => note.text.push('\r'),
+            Event::Text(t) if in_content => {
+                note.text.push_str(
+                    &t.xml_content(quick_xml::XmlVersion::Implicit1_0)
+                        .unwrap_or_default(),
+                );
+            }
+            Event::GeneralRef(r) if in_content => {
+                let name = String::from_utf8_lossy(r.as_ref());
+                if let Ok(c) = quick_xml::escape::unescape(&format!("&{name};")) {
+                    note.text.push_str(&c);
+                }
+            }
+            _ => {}
+        }
+    }
+    note
+}
+
+/// The same note, as far as its `<Note>` says: everything but the
+/// engine's id and its place.
+fn same_note(a: &paged_model::Note, b: &paged_model::Note) -> bool {
+    a.text == b.text
+        && a.collapsed == b.collapsed
+        && a.user_name == b.user_name
+        && a.document_user == b.document_user
+        && a.creation_date == b.creation_date
+        && a.modification_date == b.modification_date
+}
+
+/// True when the model's notes standing in `run` are not, in order, the
+/// notes its source held (core ADR 172).
+fn editorial_changed(
+    run: &CharacterRun,
+    para: Option<&Paragraph>,
+    source: &[Vec<Event<'static>>],
+) -> bool {
+    let model = run_editorial_notes(run, para);
+    if model.is_empty() && source.is_empty() {
+        return false;
+    }
+    model.len() != source.len()
+        || model
+            .iter()
+            .zip(source)
+            .any(|(m, s)| !same_note(m, &note_of_events(s)))
+}
+
+/// An editorial `<Note>` from the model, as InDesign writes one (core ADR
+/// 172; `notes-probe`): its attributes, then one range in the note's own
+/// default styles holding its text, `<Br/>` between its paragraphs.
+pub(crate) fn write_note(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    note: &paged_model::Note,
+) -> Result<(), quick_xml::Error> {
+    let mut attrs = vec![(
+        "Collapsed",
+        if note.collapsed { "true" } else { "false" }.to_string(),
+    )];
+    for (key, value) in [
+        ("CreationDate", &note.creation_date),
+        ("ModificationDate", &note.modification_date),
+        ("UserName", &note.user_name),
+        ("AppliedDocumentUser", &note.document_user),
+    ] {
+        if let Some(v) = value {
+            attrs.push((key, v.clone()));
+        }
+    }
+    emit_start_with_attrs(writer, "Note", &attrs)?;
+    emit_start_with_attrs(
+        writer,
+        "ParagraphStyleRange",
+        &[(
+            "AppliedParagraphStyle",
+            "ParagraphStyle/$ID/[No paragraph style]".to_string(),
+        )],
+    )?;
+    emit_start_with_attrs(
+        writer,
+        "CharacterStyleRange",
+        &[(
+            "AppliedCharacterStyle",
+            "CharacterStyle/$ID/[No character style]".to_string(),
+        )],
+    )?;
+    write_run_content(writer, &note.text.replace('\r', "\n"))?;
+    writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+    writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;
+    writer.write_event(Event::End(BytesEnd::new("Note")))?;
+    Ok(())
+}
+
 /// True for the elements whose text the parser does not read into the
 /// story (`idml_import::story`): an editorial `<Note>`, `<HiddenText>`, a
 /// tracked deletion. Each holds ranges of its own; the writer carries it
-/// whole, as opaque markup of the run it stands in.
+/// whole, as opaque markup of the run it stands in — a note as the run's
+/// note (`RunBody::editorial`), the others at their offsets.
 fn is_opaque_subtree(e: &BytesStart) -> bool {
     match e.name().as_ref() {
         b"Note" | b"HiddenText" => true,
@@ -6795,15 +6997,23 @@ fn flush_run_body(
     // wrapping-form source around it clears `wrap_source`, so neither is
     // wrapped twice.
     let needs_wrap = wrap_source && run.is_some_and(|r| r.hyperlink_source.is_some());
+    // A note edited in the model (its text, author or dates) changes no
+    // character of the run, but the run is written again for it.
+    let notes_changed = run.is_some_and(|r| editorial_changed(r, para, &body.editorial));
     let replace = match run {
         Some(r) => {
-            (model_text(r) != source_text || needs_wrap || body.has_tab_leaf) && !body.foreign
+            (model_text(r) != source_text || needs_wrap || body.has_tab_leaf || notes_changed)
+                && !body.foreign
         }
         None => false,
     };
     if replace {
         let r = run.expect("checked above");
         let text = model_text(r);
+        let sources = RunSources {
+            notes: &body.notes,
+            editorial: &body.editorial,
+        };
         // An opaque subtree keeps its place through a contiguous edit: an
         // offset in the text both share before the edit stays, one after
         // it keeps its distance from the end, one inside it goes to the
@@ -6820,7 +7030,7 @@ fn flush_run_body(
                 .chars()
                 .any(|c| crate::emit::page_number_type(c).is_some())
         {
-            write_page_number_pieces(writer, &text, r, open, para, &body.notes, wrap_source)?;
+            write_page_number_pieces(writer, &text, r, open, para, &sources, wrap_source)?;
             // A note, hidden text or a tracked deletion in a run of page
             // number pieces follows them, kept whole.
             for (_, events) in &opaque {
@@ -6829,7 +7039,15 @@ fn flush_run_body(
                 }
             }
         } else if opaque.is_empty() {
-            write_text_with_notes(writer, &text, r, para, &body.notes, 0, wrap_source)?;
+            write_text_with_notes(
+                writer,
+                &text,
+                r,
+                para,
+                &sources,
+                Before::default(),
+                wrap_source,
+            )?;
         } else {
             match (&r.hyperlink_source, wrap_source) {
                 (Some(src), true) => {
@@ -6842,12 +7060,12 @@ fn flush_run_body(
                             ("Hidden", "false".to_string()),
                         ],
                     )?;
-                    write_run_with_opaque(writer, &text, r, para, &body.notes, &opaque)?;
+                    write_run_with_opaque(writer, &text, r, para, &sources, &opaque)?;
                     writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
                         "HyperlinkTextSource",
                     )))?;
                 }
-                _ => write_run_with_opaque(writer, &text, r, para, &body.notes, &opaque)?,
+                _ => write_run_with_opaque(writer, &text, r, para, &sources, &opaque)?,
             }
         }
         if ends_with_br && !hold_br {
@@ -6871,6 +7089,8 @@ fn flush_run_body(
     body.events.clear();
     body.notes.clear();
     body.opaque.clear();
+    body.editorial.clear();
+    body.in_note = false;
     Ok(())
 }
 
@@ -6888,13 +7108,26 @@ fn write_run_with_notes(
     text: &str,
     run: &CharacterRun,
     para: Option<&Paragraph>,
-    source: &[(Option<String>, Vec<Event<'static>>)],
-    offset: usize,
+    sources: &RunSources<'_>,
+    before_piece: Before,
 ) -> Result<(), quick_xml::Error> {
     const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
-    if !text.contains(MARK) {
+    const ENDNOTE: char = paged_model::ENDNOTE_REFERENCE_MARKER;
+    const NOTE: char = paged_model::NOTE_MARKER;
+    if !text.contains(MARK) && !text.contains(ENDNOTE) && !text.contains(NOTE) {
         return write_run_content(writer, text);
     }
+    let source = sources.notes;
+    // The paragraph's endnote references before this run (core ADR 170).
+    let endnotes_before = para.map_or(0, |p| {
+        p.runs
+            .iter()
+            .take_while(|r| !std::ptr::eq(*r, run))
+            .map(|r| r.text.matches(ENDNOTE).count())
+            .sum::<usize>()
+    });
+    // The run's editorial notes (core ADR 172).
+    let editorial = run_editorial_notes(run, para);
     // The paragraph's notes, and how many references come before this run.
     let (notes, before): (&[idml_import::story::Footnote], usize) = match para {
         Some(p) => {
@@ -6918,8 +7151,53 @@ fn write_run_with_notes(
         None => (&[], 0),
     };
     let mut segment = String::new();
-    let mut k = 0usize;
+    let (mut k, mut e, mut n) = (0usize, 0usize, 0usize);
     for ch in text.chars() {
+        if ch == NOTE {
+            // An editorial note (core ADR 172): the run's own subtree of the
+            // same note when it held one, the model's otherwise.
+            if !segment.is_empty() {
+                write_run_content(writer, &segment)?;
+                segment.clear();
+            }
+            if let Some(note) = editorial.get(before_piece.notes + n) {
+                match sources
+                    .editorial
+                    .iter()
+                    .find(|ev| same_note(note, &note_of_events(ev)))
+                {
+                    Some(events) => {
+                        for ev in events {
+                            writer.write_event(ev.clone())?;
+                        }
+                    }
+                    None => write_note(writer, note)?,
+                }
+            }
+            n += 1;
+            continue;
+        }
+        if ch == ENDNOTE {
+            // InDesign's own element, written from the model: an empty
+            // `<Endnote Self EndnoteTextRange/>` (core ADR 170).
+            if !segment.is_empty() {
+                write_run_content(writer, &segment)?;
+                segment.clear();
+            }
+            if let Some(r) = para.and_then(|p| {
+                p.endnote_references
+                    .get(endnotes_before + before_piece.endnotes + e)
+            }) {
+                let mut el = BytesStart::new("Endnote");
+                el.push_attribute(("Self", r.self_id.as_str()));
+                if let Some(range) = &r.text_range {
+                    el.push_attribute(("EndnoteTextRange", range.as_str()));
+                }
+                writer.write_event(Event::Empty(el))?;
+            }
+            e += 1;
+            continue;
+        }
         if ch != MARK {
             segment.push(ch);
             continue;
@@ -6928,7 +7206,7 @@ fn write_run_with_notes(
             write_run_content(writer, &segment)?;
             segment.clear();
         }
-        if let Some(note) = notes.get(before + offset + k) {
+        if let Some(note) = notes.get(before + before_piece.footnotes + k) {
             match source
                 .iter()
                 .find(|(id, _)| id.is_some() && *id == note.self_id)
@@ -6952,13 +7230,13 @@ fn write_run_with_notes(
 /// A replaced run's text with its notes, inside the run's own
 /// `<HyperlinkTextSource>` when it is tagged with one and `wrap_source`.
 #[allow(clippy::too_many_arguments)]
-fn write_text_with_notes(
+pub(crate) fn write_text_with_notes(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     text: &str,
     run: &CharacterRun,
     para: Option<&Paragraph>,
-    notes: &[(Option<String>, Vec<Event<'static>>)],
-    offset: usize,
+    sources: &RunSources<'_>,
+    before: Before,
     wrap_source: bool,
 ) -> Result<(), quick_xml::Error> {
     match (&run.hyperlink_source, wrap_source) {
@@ -6972,13 +7250,13 @@ fn write_text_with_notes(
                     ("Hidden", "false".to_string()),
                 ],
             )?;
-            write_run_with_notes(writer, text, run, para, notes, offset)?;
+            write_run_with_notes(writer, text, run, para, sources, before)?;
             writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
                 "HyperlinkTextSource",
             )))?;
             Ok(())
         }
-        _ => write_run_with_notes(writer, text, run, para, notes, offset),
+        _ => write_run_with_notes(writer, text, run, para, sources, before),
     }
 }
 
@@ -7091,6 +7369,25 @@ pub(crate) fn write_run_content_as(
                 writer.write_event(Event::Empty(BytesStart::new("Br")))?;
             }
             paged_model::FOOTNOTE_REFERENCE_MARKER if !in_note => {}
+            // An endnote's reference is its `<Endnote>` element, and an
+            // editorial note's place its `<Note>` (`write_run_with_notes`):
+            // nothing here.
+            paged_model::ENDNOTE_REFERENCE_MARKER | paged_model::NOTE_MARKER => {}
+            // An endnote's number in the endnote story: `<?ACE 4?>` inside
+            // `<Content>`, the text around it in the same element, as
+            // InDesign writes it (`<Content>\u{FEFF}<?ACE 4?>\ttext…`).
+            paged_model::ENDNOTE_NUMBER_MARKER => {
+                if open {
+                    flush(writer, &mut buf, &mut open)?;
+                }
+                writer.write_event(Event::Start(BytesStart::new("Content")))?;
+                if !buf.is_empty() {
+                    writer.write_event(Event::Text(BytesText::new(&buf)))?;
+                    buf.clear();
+                }
+                writer.write_event(Event::PI(quick_xml::events::BytesPI::new("ACE 4")))?;
+                open = true;
+            }
             paged_model::FOOTNOTE_REFERENCE_MARKER => {
                 flush(writer, &mut buf, &mut open)?;
                 writer.write_event(Event::Start(BytesStart::new("Content")))?;
@@ -7395,7 +7692,7 @@ fn write_adopted_range(
     )?;
     writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
     for i in rest {
-        write_split_run(writer, &para.runs[*i], wrap_source, false)?;
+        write_split_run(writer, &para.runs[*i], Some(para), wrap_source, false)?;
     }
     Ok(())
 }
@@ -7574,10 +7871,11 @@ fn split_tail(
 fn write_split_run(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     r: &CharacterRun,
+    para: Option<&Paragraph>,
     wrap_source: bool,
     mark: bool,
 ) -> Result<(), quick_xml::Error> {
-    crate::emit::write_run_ranges(writer, r, wrap_source, mark)
+    crate::emit::write_run_ranges(writer, r, para, wrap_source, mark)
 }
 
 fn patch_paragraph_range(

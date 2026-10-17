@@ -26,9 +26,10 @@ use crate::ParseError;
 pub use paged_model::DesignMap;
 
 pub use paged_model::{
-    Article, Bookmark, ColorSettings, CrossReference, DocumentPreference, FootnoteOptions,
-    GridPreference, Hyperlink, HyperlinkDestination, HyperlinkDestinationKind, IndexCrossReference,
-    IndexOptions, IndexTopic, Layer, NumberingStyle, Section, SpreadRef, StoryRef, TextVariable,
+    Article, Bookmark, ColorSettings, CrossReference, CrossReferenceBlock, CrossReferenceFormat,
+    DocumentPreference, FootnoteOptions, GridPreference, Hyperlink, HyperlinkDestination,
+    HyperlinkDestinationKind, IndexCrossReference, IndexOptions, IndexTopic, Layer, NumberingStyle,
+    Section, SpreadRef, StoryRef, TextVariable,
 };
 
 /// Parse a `designmap.xml` byte slice.
@@ -45,8 +46,15 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // doesn't push, keeping flat documents byte-identical.
     let mut layer_stack: Vec<String> = Vec::new();
     // Open `<Topic>` elements: InDesign nests a subtopic inside its parent
-    // (core ADR 166), and a topic's `<CrossReference>`s inside it.
+    // (core ADR 168), and a topic's `<CrossReference>`s inside it.
     let mut topic_stack: Vec<String> = Vec::new();
+    // Open `<Bookmark>` elements: a nested bookmark's parent (core ADR 171).
+    let mut bookmark_stack: Vec<String> = Vec::new();
+    // The open `<CrossReferenceFormat>` (index into
+    // `out.cross_reference_formats`), whose `<BuildingBlock>`s fold in.
+    let mut current_xref_format: Option<usize> = None;
+    // Inside `<EndnoteOption>`: its typed children fold in (core ADR 170).
+    let mut in_endnote_option = false;
     // W1.4 — the `<TextVariable>` currently being parsed (the
     // wrapping form parks here so its `<TextVariablePreference>`
     // child can fold in before `</TextVariable>` pushes it).
@@ -129,7 +137,18 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 b"Topic" => {
                     topic_stack.pop();
                 }
+                b"Bookmark" => {
+                    bookmark_stack.pop();
+                }
+                b"CrossReferenceFormat" => current_xref_format = None,
                 b"PageNumberStyle" | b"Destination" => pending = None,
+                b"EndnoteOption" => in_endnote_option = false,
+                b"EndnoteNumberingStyle"
+                | b"RestartEndnoteNumbering"
+                | b"EndnoteMarkerPositioning"
+                | b"ScopeValue"
+                | b"FrameCreateOption"
+                | b"ShowEndnotePrefixSuffix" => pending = None,
                 _ => {}
             }
         }
@@ -333,6 +352,37 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 {
                     pending = Some(PendingProperty::SectionPageNumberStyle);
                 }
+                // `<EndnoteOption>` (core ADR 170): attributes here, the
+                // enumerations as typed `<Properties>` children below.
+                if e.name().as_ref() == b"EndnoteOption" {
+                    let raw = |name: &[u8]| crate::util::attr_unescaped(&e, name);
+                    out.endnote_options = Some(paged_model::EndnoteOptions {
+                        title: raw(b"EndnoteTitle"),
+                        title_style: attr(&e, b"EndnoteTitleStyle"),
+                        start_at: attr(&e, b"StartEndnoteNumberAt").and_then(|s| s.parse().ok()),
+                        marker_style: attr(&e, b"EndnoteMarkerStyle"),
+                        text_style: attr(&e, b"EndnoteTextStyle"),
+                        separator_text: raw(b"EndnoteSeparatorText"),
+                        prefix: raw(b"EndnotePrefix"),
+                        suffix: raw(b"EndnoteSuffix"),
+                        ..Default::default()
+                    });
+                    in_endnote_option = is_start;
+                }
+                if in_endnote_option && is_start {
+                    let field = match e.name().as_ref() {
+                        b"EndnoteNumberingStyle" => Some("numbering_style"),
+                        b"RestartEndnoteNumbering" => Some("restart"),
+                        b"EndnoteMarkerPositioning" => Some("marker_positioning"),
+                        b"ScopeValue" => Some("scope"),
+                        b"FrameCreateOption" => Some("frame_create"),
+                        b"ShowEndnotePrefixSuffix" => Some("show_prefix_suffix"),
+                        _ => None,
+                    };
+                    if let Some(field) = field {
+                        pending = Some(PendingProperty::Endnote(field));
+                    }
+                }
                 if e.name().as_ref() == b"Destination" && is_start && current_hyperlink.is_some() {
                     pending = Some(PendingProperty::HyperlinkDestination);
                 }
@@ -381,6 +431,14 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 }
                 if e.name().as_ref() == b"Bookmark" {
                     if let Some(self_id) = attr(&e, b"Self") {
+                        // InDesign nests a bookmark inside its parent's
+                        // element (core ADR 171).
+                        if let Some(parent) = bookmark_stack.last() {
+                            out.bookmark_parents.insert(self_id.clone(), parent.clone());
+                        }
+                        if is_start {
+                            bookmark_stack.push(self_id.clone());
+                        }
                         out.bookmarks.push(Bookmark {
                             self_id,
                             name: attr(&e, b"Name"),
@@ -411,6 +469,36 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                             self_id,
                             name: attr(&e, b"Name"),
                             sort_order: attr(&e, b"SortOrder"),
+                        });
+                    }
+                }
+                // What a cross-reference says, as building blocks (core
+                // ADR 169). The custom text is verbatim: its spaces are
+                // part of it ("“ on page ").
+                if e.name().as_ref() == b"CrossReferenceFormat" {
+                    if let Some(self_id) = attr(&e, b"Self") {
+                        out.cross_reference_formats.push(CrossReferenceFormat {
+                            self_id,
+                            name: crate::util::attr_unescaped(&e, b"Name"),
+                            applied_character_style: attr(&e, b"AppliedCharacterStyle"),
+                            blocks: Vec::new(),
+                        });
+                        if is_start {
+                            current_xref_format = Some(out.cross_reference_formats.len() - 1);
+                        }
+                    }
+                }
+                if e.name().as_ref() == b"BuildingBlock" {
+                    if let Some(format) =
+                        current_xref_format.and_then(|i| out.cross_reference_formats.get_mut(i))
+                    {
+                        format.blocks.push(CrossReferenceBlock {
+                            block_type: attr(&e, b"BlockType").unwrap_or_default(),
+                            custom_text: crate::util::attr_unescaped(&e, b"CustomText"),
+                            applied_character_style: attr(&e, b"AppliedCharacterStyle"),
+                            applied_delimiter: crate::util::attr_unescaped(&e, b"AppliedDelimiter"),
+                            include_delimiter: attr(&e, b"IncludeDelimiter")
+                                .and_then(|s| s.parse().ok()),
                         });
                     }
                 }
@@ -482,6 +570,19 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                                     current_section.and_then(|i| out.sections.get_mut(i))
                                 {
                                     sec.numbering_style = NumberingStyle::from_idml(text);
+                                }
+                            }
+                            PendingProperty::Endnote(field) => {
+                                if let Some(o) = out.endnote_options.as_mut() {
+                                    let v = Some(text.to_string());
+                                    match field {
+                                        "numbering_style" => o.numbering_style = v,
+                                        "restart" => o.restart = v,
+                                        "marker_positioning" => o.marker_positioning = v,
+                                        "scope" => o.scope = v,
+                                        "frame_create" => o.frame_create = v,
+                                        _ => o.show_prefix_suffix = v,
+                                    }
                                 }
                             }
                             PendingProperty::HyperlinkDestination => {
@@ -800,6 +901,8 @@ fn read_decoration(var: &mut TextVariable, e: &quick_xml::events::BytesStart) {
 enum PendingProperty {
     SectionPageNumberStyle,
     HyperlinkDestination,
+    /// A typed `<Properties>` child of `<EndnoteOption>` (core ADR 170).
+    Endnote(&'static str),
 }
 
 #[cfg(test)]
@@ -824,7 +927,7 @@ mod tests {
         assert_eq!(dm.stories[0].src, "Stories/Story_u10.xml");
     }
 
-    /// InDesign 20.0.1's index (`index-probe`, core ADR 166): a subtopic
+    /// InDesign 20.0.1's index (`index-probe`, core ADR 168): a subtopic
     /// nests inside its parent, a See reference inside its topic, and the
     /// options live in `Preferences.xml`.
     #[test]
@@ -886,6 +989,106 @@ mod tests {
         assert_eq!(o.before_cross_reference_separator.as_deref(), Some(". "));
         assert_eq!(o.page_range_separator.as_deref(), Some("^="));
         assert_eq!(o.entry_end_separator.as_deref(), Some(""));
+    }
+
+    /// Bookmarks nest as InDesign writes them (core ADR 171): a child's
+    /// `<Bookmark>` inside its parent's.
+    #[test]
+    fn nested_bookmarks_record_their_parent() {
+        let dm = parse_designmap(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<Bookmark Self="u29532" Name="INTRODUCTION" Destination="HyperlinkPageDestination/.169265">
+		<Bookmark Self="u29538" Name="Message from The Chairman" Destination="HyperlinkPageDestination/.169271" />
+	</Bookmark>
+	<Bookmark Self="u2953c" Name="OVERVIEW" Destination="HyperlinkPageDestination/.169275" />
+</Document>"#,
+        )
+        .unwrap();
+        let names: Vec<_> = dm.bookmarks.iter().map(|b| b.name.as_deref()).collect();
+        assert_eq!(
+            names,
+            [
+                Some("INTRODUCTION"),
+                Some("Message from The Chairman"),
+                Some("OVERVIEW")
+            ]
+        );
+        assert_eq!(
+            dm.bookmark_parents.get("u29538").map(String::as_str),
+            Some("u29532")
+        );
+        assert_eq!(dm.bookmark_parents.len(), 1);
+    }
+
+    /// `<EndnoteOption>` as InDesign 20.0.1 writes it (core ADR 170).
+    #[test]
+    fn reads_the_endnote_options() {
+        let dm = parse_designmap(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<EndnoteOption EndnoteTitle="Endnotes" EndnoteTitleStyle="ParagraphStyle/$ID/NormalParagraphStyle" StartEndnoteNumberAt="3" EndnoteMarkerStyle="CharacterStyle/$ID/[No character style]" EndnoteTextStyle="ParagraphStyle/$ID/NormalParagraphStyle" EndnoteSeparatorText="&#x9;" EndnotePrefix="" EndnoteSuffix="">
+		<Properties>
+			<EndnoteNumberingStyle type="enumeration">LowerRoman</EndnoteNumberingStyle>
+			<RestartEndnoteNumbering type="enumeration">Continuous</RestartEndnoteNumbering>
+			<EndnoteMarkerPositioning type="enumeration">SuperscriptMarker</EndnoteMarkerPositioning>
+			<ScopeValue type="enumeration">EndnoteDocumentScope</ScopeValue>
+			<FrameCreateOption type="enumeration">NewPage</FrameCreateOption>
+			<ShowEndnotePrefixSuffix type="enumeration">NoPrefixSuffix</ShowEndnotePrefixSuffix>
+		</Properties>
+	</EndnoteOption>
+</Document>"#,
+        )
+        .unwrap();
+        let o = dm.endnote_options.expect("EndnoteOption");
+        assert_eq!(o.title.as_deref(), Some("Endnotes"));
+        assert_eq!(o.start_at, Some(3));
+        assert_eq!(o.separator_text.as_deref(), Some("\t"));
+        assert_eq!(o.numbering_style.as_deref(), Some("LowerRoman"));
+        assert_eq!(o.restart.as_deref(), Some("Continuous"));
+        assert_eq!(o.scope.as_deref(), Some("EndnoteDocumentScope"));
+        assert_eq!(o.frame_create.as_deref(), Some("NewPage"));
+        assert_eq!(o.show_prefix_suffix.as_deref(), Some("NoPrefixSuffix"));
+        assert_eq!(o.label(1), "iii");
+    }
+
+    /// InDesign 20.0.1's cross-reference formats (`xref-probe`, core ADR
+    /// 169): building blocks, the custom text verbatim, in the document's
+    /// own words.
+    #[test]
+    fn reads_cross_reference_formats_as_indesign_writes_them() {
+        let dm = parse_designmap(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<CrossReferenceFormat Self="u9f" Name="Full Paragraph &amp; Page Number" AppliedCharacterStyle="n">
+		<BuildingBlock Self="u9fBuildingBlock0" BlockType="CustomStringBuildingBlock" AppliedCharacterStyle="n" CustomText="“" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+		<BuildingBlock Self="u9fBuildingBlock1" BlockType="FullParagraphBuildingBlock" AppliedCharacterStyle="n" CustomText="$ID/" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+		<BuildingBlock Self="u9fBuildingBlock2" BlockType="CustomStringBuildingBlock" AppliedCharacterStyle="n" CustomText="” on page " AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+		<BuildingBlock Self="u9fBuildingBlock3" BlockType="PageNumberBuildingBlock" AppliedCharacterStyle="n" CustomText="$ID/" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+	</CrossReferenceFormat>
+	<CrossReferenceFormat Self="ua5" Name="Page Number" AppliedCharacterStyle="n">
+		<BuildingBlock Self="ua5BuildingBlock0" BlockType="PageNumberBuildingBlock" AppliedCharacterStyle="n" CustomText="$ID/" AppliedDelimiter="$ID/" IncludeDelimiter="false" />
+	</CrossReferenceFormat>
+</Document>"#
+                .as_bytes(),
+        )
+        .unwrap();
+        let f = &dm.cross_reference_formats;
+        assert_eq!(f.len(), 2);
+        assert_eq!(f[0].name.as_deref(), Some("Full Paragraph & Page Number"));
+        let kinds: Vec<&str> = f[0].blocks.iter().map(|b| b.block_type.as_str()).collect();
+        assert_eq!(
+            kinds,
+            [
+                "CustomStringBuildingBlock",
+                "FullParagraphBuildingBlock",
+                "CustomStringBuildingBlock",
+                "PageNumberBuildingBlock"
+            ]
+        );
+        assert_eq!(f[0].blocks[2].custom_text.as_deref(), Some("” on page "));
+        assert_eq!(f[0].blocks[0].include_delimiter, Some(false));
+        assert_eq!(f[1].blocks.len(), 1);
     }
 
     const LAYERS_SAMPLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
