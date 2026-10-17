@@ -1489,3 +1489,18 @@ keys = [
   "CrossReference@Self",
   "PageReference@ReferencedTopic",
 ]
+
+[[unseen]]
+reason = "Paragraph destinations (where InDesign points a cross-reference at a paragraph): no corpus document has one. Their spelling was asked of InDesign 20.0.1 (core tools/indesign-export/xref-probe, 2026-10-16: an inline <ParagraphDestination Self Name Hidden DestinationUniqueKey/> at the start of the paragraph)."
+keys = [
+  "ParagraphDestination@Name",
+  "ParagraphDestination@Self",
+]
+
+[[unseen]]
+reason = "Endnotes: no corpus document has one. Their spelling was asked of InDesign 20.0.1 (core endnote-probe, 2026-10-16): an <Endnote Self EndnoteTextRange/> reference in the host text, the endnote story's <EndnoteRange Self SourceEndnote>, and the <EndnoteTextFrame> that hosts the endnote story (read as a text frame, so every frame attribute counts as read on it)."
+elements = ["EndnoteTextFrame", "Endnote", "EndnoteRange"]
+
+[[unseen]]
+reason = "Editorial notes: no corpus document has one. Their spelling was asked of InDesign 20.0.1 (core notes-probe, 2026-10-16): a <Note Collapsed CreationDate ModificationDate UserName AppliedDocumentUser> inline in its character range, holding ranges of its own; a character of the story where it stands (core ADR 172)."
+elements = ["Note"]

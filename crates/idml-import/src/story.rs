@@ -54,8 +54,9 @@ pub use paged_model::{
 };
 
 pub use paged_model::{
-    AUTO_PAGE_NUMBER_MARKER, FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER,
-    PREVIOUS_PAGE_NUMBER_MARKER, SECTION_MARKER,
+    AUTO_PAGE_NUMBER_MARKER, ENDNOTE_NUMBER_MARKER, ENDNOTE_REFERENCE_MARKER,
+    FOOTNOTE_REFERENCE_MARKER, NEXT_PAGE_NUMBER_MARKER, NOTE_MARKER, PREVIOUS_PAGE_NUMBER_MARKER,
+    SECTION_MARKER,
 };
 
 pub use paged_model::Story;
@@ -300,6 +301,8 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // single slot) because IDML technically permits nesting, though
     // it's exotic — the innermost source wins.
     let mut source_stack: Vec<String> = Vec::new();
+    // Inside an `<EndnoteRange>` of an endnote story (core ADR 170).
+    let mut in_endnote_range = false;
     let mut in_content = false;
     let mut buf = Vec::new();
     // `<Properties>` child elements appear *inside* a CharacterStyleRange
@@ -361,6 +364,13 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
     // itself does not insert any character into the host run, so
     // the surrounding flow is uninterrupted.
     let mut suppress_depth: u32 = 0;
+    // The editorial `<Note>` being read (core ADR 172): suppressed from
+    // the flow like the rest, but its text is the note's. `note_content`
+    // is true inside one of its `<Content>`s; `notes_read` numbers the
+    // story's notes for their ids.
+    let mut note: Option<paged_model::Note> = None;
+    let mut note_content = false;
+    let mut notes_read = 0usize;
     // Parallel to `anchored_stack`: tracks whether the top frame's
     // `bounds` were derived from a `<PathPointType>` chain (`true`)
     // or from a `GeometricBounds` attribute (`false`). The
@@ -441,6 +451,35 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
             .map_or(0, |p| p.runs.iter().map(|r| r.text.chars().count()).sum());
         let open = current_run.as_ref().map_or(0, |r| r.text.chars().count());
         (pushed + open) as u32
+    }
+
+    // An editorial note opening (core ADR 172): its place, a
+    // `NOTE_MARKER` in the host run, and the note with InDesign's
+    // attributes. Its id is the story's ordinal (`Note<k>`); the package
+    // reader prefixes the story's id.
+    fn open_note(
+        e: &quick_xml::events::BytesStart,
+        current_paragraph: &Option<Paragraph>,
+        current_run: &mut Option<CharacterRun>,
+        pending_breaks: &mut usize,
+        notes_read: &mut usize,
+    ) -> paged_model::Note {
+        let anchor = anchor_here(current_paragraph, current_run, pending_breaks);
+        if let Some(run) = current_run.as_mut() {
+            run.text.push(NOTE_MARKER);
+        }
+        let id = format!("Note{notes_read}");
+        *notes_read += 1;
+        paged_model::Note {
+            id,
+            anchor,
+            text: String::new(),
+            collapsed: attr(e, b"Collapsed").as_deref() == Some("true"),
+            user_name: attr(e, b"UserName"),
+            document_user: attr(e, b"AppliedDocumentUser"),
+            creation_date: attr(e, b"CreationDate"),
+            modification_date: attr(e, b"ModificationDate"),
+        }
     }
 
     // Helper: pop the top anchored frame and attach it to its
@@ -529,6 +568,9 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // depth on every child so the matching End pairs
                 // up. Skip the body handlers entirely.
                 if suppress_depth > 0 {
+                    if note.is_some() && name == b"Content" {
+                        note_content = true;
+                    }
                     suppress_depth += 1;
                     buf.clear();
                     continue;
@@ -540,6 +582,18 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // nested paragraph and character ranges, which read as body
                 // text derailed the whole story. Inserted and moved text is
                 // the story's text; its `<Change>` wrapper is transparent.
+                // An editorial note (core ADR 172) is a character of the
+                // text where it stands — InDesign keeps a U+FEFF there —
+                // that prints nothing; its text is the note's.
+                if name == b"Note" {
+                    note = Some(open_note(
+                        &e,
+                        &current_paragraph,
+                        &mut current_run,
+                        &mut pending_breaks,
+                        &mut notes_read,
+                    ));
+                }
                 if matches!(name, b"HiddenText" | b"Note") || is_tracked_deletion(&e) {
                     suppress_depth = 1;
                     buf.clear();
@@ -558,6 +612,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                         }
                         out.applied_toc_style =
                             attr(&e, b"AppliedTOCStyle").filter(|v| v != "n" && !v.is_empty());
+                        // The story InDesign collects endnotes in (core
+                        // ADR 170).
+                        out.is_endnote_story =
+                            attr(&e, b"IsEndnoteStory").as_deref() == Some("true");
                     }
                     // W1.4 — a hyperlink / cross-reference source span
                     // wraps the character ranges it covers. Push its
@@ -565,8 +623,30 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     // the matching End pops it. (Self-closing sources
                     // arrive via `Event::Empty` and never reach here, so
                     // they don't unbalance the stack.)
+                    // An endnote's text in the endnote story (core ADR
+                    // 170): its `<?ACE 4?>` prints the note's number.
+                    b"EndnoteRange" => {
+                        let range = paged_model::EndnoteRangeDef {
+                            self_id: attr(&e, b"Self").unwrap_or_default(),
+                            source: attr(&e, b"SourceEndnote"),
+                        };
+                        if let Some(p) = current_paragraph.as_mut() {
+                            p.endnote_ranges.push(range);
+                        }
+                        in_endnote_range = true;
+                    }
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
                         let self_id = attr(&e, b"Self").unwrap_or_default();
+                        // A cross-reference's format (core ADR 169): the
+                        // source's text is built from it on update.
+                        if e.name().as_ref() == b"CrossReferenceSource" {
+                            out.cross_reference_sources.push(
+                                paged_model::CrossReferenceSourceDef {
+                                    self_id: self_id.clone(),
+                                    format: attr(&e, b"AppliedFormat"),
+                                },
+                            );
+                        }
                         // A `<Br/>` held just before the source was interior
                         // after all — the source is content — and it belongs
                         // to the text BEFORE the source, not inside it. Held
@@ -1213,7 +1293,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     continue;
                 }
                 if suppress_depth > 0 {
+                    if name == b"Content" {
+                        note_content = false;
+                    }
                     suppress_depth -= 1;
+                    if suppress_depth == 0 {
+                        if let (Some(n), Some(p)) = (note.take(), current_paragraph.as_mut()) {
+                            p.notes.push(n);
+                        }
+                    }
                     buf.clear();
                     continue;
                 }
@@ -1443,6 +1531,7 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             }
                         }
                     }
+                    b"EndnoteRange" => in_endnote_range = false,
                     // W1.4 — close the hyperlink / cross-reference
                     // source span so following runs stop inheriting it.
                     b"HyperlinkTextSource" | b"CrossReferenceSource" => {
@@ -1605,10 +1694,74 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // (`<Br/>` / `<Tab/>` / `<TextVariableInstance/>`)
                 // nested inside an open suppressed subtree are
                 // also dropped to keep the wrapper truly silent.
+                // A note's paragraphs break at its `<Br/>`s; an empty
+                // `<Note/>` is a note of no text.
+                if name == b"Br" {
+                    if let Some(n) = note.as_mut() {
+                        n.text.push('\r');
+                    }
+                } else if name == b"Note" && suppress_depth == 0 {
+                    let n = open_note(
+                        &e,
+                        &current_paragraph,
+                        &mut current_run,
+                        &mut pending_breaks,
+                        &mut notes_read,
+                    );
+                    if let Some(p) = current_paragraph.as_mut() {
+                        p.notes.push(n);
+                    }
+                }
                 if suppress_depth > 0
                     || matches!(name, b"HiddenText" | b"Note")
                     || is_tracked_deletion(&e)
                 {
+                    buf.clear();
+                    continue;
+                }
+                // An endnote's reference (core ADR 170): a character of the
+                // host text where the `<Endnote>` stands, as a footnote's
+                // is; the renderer prints the note's number there.
+                if name == b"Endnote" {
+                    let _ = anchor_here(&current_paragraph, &mut current_run, &mut pending_breaks);
+                    if let Some(run) = current_run.as_mut() {
+                        run.text.push(ENDNOTE_REFERENCE_MARKER);
+                    }
+                    if let Some(p) = current_paragraph.as_mut() {
+                        p.endnote_references.push(paged_model::EndnoteReference {
+                            self_id: attr(&e, b"Self").unwrap_or_default(),
+                            text_range: attr(&e, b"EndnoteTextRange"),
+                        });
+                    }
+                    buf.clear();
+                    continue;
+                }
+                // A destination standing in the story's text (core ADR
+                // 167): a paragraph destination, or a text anchor,
+                // recorded where it stands. In a table or a note it is
+                // not addressed by paragraph and is left to the
+                // designmap's page-level reading.
+                if matches!(name, b"ParagraphDestination" | b"HyperlinkTextDestination") {
+                    if let (Some(self_id), true) = (
+                        attr(&e, b"Self"),
+                        table_stack.is_empty() && footnote_stack.is_empty(),
+                    ) {
+                        let before: usize = current_paragraph
+                            .as_ref()
+                            .map(|p| p.runs.iter().map(|r| r.text.chars().count()).sum())
+                            .unwrap_or(0);
+                        let open = current_run
+                            .as_ref()
+                            .map(|r| r.text.chars().count())
+                            .unwrap_or(0);
+                        out.destinations.push(paged_model::StoryDestination {
+                            self_id,
+                            name: attr(&e, b"Name"),
+                            paragraph: out.paragraphs.len() as u32,
+                            offset: (before + open + pending_breaks) as u32,
+                            paragraph_destination: name == b"ParagraphDestination",
+                        });
+                    }
                     buf.clear();
                     continue;
                 }
@@ -1852,7 +2005,14 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 } // close inner `match name { ... }`
             }
             Event::Text(t) => {
-                if in_content {
+                if note_content {
+                    if let Some(n) = note.as_mut() {
+                        let raw = t
+                            .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                            .unwrap_or_default();
+                        n.text.push_str(&raw);
+                    }
+                } else if in_content {
                     if let Some(run) = current_run.as_mut() {
                         // A mark with content after it was interior after
                         // all: it is a break inside the paragraph, so it
@@ -1882,7 +2042,15 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                 // text (apostrophes never parsed → never rendered,
                 // never round-tripped). Resolve the predefined
                 // five + numeric references and append.
-                if in_content || properties_field.is_some() {
+                if note_content {
+                    let name = String::from_utf8_lossy(r.as_ref());
+                    if let (Some(n), Ok(c)) = (
+                        note.as_mut(),
+                        quick_xml::escape::unescape(&format!("&{name};")),
+                    ) {
+                        n.text.push_str(&c);
+                    }
+                } else if in_content || properties_field.is_some() {
                     let name = String::from_utf8_lossy(r.as_ref());
                     let resolved = quick_xml::escape::unescape(&format!("&{name};"))
                         .map(|c| c.into_owned())
@@ -1936,6 +2104,10 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                             });
                         } else if body_str == "ACE 19" {
                             run.text.push(SECTION_MARKER);
+                        } else if body_str == "ACE 4" && in_endnote_range {
+                            // An endnote's number in the endnote story
+                            // (core ADR 170).
+                            run.text.push(ENDNOTE_NUMBER_MARKER);
                         } else if body_str == "ACE 4" && !footnote_stack.is_empty() {
                             // The note's own number, opening its text
                             // (the separator follows as text): the
@@ -2128,7 +2300,7 @@ pub(crate) fn parse_anchored_object_setting(
 /// `AppliedTopic` — without one of those there's nothing to index.
 fn parse_index_marker(e: &quick_xml::events::BytesStart) -> Option<IndexMarker> {
     let topic_name = attr(e, b"TopicName");
-    // InDesign 20.0.1 names the topic `ReferencedTopic` (core ADR 166);
+    // InDesign 20.0.1 names the topic `ReferencedTopic` (core ADR 168);
     // `AppliedTopic` is the engine's older spelling.
     let applied_topic = attr(e, b"AppliedTopic").or_else(|| attr(e, b"ReferencedTopic"));
     // At least one of the two is required for the marker to mean
@@ -2159,8 +2331,11 @@ fn parse_tab_stop(e: &quick_xml::events::BytesStart) -> Option<TabStop> {
     })
 }
 
-/// The inline `<HyperlinkTextDestination Self="…" Name="…"/>` markers a
-/// story carries, in document order, as `(self_id, name)`.
+/// The inline `<HyperlinkTextDestination Self="…" Name="…"/>` and
+/// `<ParagraphDestination …/>` markers a story carries, in document
+/// order, as `(self_id, name)`. A paragraph destination (where InDesign
+/// points a cross-reference to a paragraph, core ADR 169) resolves to its
+/// story's page the same way.
 ///
 /// InDesign keeps a text destination (the target of a cross-reference
 /// or a bookmark) as an EMPTY MARKER at the anchor position inside the
@@ -2177,7 +2352,10 @@ pub fn story_text_anchors(xml: &[u8]) -> Result<Vec<(String, Option<String>)>, P
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Start(ref e) | Event::Empty(ref e)
-                if e.name().as_ref() == b"HyperlinkTextDestination" =>
+                if matches!(
+                    e.name().as_ref(),
+                    b"HyperlinkTextDestination" | b"ParagraphDestination"
+                ) =>
             {
                 if let Some(id) = attr(e, b"Self") {
                     out.push((id, attr(e, b"Name")));
@@ -2568,7 +2746,10 @@ mod tests {
     }
 
     #[test]
-    fn track5c_note_skipped() {
+    fn track5c_note_is_its_place_and_its_text_is_the_notes() {
+        // A note prints nothing, but it is a character of the text where
+        // it stands, as InDesign keeps one (core ADR 172): its marker,
+        // and its text on the paragraph's note.
         let xml = br#"<Story>
           <ParagraphStyleRange>
             <CharacterStyleRange>
@@ -2579,7 +2760,13 @@ mod tests {
         </Story>"#;
         let s = parse_story(xml).unwrap();
         assert_eq!(s.paragraphs[0].runs.len(), 1);
-        assert_eq!(s.paragraphs[0].runs[0].text, "visible");
+        assert_eq!(
+            s.paragraphs[0].runs[0].text,
+            format!("{NOTE_MARKER}visible")
+        );
+        let notes = &s.paragraphs[0].notes;
+        assert_eq!(notes.len(), 1);
+        assert_eq!((notes[0].anchor, notes[0].text.as_str()), (0, "annotation"));
     }
 
     #[test]
@@ -3934,8 +4121,124 @@ mod tests {
         );
     }
 
+    /// InDesign 20.0.1's endnotes (`endnote-probe`, core ADR 170): a
+    /// reference is an `<Endnote>` on a superscript range of its own; the
+    /// endnote story holds each note in an `<EndnoteRange>` whose
+    /// `<?ACE 4?>` is the note's number.
+    #[test]
+    fn endnote_references_and_ranges_are_read() {
+        let host = r#"<Story Self="ue5" IsEndnoteStory="false">
+<ParagraphStyleRange>
+	<CharacterStyleRange><Content>First paragraph with a note.</Content></CharacterStyleRange>
+	<CharacterStyleRange Position="Superscript"><Endnote Self="u117" EndnoteTextRange="u118" /></CharacterStyleRange>
+	<CharacterStyleRange><Content> More.</Content></CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>"#;
+        let s = parse_story(host.as_bytes()).unwrap();
+        assert!(!s.is_endnote_story);
+        let p = &s.paragraphs[0];
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            text,
+            format!("First paragraph with a note.{ENDNOTE_REFERENCE_MARKER} More.")
+        );
+        assert_eq!(
+            p.endnote_references,
+            [paged_model::EndnoteReference {
+                self_id: "u117".into(),
+                text_range: Some("u118".into()),
+            }]
+        );
+        let notes = "<Story Self=\"u101\" IsEndnoteStory=\"true\">
+<ParagraphStyleRange>
+\t<CharacterStyleRange>
+\t\t<Content>Endnoten</Content>
+\t\t<Br />
+\t\t<EndnoteRange Self=\"u118\" SourceEndnote=\"u117\">
+\t\t\t<Content>\u{FEFF}<?ACE 4?>\tThe first endnote.\u{FEFF}</Content>
+\t\t</EndnoteRange>
+\t</CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>";
+        let s = parse_story(notes.as_bytes()).unwrap();
+        assert!(s.is_endnote_story);
+        // A `<Br/>` inside the range is a `\n` of the one model paragraph
+        // (the renderer splits it into segments).
+        let p = &s.paragraphs[0];
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            text,
+            format!("Endnoten\n\u{FEFF}{ENDNOTE_NUMBER_MARKER}\tThe first endnote.\u{FEFF}")
+        );
+        assert_eq!(
+            p.endnote_ranges,
+            [paged_model::EndnoteRangeDef {
+                self_id: "u118".into(),
+                source: Some("u117".into()),
+            }]
+        );
+    }
+
+    /// A cross-reference's source names its format, and a destination
+    /// is recorded where it stands (`xref-probe`, core ADR 169).
+    #[test]
+    fn cross_reference_sources_and_destinations_are_recorded() {
+        let xml = r#"<Story Self="u1">
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+	<CharacterStyleRange><Content>Full: </Content></CharacterStyleRange>
+	<CrossReferenceSource Self="u13d" AppliedFormat="u9f" Name="Hyperlink 1" Hidden="false" AppliedCharacterStyle="n">
+		<CharacterStyleRange><Content>“Where Things Are” on page </Content></CharacterStyleRange>
+		<CharacterStyleRange PageNumberType="TextVariable"><TextVariableInstance Self="u141" Name="&lt;?AID 001b?&gt;TV XRefPageNumber" ResultText="2" AssociatedTextVariable="dTextVariablen&lt;?AID 001b?&gt;TV XRefPageNumber" /></CharacterStyleRange>
+	</CrossReferenceSource>
+	<CharacterStyleRange><Br /></CharacterStyleRange>
+</ParagraphStyleRange>
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Heading">
+	<CharacterStyleRange>
+		<ParagraphDestination Self="ParagraphDestination/Anker 1" Name="Anker 1" Hidden="false" DestinationUniqueKey="1" />
+		<Content>Where Things Are</Content>
+		<Br />
+	</CharacterStyleRange>
+</ParagraphStyleRange>
+<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+	<CharacterStyleRange><Content>The </Content></CharacterStyleRange>
+	<CharacterStyleRange><HyperlinkTextDestination Self="HyperlinkTextDestination/the anchor" Name="the anchor" Hidden="false" DestinationUniqueKey="2" /></CharacterStyleRange>
+	<CharacterStyleRange><Content>anchored word.</Content></CharacterStyleRange>
+</ParagraphStyleRange>
+</Story>"#;
+        let s = parse_story(xml.as_bytes()).unwrap();
+        assert_eq!(
+            s.cross_reference_sources,
+            [paged_model::CrossReferenceSourceDef {
+                self_id: "u13d".into(),
+                format: Some("u9f".into()),
+            }]
+        );
+        assert_eq!(s.destinations.len(), 2, "{:?}", s.destinations);
+        let p = &s.destinations[0];
+        assert_eq!(p.self_id, "ParagraphDestination/Anker 1");
+        assert_eq!(p.name.as_deref(), Some("Anker 1"));
+        assert_eq!(
+            (p.paragraph, p.offset, p.paragraph_destination),
+            (1, 0, true)
+        );
+        let t = &s.destinations[1];
+        assert_eq!(t.name.as_deref(), Some("the anchor"));
+        assert_eq!(
+            (t.paragraph, t.offset, t.paragraph_destination),
+            (2, 4, false)
+        );
+        // The paragraphs' text is untouched by the markers.
+        let text: Vec<String> = s
+            .paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert_eq!(text[1], "Where Things Are");
+        assert_eq!(text[2], "The anchored word.");
+    }
+
     /// InDesign 20.0.1 writes a page reference's topic as
-    /// `ReferencedTopic` (`index-probe`, core ADR 166).
+    /// `ReferencedTopic` (`index-probe`, core ADR 168).
     #[test]
     fn a_page_reference_names_its_topic_as_indesign_writes_it() {
         let xml = br#"<Story>

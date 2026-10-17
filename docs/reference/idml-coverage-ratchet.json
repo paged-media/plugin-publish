@@ -8,14 +8,14 @@
   },
   "metrics": {
     "weightedImport": {
-      "covered": 128650,
+      "covered": 131574,
       "total": 633952,
-      "value": 0.202933
+      "value": 0.207546
     },
     "impactImport": {
-      "covered": 25407,
+      "covered": 26498,
       "total": 54667,
-      "value": 0.464759
+      "value": 0.484717
     },
     "weightedExport": {
       "covered": 92046,
@@ -23,7 +23,7 @@
       "value": 0.145194
     },
     "misplacedReads": 30,
-    "unseenReads": 357,
+    "unseenReads": 397,
     "unjustifiedUnseenReads": 0
   },
   "coveredImport": [
@@ -1074,6 +1074,7 @@
     "Stories|Row@Self|attr",
     "Stories|Row@SingleRowHeight|attr",
     "Stories|Story@AppliedTOCStyle|attr",
+    "Stories|Story@IsEndnoteStory|attr",
     "Stories|Story@StoryDirection|attr",
     "Stories|StoryPreference@OpticalMarginAlignment|attr",
     "Stories|StoryPreference@OpticalMarginSize|attr",
@@ -1124,6 +1125,11 @@
     "designmap|Bookmark@Destination|attr",
     "designmap|Bookmark@Name|attr",
     "designmap|Bookmark@Self|attr",
+    "designmap|BuildingBlock@AppliedCharacterStyle|attr",
+    "designmap|BuildingBlock@AppliedDelimiter|attr",
+    "designmap|BuildingBlock@BlockType|attr",
+    "designmap|BuildingBlock@CustomText|attr",
+    "designmap|BuildingBlock@IncludeDelimiter|attr",
     "designmap|ChapterNumberVariablePreference@Format|attr",
     "designmap|ChapterNumberVariablePreference@TextAfter|attr",
     "designmap|ChapterNumberVariablePreference@TextBefore|attr",
@@ -1131,6 +1137,9 @@
     "designmap|ColorGroup@Name|attr",
     "designmap|ColorGroup@Self|attr",
     "designmap|ColorGroupSwatch@SwatchItemRef|attr",
+    "designmap|CrossReferenceFormat@AppliedCharacterStyle|attr",
+    "designmap|CrossReferenceFormat@Name|attr",
+    "designmap|CrossReferenceFormat@Self|attr",
     "designmap|DateVariablePreference@Format|attr",
     "designmap|DateVariablePreference@TextAfter|attr",
     "designmap|DateVariablePreference@TextBefore|attr",
@@ -1141,6 +1150,14 @@
     "designmap|Document@Name|attr",
     "designmap|Document@RGBProfile|attr",
     "designmap|Document@SolidColorIntent|attr",
+    "designmap|EndnoteOption@EndnoteMarkerStyle|attr",
+    "designmap|EndnoteOption@EndnotePrefix|attr",
+    "designmap|EndnoteOption@EndnoteSeparatorText|attr",
+    "designmap|EndnoteOption@EndnoteSuffix|attr",
+    "designmap|EndnoteOption@EndnoteTextStyle|attr",
+    "designmap|EndnoteOption@EndnoteTitleStyle|attr",
+    "designmap|EndnoteOption@EndnoteTitle|attr",
+    "designmap|EndnoteOption@StartEndnoteNumberAt|attr",
     "designmap|FileNameVariablePreference@IncludeExtension|attr",
     "designmap|FileNameVariablePreference@IncludePath|attr",
     "designmap|FileNameVariablePreference@TextAfter|attr",

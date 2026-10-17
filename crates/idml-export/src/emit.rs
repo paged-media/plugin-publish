@@ -36,7 +36,7 @@ use std::io::Cursor;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
-use idml_import::{CharacterRun, Spread, Story};
+use idml_import::{CharacterRun, Paragraph, Spread, Story};
 
 use crate::rewrite;
 
@@ -239,7 +239,7 @@ fn write_paragraphs_ending(
         let mark_on_runs = mark && p.table.is_none();
         let last_run = p.runs.len().saturating_sub(1);
         for (ri, r) in p.runs.iter().enumerate() {
-            write_run_ranges(writer, r, true, mark_on_runs && ri == last_run)?;
+            write_run_ranges(writer, r, Some(p), true, mark_on_runs && ri == last_run)?;
         }
         if let Some(table) = &p.table {
             rewrite::emit_start_with_attrs(
@@ -1248,13 +1248,14 @@ pub(crate) fn cut_page_number_runs(paragraphs: &mut [idml_import::Paragraph]) {
 pub(crate) fn write_run_ranges(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     r: &CharacterRun,
+    para: Option<&Paragraph>,
     wrap_source: bool,
     mark: bool,
 ) -> Result<(), quick_xml::Error> {
     let Some(pieces) = run_cut(r) else {
         rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
         emit_applied_font(writer, &r.font)?;
-        write_run_body(writer, r, wrap_source)?;
+        write_run_body(writer, r, para, wrap_source)?;
         if mark {
             writer.write_event(Event::Empty(BytesStart::new("Br")))?;
         }
@@ -1315,6 +1316,7 @@ pub(crate) fn write_text_body(
 pub(crate) fn write_run_body(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     r: &CharacterRun,
+    para: Option<&Paragraph>,
     wrap_source: bool,
 ) -> Result<(), quick_xml::Error> {
     if let Some(variable) = &r.text_variable {
@@ -1333,6 +1335,23 @@ pub(crate) fn write_run_body(
                 ("ResultText", r.text.clone()),
                 ("AssociatedTextVariable", variable.clone()),
             ],
+        );
+    }
+    // An editorial note or an endnote reference in a story with no source
+    // part is written from the model (core ADRs 170, 172).
+    if para.is_some()
+        && r.text
+            .chars()
+            .any(|c| c == paged_model::NOTE_MARKER || c == paged_model::ENDNOTE_REFERENCE_MARKER)
+    {
+        return rewrite::write_text_with_notes(
+            writer,
+            &r.text,
+            r,
+            para,
+            &rewrite::RunSources::default(),
+            rewrite::Before::default(),
+            wrap_source,
         );
     }
     write_text_body(writer, r.hyperlink_source.as_deref(), &r.text, wrap_source)

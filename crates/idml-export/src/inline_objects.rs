@@ -199,7 +199,7 @@ pub(crate) fn write_body(
         if here.is_empty() || r.text_variable.is_some() {
             // Nothing to cut, or a run that cannot be cut (a text
             // variable is one character): its own body, its inlines after.
-            write_run_body(writer, r, true)?;
+            write_run_body(writer, r, Some(p), true)?;
             for (_, inline) in &here {
                 write_inline(writer, inline, &range, p, host_width, false)?;
             }
