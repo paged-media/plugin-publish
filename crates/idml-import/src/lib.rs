@@ -47,15 +47,15 @@ pub use graphic::{
     GradientStopRef, Graphic, SwatchEntry,
 };
 pub use spread::{
-    parse_spread, parse_spread_with_provenance, ArrowheadType, AutoSizingReferencePoint,
-    AutoSizingType, BevelEmbossParams, Bounds, ClippingPathSettings, ClippingType,
-    ContourOptionType, CornerOption, CornerSpec, DirectionalFeatherParams, DropShadowSetting,
-    FeatherParams, FirstBaselineOffset, FrameEffects, FrameFittingOption, FrameRef,
-    GradientFeatherParams, GradientFeatherStop, GraphicLine, Group, GroupTransparency,
-    GuideOrientation, ImageMetadata, InnerGlowParams, InnerShadowParams, MarginPreference,
-    OuterGlowParams, Oval, Page, PathAnchor, Polygon, Rectangle, RulerGuide, SatinParams, Spread,
-    SpreadProvenance, TargetTransparency, TextFrame, TextPath, TextWrap, TextWrapMode,
-    TransparencyPreference, VerticalJustification,
+    crop_from_idml, crop_scales, crop_to_idml, parse_spread, parse_spread_with_provenance,
+    ArrowheadType, AutoSizingReferencePoint, AutoSizingType, BevelEmbossParams, Bounds,
+    ClippingPathSettings, ClippingType, ContourOptionType, CornerOption, CornerSpec,
+    DirectionalFeatherParams, DropShadowSetting, FeatherParams, FirstBaselineOffset, FrameEffects,
+    FrameFittingOption, FrameRef, GradientFeatherParams, GradientFeatherStop, GraphicLine, Group,
+    GroupTransparency, GuideOrientation, ImageMetadata, InnerGlowParams, InnerShadowParams,
+    MarginPreference, OuterGlowParams, Oval, Page, PathAnchor, Polygon, Rectangle, RulerGuide,
+    SatinParams, Spread, SpreadProvenance, TargetTransparency, TextFrame, TextPath, TextWrap,
+    TextWrapMode, TransparencyPreference, VerticalJustification,
 };
 pub use story::{
     parse_story, parse_story_with_provenance, story_text_anchors, AnchoredFrame, AnchoredFrameKind,

@@ -326,6 +326,18 @@ name = "patch_item_state"
 elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine"]
 
 [[fn]]
+file = "crates/idml-export/src/overprint.rs"
+name = "patch_item"
+# `item_overprint`: the page items the model carries overprint on.
+elements = ["TextFrame", "Rectangle", "Oval", "Polygon"]
+
+[[fn]]
+file = "crates/idml-export/src/images.rs"
+name = "patch_placed_transform"
+# `is_placed_name`: the placed-content child of a picture frame.
+elements = ["Image", "EPS", "PDF", "ImportedPage"]
+
+[[fn]]
 file = "crates/idml-export/src/rewrite.rs"
 name = "PER_CORNER_KEYS"
 elements = ["TextFrame", "Rectangle", "Oval", "Polygon", "GraphicLine", "Group"]
@@ -891,6 +903,13 @@ parts = ["Spreads", "MasterSpreads"]
 file = "crates/idml-export/src/rewrite.rs"
 name = "PER_CORNER_KEYS"
 parts = ["Spreads", "MasterSpreads"]
+
+# A minted run's hyperlink source around its pieces, reached by method
+# call from the story writer.
+[[part_entry]]
+file = "crates/idml-export/src/inline_objects.rs"
+name = "open_source"
+parts = ["Stories"]
 
 # designmap.xml.
 [[part_entry]]

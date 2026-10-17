@@ -66,8 +66,7 @@ use quick_xml::{Reader, Writer};
 use idml_import::{Bounds, Spread};
 
 use crate::rewrite::{
-    attr_value, emit_empty_with_attrs, emit_start_with_attrs, format_f32, format_matrix,
-    patch_start, Patch,
+    attr_value, emit_empty_with_attrs, emit_start_with_attrs, format_f32, patch_start, Patch,
 };
 use crate::ExportedLink;
 
@@ -271,6 +270,14 @@ struct LinkSpec {
     uri: String,
     transform: Option<[f32; 6]>,
     bounds: Bounds,
+    /// `bounds` is the picture's PIXEL box, read off its header (see
+    /// [`placement`]), rather than the frame box a link with no bytes
+    /// keeps.
+    pixel_box: bool,
+    /// `transform` is the engine's placement of a picture the model
+    /// gives no transform of its own (its named fit, or the crop box),
+    /// not a value the model holds.
+    derived: bool,
     space: Option<String>,
     /// The bytes to embed as `<Contents>` (see `LinkCollector::embed`).
     embed: Option<Vec<u8>>,
@@ -284,6 +291,7 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
     let mut add = |id: Option<&str>,
                    link: Option<&str>,
                    bytes: Option<&[u8]>,
+                   own: Option<[f32; 6]>,
                    transform: Option<[f32; 6]>,
                    bounds: Bounds,
                    crops: [f32; 4]| {
@@ -291,7 +299,8 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
         // The picture's own box and its placement, in InDesign's
         // spelling (see [`placement`]), whenever the bytes say how big
         // the picture is; a link with no bytes keeps the frame box.
-        let (bounds, transform) = match bytes.and_then(image_dimensions) {
+        let dims = bytes.and_then(image_dimensions);
+        let (bounds, transform) = match dims {
             Some((w, h)) => placement(bounds, crops, transform, w, h),
             None => (bounds, transform),
         };
@@ -320,6 +329,8 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
                 uri,
                 transform,
                 bounds,
+                pixel_box: dims.is_some(),
+                derived: own.is_none() && transform.is_some(),
                 space: space_of(id),
                 embed,
             },
@@ -350,6 +361,7 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
             r.self_id.as_deref(),
             r.image_link.as_deref(),
             r.image_bytes.as_deref(),
+            r.image_item_transform,
             transform,
             r.bounds,
             crops,
@@ -361,6 +373,7 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
             o.image_link.as_deref(),
             o.image_bytes.as_deref(),
             o.image_item_transform,
+            o.image_item_transform,
             o.bounds,
             [0.0; 4],
         );
@@ -370,6 +383,7 @@ fn link_specs(spread: &Spread, links: &mut LinkCollector) -> HashMap<String, Lin
             p.self_id.as_deref(),
             p.image_link.as_deref(),
             p.image_bytes.as_deref(),
+            p.image_item_transform,
             p.image_item_transform,
             p.bounds,
             [0.0; 4],
@@ -520,7 +534,58 @@ pub(crate) fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
             _ => return None,
         }
     }
+    if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+        return tiff_dimensions(bytes);
+    }
+    if bytes.starts_with(b"8BPS") {
+        // The Photoshop file header: rows then columns, big-endian, after
+        // the signature, the version and six reserved bytes.
+        return Some((be32(18)?, be32(14)?));
+    }
     None
+}
+
+/// `ImageWidth` (256) / `ImageLength` (257) off a classic TIFF's first
+/// image file directory, in the byte order its header names. A TIFF the
+/// export could not measure kept the frame box and the IDENTITY
+/// transform, which the importer reads as one point per pixel: the
+/// export's twin drew the picture's top-left corner at full size inside
+/// the frame, a blank-looking tile.
+fn tiff_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let le = bytes.starts_with(b"II");
+    let u16_at = |i: usize| -> Option<u32> {
+        let b = bytes.get(i..i + 2)?;
+        Some(if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        } as u32)
+    };
+    let u32_at = |i: usize| -> Option<u32> {
+        let b = bytes.get(i..i + 4)?;
+        Some(if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        })
+    };
+    let ifd = u32_at(4)? as usize;
+    let count = u16_at(ifd)? as usize;
+    let (mut w, mut h) = (None, None);
+    for k in 0..count {
+        let entry = ifd + 2 + 12 * k;
+        let value = match u16_at(entry + 2)? {
+            3 => u16_at(entry + 8)?,
+            4 => u32_at(entry + 8)?,
+            _ => continue,
+        };
+        match u16_at(entry)? {
+            256 => w = Some(value),
+            257 => h = Some(value),
+            _ => {}
+        }
+    }
+    Some((w?, h?))
 }
 
 /// InDesign's `LinkResourceFormat` name for an asset, by extension.
@@ -577,7 +642,7 @@ fn write_image(
     attrs.push((
         "ItemTransform",
         spec.transform
-            .map(|m| format_matrix(&m))
+            .map(|m| format_image_transform(&m))
             .unwrap_or_else(|| "1 0 0 1 0 0".to_string()),
     ));
     emit_start_with_attrs(writer, "Image", &attrs)?;
@@ -635,6 +700,112 @@ fn write_image(
     Ok(())
 }
 
+/// A picture's `ItemTransform` at the precision the engine places it
+/// with: each value the shortest decimal that reads back as the same
+/// `f32`. InDesign writes full doubles here
+/// (`0.13835145741383767 0 0 0.13835145741383767 …`), and the four
+/// decimals [`crate::rewrite::format_matrix`] keeps for page geometry are not enough for
+/// a scale: a 2200 px picture at `0.19636364` written as `0.1964` lands
+/// 0.08 pt wider, and every resampled row and column of it shifts — the
+/// export's twin drew a grid of differences across each photograph.
+pub(crate) fn format_image_transform(m: &[f32; 6]) -> String {
+    m.iter()
+        .map(|v| {
+            if *v == 0.0 {
+                "0".to_string()
+            } else {
+                format!("{v}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A `"a b c d tx ty"` matrix attribute, parsed.
+fn parse_matrix(raw: &[u8]) -> Option<[f32; 6]> {
+    let s = std::str::from_utf8(raw).ok()?;
+    let mut it = s.split_whitespace();
+    let mut m = [0.0f32; 6];
+    for slot in &mut m {
+        *slot = it.next()?.parse().ok()?;
+    }
+    it.next().is_none().then_some(m)
+}
+
+/// A placed element the SOURCE already carries, brought in line with
+/// the placement the export writes for it: its `ItemTransform` when the
+/// spec has one and the source spells a different matrix. Verbatim when
+/// they agree (an InDesign-authored picture the model never moved).
+///
+/// The source of an engine-made document is the engine's own earlier
+/// export, so a picture the model places by a fit (no transform of its
+/// own) kept whatever that export wrote — rounded to four decimals, or
+/// the identity when the picture's size was not known then — on every
+/// later save.
+fn patch_placed_transform(
+    e: &BytesStart,
+    spec: &LinkSpec,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
+    let Some(t) = spec.transform else {
+        return Ok(e.clone().into_owned());
+    };
+    let on_disk = e
+        .try_get_attribute("ItemTransform")
+        .ok()
+        .flatten()
+        .and_then(|a| parse_matrix(a.value.as_ref()));
+    if on_disk == Some(t) {
+        return Ok(e.clone().into_owned());
+    }
+    patch_start(
+        e,
+        |k, _| (k == b"ItemTransform").then(|| Patch::Set(format_image_transform(&t))),
+        &[("ItemTransform", format_image_transform(&t))],
+    )
+}
+
+/// The `<GraphicBounds>` of a placed element the source carries, set to
+/// the picture's pixel box when the export derived the placement from
+/// the picture's size (see [`placement`]) and the source spells another
+/// box — an older export wrote the FRAME box for a picture whose size it
+/// could not read. Only for a derived placement: a transform the model
+/// holds was read against the box the source already spells.
+fn patch_graphic_bounds(
+    e: &BytesStart,
+    spec: &LinkSpec,
+) -> Result<BytesStart<'static>, quick_xml::Error> {
+    if !(spec.derived && spec.pixel_box) {
+        return Ok(e.clone().into_owned());
+    }
+    let b = spec.bounds;
+    let want = [
+        ("Left", b.left),
+        ("Top", b.top),
+        ("Right", b.right),
+        ("Bottom", b.bottom),
+    ];
+    let agrees = want.iter().all(|(k, v)| {
+        attr_value(e, k.as_bytes())
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .is_some_and(|x| x == *v)
+    });
+    if agrees {
+        return Ok(e.clone().into_owned());
+    }
+    patch_start(
+        e,
+        |k, _| {
+            want.iter()
+                .find(|(name, _)| name.as_bytes() == k)
+                .map(|(_, v)| Patch::Set(format_f32(*v)))
+        },
+        &want
+            .iter()
+            .map(|(k, v)| (*k, format_f32(*v)))
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn is_host_name(name: &[u8]) -> bool {
     matches!(name, b"Rectangle" | b"Oval" | b"Polygon")
 }
@@ -679,10 +850,21 @@ fn patch_uri(
     )
 }
 
-/// Bring every linked frame's placed-image child in line with the model.
-/// `links` accumulates the files the export's URIs point at (see
+/// Bring every linked frame's placed-image child in line with the model,
+/// then every frame's fitting options ([`crate::frame_fitting`], whose
+/// crops convert by the picture transform written here). `links`
+/// accumulates the files the export's URIs point at (see
 /// [`LinkCollector`]).
 pub(crate) fn rewrite_images(
+    original: &[u8],
+    spread: &Spread,
+    links: &mut LinkCollector,
+) -> Result<Vec<u8>, quick_xml::Error> {
+    let placed = rewrite_placed_children(original, spread, links)?;
+    crate::frame_fitting::rewrite_frame_fitting(&placed, spread)
+}
+
+fn rewrite_placed_children(
     original: &[u8],
     spread: &Spread,
     links: &mut LinkCollector,
@@ -721,11 +903,8 @@ pub(crate) fn rewrite_images(
                     if is_placed_name(&name) && depth == d + 1 {
                         let (d, id, spec, _) = open.take().expect("checked");
                         open = Some((d, id, spec, true));
-                        writer.write_event(Event::Start(patch_uri(
-                            &e,
-                            &spec.uri,
-                            spec.embed.is_some(),
-                        )?))?;
+                        let start = patch_uri(&e, &spec.uri, spec.embed.is_some())?;
+                        writer.write_event(Event::Start(patch_placed_transform(&start, spec)?))?;
                     } else if name == b"Link" && depth == d + 2 {
                         writer.write_event(Event::Start(patch_uri(
                             &e,
@@ -762,11 +941,10 @@ pub(crate) fn rewrite_images(
                     if is_placed_name(&name) && depth + 1 == d + 1 {
                         let (d, id, spec, _) = open.take().expect("checked");
                         open = Some((d, id, spec, true));
-                        writer.write_event(Event::Empty(patch_uri(
-                            &e,
-                            &spec.uri,
-                            spec.embed.is_some(),
-                        )?))?;
+                        let start = patch_uri(&e, &spec.uri, spec.embed.is_some())?;
+                        writer.write_event(Event::Empty(patch_placed_transform(&start, spec)?))?;
+                    } else if name == b"GraphicBounds" && depth + 1 == d + 3 {
+                        writer.write_event(Event::Empty(patch_graphic_bounds(&e, spec)?))?;
                     } else if name == b"Link" && depth + 1 == d + 2 {
                         writer.write_event(Event::Empty(patch_uri(
                             &e,
@@ -831,6 +1009,42 @@ mod tests {
         jpg.extend_from_slice(&[0u8; 12]);
         assert_eq!(image_dimensions(&jpg), Some((24, 8)));
         assert_eq!(image_dimensions(b"not a picture"), None);
+    }
+
+    /// A TIFF in either byte order, its size a SHORT or a LONG, and a
+    /// Photoshop file.
+    #[test]
+    fn tiff_and_photoshop_dimensions_are_read() {
+        fn tiff(le: bool, width_type: u16) -> Vec<u8> {
+            let u16b = |v: u16| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+            let u32b = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+            let mut t = Vec::new();
+            t.extend_from_slice(if le { b"II*\0" } else { b"MM\0*" });
+            t.extend_from_slice(&u32b(8));
+            t.extend_from_slice(&u16b(3));
+            let mut entry = |tag: u16, typ: u16, v: u32| {
+                t.extend_from_slice(&u16b(tag));
+                t.extend_from_slice(&u16b(typ));
+                t.extend_from_slice(&u32b(1));
+                if typ == 3 {
+                    t.extend_from_slice(&u16b(v as u16));
+                    t.extend_from_slice(&[0, 0]);
+                } else {
+                    t.extend_from_slice(&u32b(v));
+                }
+            };
+            entry(254, 4, 0);
+            entry(256, width_type, 800);
+            entry(257, 3, 534);
+            t.extend_from_slice(&[0; 4]);
+            t
+        }
+        assert_eq!(image_dimensions(&tiff(true, 3)), Some((800, 534)));
+        assert_eq!(image_dimensions(&tiff(false, 4)), Some((800, 534)));
+        let mut psd = b"8BPS\0\x01\0\0\0\0\0\0\0\x03".to_vec();
+        psd.extend_from_slice(&534u32.to_be_bytes());
+        psd.extend_from_slice(&800u32.to_be_bytes());
+        assert_eq!(image_dimensions(&psd), Some((800, 534)));
     }
 
     #[test]

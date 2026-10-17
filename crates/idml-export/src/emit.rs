@@ -185,7 +185,31 @@ pub(crate) fn write_paragraphs(
     anchors: &[(String, Option<String>)],
     host_width: Option<f32>,
 ) -> Result<(), quick_xml::Error> {
-    let last_para = paragraphs.len().saturating_sub(1);
+    write_paragraphs_ending(writer, paragraphs, anchors, host_width, false)
+}
+
+/// [`write_paragraphs`] for paragraphs that more of the story follows:
+/// the last one ends with its mark too.
+pub(crate) fn write_paragraphs_before_more(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    paragraphs: &[idml_import::Paragraph],
+    host_width: Option<f32>,
+) -> Result<(), quick_xml::Error> {
+    write_paragraphs_ending(writer, paragraphs, &[], host_width, true)
+}
+
+fn write_paragraphs_ending(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    paragraphs: &[idml_import::Paragraph],
+    anchors: &[(String, Option<String>)],
+    host_width: Option<f32>,
+    last_marked: bool,
+) -> Result<(), quick_xml::Error> {
+    let last_para = if last_marked {
+        paragraphs.len()
+    } else {
+        paragraphs.len().saturating_sub(1)
+    };
     for (pi, p) in paragraphs.iter().enumerate() {
         rewrite::emit_start_with_attrs(writer, "ParagraphStyleRange", &paragraph_attrs(p))?;
         // `<Properties>` is the range's first child in InDesign's own
@@ -205,18 +229,17 @@ pub(crate) fn write_paragraphs(
         // else: opened in InDesign, an eleven-entry table of contents
         // came back as ONE paragraph with its style dropped.
         let mark = pi < last_para;
+        if crate::inline_objects::needs(p) {
+            crate::inline_objects::write_body(writer, p, mark, host_width)?;
+            writer.write_event(Event::End(BytesEnd::new("ParagraphStyleRange")))?;
+            continue;
+        }
         // A table takes the mark (it is the paragraph's last child);
         // otherwise the last run does.
         let mark_on_runs = mark && p.table.is_none();
         let last_run = p.runs.len().saturating_sub(1);
         for (ri, r) in p.runs.iter().enumerate() {
-            rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
-            emit_applied_font(writer, &r.font)?;
-            write_run_body(writer, r, Some(p), true)?;
-            if mark_on_runs && ri == last_run {
-                writer.write_event(Event::Empty(BytesStart::new("Br")))?;
-            }
-            writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+            write_run_ranges(writer, r, Some(p), true, mark_on_runs && ri == last_run)?;
         }
         if let Some(table) = &p.table {
             rewrite::emit_start_with_attrs(
@@ -1057,6 +1080,15 @@ pub(crate) fn write_bullet_char(
     Ok(())
 }
 
+/// A run's conditions as InDesign spells them on its range: the
+/// `Condition/…` ids, space-separated (`AppliedConditions="Condition/A
+/// Condition/B"`). `None` for a run with none. No writer spelled them, so
+/// every run lost its conditions on export — text a hidden condition
+/// should hide came back showing.
+pub(crate) fn applied_conditions_attr(conditions: &[String]) -> Option<String> {
+    (!conditions.is_empty()).then(|| conditions.join(" "))
+}
+
 pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String)> {
     let mut out: Vec<(&'static str, String)> = Vec::new();
     // NOT here: `AppliedFont`. InDesign reads the applied font as a
@@ -1079,6 +1111,9 @@ pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String
         if let Some(v) = v {
             out.push((k, v.clone()));
         }
+    }
+    if let Some(v) = applied_conditions_attr(&r.applied_conditions) {
+        out.push(("AppliedConditions", v));
     }
     let f32_attrs: [(&'static str, Option<f32>); 9] = [
         ("PointSize", r.point_size),
@@ -1121,6 +1156,160 @@ pub(crate) fn character_run_attrs(r: &CharacterRun) -> Vec<(&'static str, String
 /// story they are writing).
 pub(crate) const NEW_INSTANCE_SELF: &str = "paged-new-text-variable-instance";
 
+/// The `PageNumberType` of the range InDesign keeps `ch` in. All three
+/// page numbers are the same `<?ACE 18?>`; the next and the previous one
+/// each sit in a range of their own that names the flavour (InDesign
+/// 20.0.1, `text_variable_roundtrip.rs`), the current page number and
+/// every other character in a range that names none.
+pub(crate) fn page_number_type(ch: char) -> Option<&'static str> {
+    match ch {
+        paged_model::NEXT_PAGE_NUMBER_MARKER => Some("NextPageNumber"),
+        paged_model::PREVIOUS_PAGE_NUMBER_MARKER => Some("PreviousPageNumber"),
+        _ => None,
+    }
+}
+
+/// `text` cut where InDesign cuts it into ranges: maximal pieces whose
+/// characters share a [`page_number_type`].
+pub(crate) fn page_number_pieces(text: &str) -> Vec<(Option<&'static str>, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut kind = None;
+    for (i, ch) in text.char_indices() {
+        let k = page_number_type(ch);
+        if i == 0 {
+            kind = k;
+        } else if k != kind {
+            out.push((kind, &text[start..i]));
+            start = i;
+            kind = k;
+        }
+    }
+    if !text.is_empty() {
+        out.push((kind, &text[start..]));
+    }
+    out
+}
+
+/// The pieces a run is CUT into — [`page_number_pieces`] — when it holds
+/// a next or previous page number; `None` for a run written whole (a
+/// text variable instance never holds one).
+fn run_cut(r: &CharacterRun) -> Option<Vec<(Option<&'static str>, &str)>> {
+    if r.text_variable.is_some() {
+        return None;
+    }
+    let pieces = page_number_pieces(&r.text);
+    pieces
+        .iter()
+        .any(|(kind, _)| kind.is_some())
+        .then_some(pieces)
+}
+
+/// Cut every run of `paragraphs` (and of their tables' cells) the way
+/// [`write_run_ranges`] writes it: one run per piece, each with the run's
+/// attributes; the hyperlink source and a placeholder stay on the first.
+/// What a re-parse of the written ranges reads.
+pub(crate) fn cut_page_number_runs(paragraphs: &mut [idml_import::Paragraph]) {
+    for p in paragraphs {
+        if p.runs.iter().any(|r| run_cut(r).is_some()) {
+            let mut runs = Vec::with_capacity(p.runs.len() + 2);
+            for r in std::mem::take(&mut p.runs) {
+                let Some(pieces) = run_cut(&r) else {
+                    runs.push(r);
+                    continue;
+                };
+                for (i, (_, text)) in pieces.into_iter().enumerate() {
+                    let mut piece = r.clone();
+                    piece.text = text.to_string();
+                    if i > 0 {
+                        piece.hyperlink_source = None;
+                        piece.placeholder = None;
+                    }
+                    runs.push(piece);
+                }
+            }
+            p.runs = runs;
+        }
+        if let Some(t) = p.table.as_mut() {
+            for c in &mut t.cells {
+                cut_page_number_runs(&mut c.paragraphs);
+            }
+        }
+    }
+}
+
+/// One model run as `<CharacterStyleRange>`s, the paragraph mark after
+/// its text when `mark`. One range, unless the run holds a next or
+/// previous page number: then each [`page_number_pieces`] piece takes a
+/// range with the run's attributes, the flavour named on the marker's.
+/// A hyperlink source is one stretch of text inside one range in
+/// InDesign's spelling, so a source over a cut run covers its first
+/// piece.
+pub(crate) fn write_run_ranges(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    r: &CharacterRun,
+    para: Option<&Paragraph>,
+    wrap_source: bool,
+    mark: bool,
+) -> Result<(), quick_xml::Error> {
+    let Some(pieces) = run_cut(r) else {
+        rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &character_run_attrs(r))?;
+        emit_applied_font(writer, &r.font)?;
+        write_run_body(writer, r, para, wrap_source)?;
+        if mark {
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+        return Ok(());
+    };
+    let last = pieces.len() - 1;
+    for (i, (kind, text)) in pieces.into_iter().enumerate() {
+        let mut attrs = character_run_attrs(r);
+        if let Some(kind) = kind {
+            attrs.push(("PageNumberType", kind.to_string()));
+        }
+        rewrite::emit_start_with_attrs(writer, "CharacterStyleRange", &attrs)?;
+        emit_applied_font(writer, &r.font)?;
+        let source = r.hyperlink_source.as_deref().filter(|_| i == 0);
+        write_text_body(writer, source, text, wrap_source)?;
+        if mark && i == last {
+            writer.write_event(Event::Empty(BytesStart::new("Br")))?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("CharacterStyleRange")))?;
+    }
+    Ok(())
+}
+
+/// `text` as a range's inline body, inside an inner
+/// `<HyperlinkTextSource>` when `source` names one and `wrap_source`.
+pub(crate) fn write_text_body(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    source: Option<&str>,
+    text: &str,
+    wrap_source: bool,
+) -> Result<(), quick_xml::Error> {
+    match source {
+        Some(source) if wrap_source => {
+            rewrite::emit_start_with_attrs(
+                writer,
+                "HyperlinkTextSource",
+                &[
+                    ("Self", source.to_string()),
+                    (
+                        "Name",
+                        source.rsplit('/').next().unwrap_or(source).to_string(),
+                    ),
+                    ("Hidden", "false".to_string()),
+                ],
+            )?;
+            rewrite::write_run_content(writer, text)?;
+            writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
+        }
+        _ => rewrite::write_run_content(writer, text)?,
+    }
+    Ok(())
+}
+
 /// A run's inline body: a text variable instance (a run tagged
 /// `text_variable`), a hyperlink source around the text (a run tagged
 /// `hyperlink_source`, when `wrap_source`), or the plain text.
@@ -1148,38 +1337,24 @@ pub(crate) fn write_run_body(
             ],
         );
     }
-    match (&r.hyperlink_source, wrap_source) {
-        (Some(source), true) => {
-            rewrite::emit_start_with_attrs(
-                writer,
-                "HyperlinkTextSource",
-                &[
-                    ("Self", source.clone()),
-                    (
-                        "Name",
-                        source.rsplit('/').next().unwrap_or(source).to_string(),
-                    ),
-                    ("Hidden", "false".to_string()),
-                ],
-            )?;
-            rewrite::write_run_content(writer, &r.text)?;
-            writer.write_event(Event::End(BytesEnd::new("HyperlinkTextSource")))?;
-        }
-        _ if r.text.contains(paged_model::NOTE_MARKER) => {
-            // An editorial note in a story with no source part (core ADR
-            // 172): written from the model.
-            rewrite::write_run_with_notes(
-                writer,
-                &r.text,
-                r,
-                para,
-                &rewrite::RunSources::default(),
-                &mut rewrite::RunMarkers::default(),
-            )?
-        }
-        _ => rewrite::write_run_content(writer, &r.text)?,
+    // An editorial note or an endnote reference in a story with no source
+    // part is written from the model (core ADRs 170, 172).
+    if para.is_some()
+        && r.text
+            .chars()
+            .any(|c| c == paged_model::NOTE_MARKER || c == paged_model::ENDNOTE_REFERENCE_MARKER)
+    {
+        return rewrite::write_text_with_notes(
+            writer,
+            &r.text,
+            r,
+            para,
+            &rewrite::RunSources::default(),
+            rewrite::Before::default(),
+            wrap_source,
+        );
     }
-    Ok(())
+    write_text_body(writer, r.hyperlink_source.as_deref(), &r.text, wrap_source)
 }
 
 /// Give every `<TextVariableInstance>` this writer minted (see
