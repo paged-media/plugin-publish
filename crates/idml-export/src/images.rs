@@ -841,13 +841,11 @@ fn patch_uri(
         },
         &[],
     )?;
-    Ok(
-        if e.as_ref().trim_ascii_end() == rebuilt.as_ref().trim_ascii_end() {
-            e.clone().into_owned()
-        } else {
-            rebuilt
-        },
-    )
+    Ok(if e.trim_ascii_end() == rebuilt.trim_ascii_end() {
+        e.clone().into_owned()
+    } else {
+        rebuilt
+    })
 }
 
 /// Bring every linked frame's placed-image child in line with the model,

@@ -185,13 +185,11 @@ fn patch_option(
         },
         &extras,
     )?;
-    Ok(
-        if e.as_ref().trim_ascii_end() == rebuilt.as_ref().trim_ascii_end() {
-            e.clone().into_owned()
-        } else {
-            rebuilt
-        },
-    )
+    Ok(if e.trim_ascii_end() == rebuilt.trim_ascii_end() {
+        e.clone().into_owned()
+    } else {
+        rebuilt
+    })
 }
 
 /// Bring every `<Rectangle>` the model gives fitting options in line

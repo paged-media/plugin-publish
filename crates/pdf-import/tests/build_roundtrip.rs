@@ -76,7 +76,7 @@ fn ir_maps_to_paged_ocf_with_editable_text_and_images() {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&ocf)).unwrap();
     {
         let first = zip.by_index(0).unwrap();
-        assert_eq!(first.name(), "mimetype", "mimetype must be first");
+        assert_eq!(first.name().unwrap(), "mimetype", "mimetype must be first");
         assert_eq!(
             first.compression(),
             zip::CompressionMethod::Stored,
@@ -97,9 +97,10 @@ fn ir_maps_to_paged_ocf_with_editable_text_and_images() {
     let blobs: std::collections::HashMap<String, Vec<u8>> = {
         let zip = zip::ZipArchive::new(std::io::Cursor::new(&ocf)).unwrap();
         zip.file_names()
+            .map(|n| n.unwrap())
             .filter_map(|n| {
-                let name = paged_store::blob_name_of(n)?.to_string();
-                Some((name, zip_entry(&ocf, n)?))
+                let name = paged_store::blob_name_of(&n)?.to_string();
+                Some((name, zip_entry(&ocf, &n)?))
             })
             .collect()
     };

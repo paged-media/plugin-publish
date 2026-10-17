@@ -805,9 +805,7 @@ pub fn patch_styles_defined_elsewhere(
                 };
                 // An unchanged tag keeps its bytes — InDesign's own
                 // `<… />` spelling included, which a rebuilt tag loses.
-                if let Some(start) =
-                    patched.filter(|p| p.as_ref().trim_ascii_end() != e.as_ref().trim_ascii_end())
-                {
+                if let Some(start) = patched.filter(|p| p.trim_ascii_end() != e.trim_ascii_end()) {
                     match ev {
                         Event::Start(_) => writer.write_event(Event::Start(start))?,
                         _ => writer.write_event(Event::Empty(start))?,

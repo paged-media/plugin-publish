@@ -527,8 +527,10 @@ pub(crate) fn write_package(
         masters.iter().map(|m| m.src.as_str()).collect();
     let source_masters: Vec<String> = src
         .file_names()
+        .map(|n| n.map(|n| n.into_owned()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|n| n.starts_with("MasterSpreads/"))
-        .map(str::to_string)
         .collect();
     let dropped_master_srcs: Vec<String> = source_masters
         .iter()
@@ -1085,7 +1087,7 @@ pub(crate) fn write_package(
                 zip.raw_copy_file(entry)?;
                 continue;
             }
-            entry.name().to_string()
+            entry.name()?.into_owned()
         };
 
         if !keep_container_parts && paged::is_container_part(&name) {

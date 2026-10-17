@@ -594,7 +594,7 @@ fn unchanged_or(
     original: &BytesStart<'static>,
     rebuilt: BytesStart<'static>,
 ) -> BytesStart<'static> {
-    if original.as_ref().trim_ascii_end() == rebuilt.as_ref().trim_ascii_end() {
+    if original.trim_ascii_end() == rebuilt.trim_ascii_end() {
         original.clone()
     } else {
         rebuilt

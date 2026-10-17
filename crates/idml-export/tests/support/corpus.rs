@@ -126,7 +126,11 @@ pub fn entries(package: &std::path::Path, prefix: &str) -> Vec<(String, Vec<u8>)
         )
     });
     let names: Vec<String> = (0..zip.len())
-        .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
+        .filter_map(|i| {
+            zip.by_index(i)
+                .ok()
+                .and_then(|e| e.name().ok().map(|n| n.into_owned()))
+        })
         .filter(|n| n.starts_with(prefix) && n.ends_with(".xml"))
         .collect();
     names

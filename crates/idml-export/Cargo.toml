@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 # features off + deflate only. No native-only deps so the crate
 # builds for wasm32 too (the save-back path runs in the editor/SDK).
 zip = { workspace = true }
+flate2 = { workspace = true }
 quick-xml = { workspace = true }
 # `.paged` manifest.json — parsed + MERGE-rewritten so unknown fields and
 # third-party plugin metadata round-trip untouched (pure Rust, wasm-safe).
