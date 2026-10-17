@@ -264,7 +264,11 @@ fn main() {
         };
         n_pkgs += 1;
         let names: Vec<String> = (0..zip.len())
-            .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
+            .filter_map(|i| {
+                zip.by_index(i)
+                    .ok()
+                    .and_then(|e| e.name().ok().map(|n| n.into_owned()))
+            })
             .collect();
 
         for name in &names {
@@ -487,7 +491,11 @@ fn entry_diffs(original: &[u8], saved: &[u8]) -> Vec<String> {
             return out;
         };
         let names: Vec<String> = (0..zip.len())
-            .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
+            .filter_map(|i| {
+                zip.by_index(i)
+                    .ok()
+                    .and_then(|e| e.name().ok().map(|n| n.into_owned()))
+            })
             .collect();
         for name in names {
             let mut buf = Vec::new();

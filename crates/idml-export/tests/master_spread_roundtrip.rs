@@ -363,7 +363,7 @@ fn created_renamed_and_deleted_masters_survive_save_and_reopen() {
     let names: Vec<String> = zip::ZipArchive::new(std::io::Cursor::new(&again))
         .unwrap()
         .file_names()
-        .map(str::to_string)
+        .map(|n| n.unwrap().into_owned())
         .collect();
     assert!(!names.iter().any(|n| n == MASTER_SRC), "{names:?}");
     let designmap = String::from_utf8(entry(&again, "designmap.xml")).unwrap();

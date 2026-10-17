@@ -100,7 +100,7 @@ pub fn entry(package: &[u8], name: &str) -> Option<String> {
 
 pub fn names(package: &[u8]) -> Vec<String> {
     let zip = zip::ZipArchive::new(Cursor::new(package)).expect("zip");
-    zip.file_names().map(|n| n.to_string()).collect()
+    zip.file_names().map(|n| n.unwrap().into_owned()).collect()
 }
 
 pub fn open(package: &[u8]) -> paged_scene::Document {

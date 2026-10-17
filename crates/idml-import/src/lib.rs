@@ -121,7 +121,7 @@ pub fn open_source_archive(bytes: &[u8]) -> Result<SourceArchive, ParseError> {
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         let mut buf = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut buf)?;
         entries.insert(name, Bytes::from(buf));

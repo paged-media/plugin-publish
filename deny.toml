@@ -1,0 +1,46 @@
+# cargo-deny configuration for the plugin-publish crates.
+# Run:  cargo deny check
+# Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# The same policy as the engine (paged-media/core): these crates are linked
+# into the engine's wasm, so their dependencies meet its license terms.
+
+[advisories]
+version = 2
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MPL-2.0",
+    # Our own crates: dual MPL-2.0 OR PMEL (the Paged Media Engine License;
+    # SPDX has no id for it, hence the LicenseRef form).
+    "LicenseRef-PMEL",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "BSL-1.0",
+]
+exceptions = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+# The workspace crates refer to each other by path (none is published).
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The shared model crates (paged-model, paged-scene, paged-store) are
+# git-depended from the public engine repo at a pinned revision.
+allow-git = ["https://github.com/paged-media/core"]

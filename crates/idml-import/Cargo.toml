@@ -18,6 +18,7 @@ paged-model = { workspace = true }
 thiserror = { workspace = true }
 bytes = { workspace = true }
 zip = { workspace = true }
+flate2 = { workspace = true }
 quick-xml = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }

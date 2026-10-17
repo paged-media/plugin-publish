@@ -87,7 +87,7 @@ pub fn idml_parts_hash(package: &[u8]) -> Result<String, WriteError> {
         if e.is_dir() {
             continue;
         }
-        let name = e.name().to_string();
+        let name = e.name()?.into_owned();
         if name == MANIFEST_NAME || name == "mimetype" || name.starts_with(PAGED_PREFIX) {
             continue;
         }
@@ -135,7 +135,7 @@ fn parts_index(final_parts: &BTreeMap<String, Vec<u8>>) -> serde_json::Value {
 /// Read one entry's decompressed bytes from a package, or `None` if absent.
 fn read_entry(package: &[u8], name: &str) -> Result<Option<Vec<u8>>, WriteError> {
     let mut zip = zip::ZipArchive::new(Cursor::new(package))?;
-    let present = zip.file_names().any(|n| n == name);
+    let present = zip.file_names().any(|n| n.is_ok_and(|n| n == name));
     if !present {
         return Ok(None);
     }
@@ -229,7 +229,7 @@ pub fn write_paged(
             if e.is_dir() {
                 continue;
             }
-            let name = e.name().to_string();
+            let name = e.name()?.into_owned();
             if !name.starts_with(PAGED_PREFIX) || new_parts.contains_key(&name) {
                 continue; // not a plugin part, or about to be replaced by a new one
             }
@@ -265,10 +265,10 @@ pub fn write_paged(
 
     for i in 0..src.len() {
         let raw = src.by_index_raw(i)?;
-        if raw.is_dir() || replace.contains(raw.name()) {
+        if raw.is_dir() || replace.contains(raw.name()?.as_ref()) {
             continue;
         }
-        zip.raw_copy_file(raw)?;
+        crate::zip_layout::copy_entry(&mut zip, raw)?;
     }
     zip.start_file(MANIFEST_NAME, deflated)?;
     zip.write_all(&manifest)?;
@@ -276,5 +276,5 @@ pub fn write_paged(
         zip.start_file(name.as_str(), deflated)?;
         zip.write_all(body)?;
     }
-    Ok(zip.finish()?.into_inner())
+    Ok(crate::zip_layout::finish(zip)?)
 }

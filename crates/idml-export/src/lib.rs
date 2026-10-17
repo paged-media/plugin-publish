@@ -29,8 +29,8 @@
 //! * **Pass-through (byte-identical).** Every entry except the changed
 //!   Spreads / MasterSpreads / Stories is copied straight out of the
 //!   source ZIP with its original compressed bytes (via
-//!   [`zip::write::ZipWriter::raw_copy_file`]), so `mimetype` stays
-//!   first + stored and untouched entries round-trip bit-for-bit.
+//!   [`zip_layout::copy_entry`]), so `mimetype` stays first + stored and
+//!   untouched entries round-trip bit-for-bit.
 //!   The `.paged` CONTAINER parts (`manifest.json`, `paged/**`) are the
 //!   one exception: [`write_idml`] drops them so its product is a pure
 //!   IDML package; only [`write_paged`] carries them (see
@@ -107,6 +107,7 @@ pub mod text_frame_prefs;
 mod text_variables;
 pub mod text_wrap;
 pub mod transparency;
+pub mod zip_layout;
 
 /// The `Self` of the one `<CrossReferenceFormat>` the exporter emits for
 /// cross-reference sources that name none (InDesign drops those).
@@ -527,8 +528,10 @@ pub(crate) fn write_package(
         masters.iter().map(|m| m.src.as_str()).collect();
     let source_masters: Vec<String> = src
         .file_names()
+        .map(|n| n.map(|n| n.into_owned()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|n| n.starts_with("MasterSpreads/"))
-        .map(str::to_string)
         .collect();
     let dropped_master_srcs: Vec<String> = source_masters
         .iter()
@@ -1082,10 +1085,10 @@ pub(crate) fn write_package(
                 // Directory entries (rare in IDML) copy through as-is.
                 drop(entry);
                 let entry = src.by_index_raw(i)?;
-                zip.raw_copy_file(entry)?;
+                zip_layout::copy_entry(&mut zip, entry)?;
                 continue;
             }
-            entry.name().to_string()
+            entry.name()?.into_owned()
         };
 
         if !keep_container_parts && paged::is_container_part(&name) {
@@ -1102,7 +1105,7 @@ pub(crate) fn write_package(
             zip.write_all(body)?;
         } else {
             let entry = src.by_index_raw(i)?;
-            zip.raw_copy_file(entry)?;
+            zip_layout::copy_entry(&mut zip, entry)?;
         }
     }
 
@@ -1114,9 +1117,8 @@ pub(crate) fn write_package(
         zip.write_all(body)?;
     }
 
-    let cursor = zip.finish()?;
     Ok(IdmlExport {
-        bytes: cursor.into_inner(),
+        bytes: zip_layout::finish(zip)?,
         links: links.into_links(),
     })
 }
