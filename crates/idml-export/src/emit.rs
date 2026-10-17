@@ -444,6 +444,9 @@ pub(crate) fn write_table(
         if let Some(keep) = row.and_then(|r| r.keep_with_next_row) {
             a.push(("KeepWithNextRow", keep.to_string()));
         }
+        if let Some(start) = row.and_then(|r| r.start_row) {
+            a.push(("StartRow", start.as_idml().to_string()));
+        }
         rewrite::emit_empty_with_attrs(writer, "Row", &a)?;
     }
     for c in 0..cols {
