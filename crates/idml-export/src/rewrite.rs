@@ -5602,6 +5602,12 @@ fn rewrite_story_part(
     // run's `<Content>` + `<Footnote>` open tag dropped — yielding a
     // mismatched `</Footnote>` and a re-parse failure (zero pages).
     let mut footnote_depth: usize = 0;
+    // Inside an opaque subtree (`is_opaque_subtree`): its whole markup
+    // buffers into the open run, and nothing in it is a story element.
+    let mut opaque_depth: usize = 0;
+    // The open opaque subtree stands outside any run (between ranges):
+    // its events stream straight through instead of into a run's body.
+    let mut opaque_direct = false;
 
     // W1.15 lane 3 — table-cell text write-back. Inside a `<Cell
     // Self="...">` the `<ParagraphStyleRange>` / `<CharacterStyleRange>`
@@ -5638,6 +5644,23 @@ fn rewrite_story_part(
                 // that matched a model cell. The ranges then resolve
                 // against the cell's paragraphs with cell-local cursors.
                 let in_cell = table_depth > 0 && current_cell.is_some();
+                if footnote_depth == 0 && (opaque_depth > 0 || is_opaque_subtree(&e)) {
+                    // A note, hidden text or a tracked deletion: its ranges
+                    // are its own, not the story's. Opening one activates
+                    // the run's body so it is carried in order.
+                    let start = Event::Start(e.into_owned());
+                    if opaque_depth == 0 {
+                        opaque_direct = !csr_open;
+                        if !opaque_direct {
+                            body.active = true;
+                            body.opaque.push((body.text.chars().count(), Vec::new()));
+                        }
+                    }
+                    opaque_depth += 1;
+                    opaque_push(&mut writer, &mut body, opaque_direct, start)?;
+                    buf.clear();
+                    continue;
+                }
                 match e.name().as_ref() {
                     b"Footnote" => {
                         // Enter a footnote: its body is a separate stream
@@ -5861,6 +5884,27 @@ fn rewrite_story_part(
                     buf.clear();
                     continue;
                 }
+                if opaque_depth > 0 {
+                    opaque_push(
+                        &mut writer,
+                        &mut body,
+                        opaque_direct,
+                        Event::Empty(e.into_owned()),
+                    )?;
+                    buf.clear();
+                    continue;
+                }
+                if is_opaque_subtree(&e) {
+                    if csr_open {
+                        body.active = true;
+                        body.opaque.push((body.text.chars().count(), Vec::new()));
+                        body.push_in_opaque(Event::Empty(e.into_owned()));
+                    } else {
+                        writer.write_event(Event::Empty(e.into_owned()))?;
+                    }
+                    buf.clear();
+                    continue;
+                }
                 // A self-closing CharacterStyleRange / ParagraphStyleRange
                 // still advances the positional cursor + patches attrs.
                 match e.name().as_ref() {
@@ -6004,6 +6048,16 @@ fn rewrite_story_part(
                     buf.clear();
                     continue;
                 }
+                if opaque_depth > 0 {
+                    opaque_push(
+                        &mut writer,
+                        &mut body,
+                        opaque_direct,
+                        Event::Text(t.into_owned()),
+                    )?;
+                    buf.clear();
+                    continue;
+                }
                 if body.active && body.in_content {
                     // Buffer — the replace decision happens at the run
                     // close once the whole (possibly entity-split) span
@@ -6026,6 +6080,16 @@ fn rewrite_story_part(
             Event::GeneralRef(r) => {
                 if footnote_depth > 0 {
                     body.push_in_note(Event::GeneralRef(r.into_owned()));
+                    buf.clear();
+                    continue;
+                }
+                if opaque_depth > 0 {
+                    opaque_push(
+                        &mut writer,
+                        &mut body,
+                        opaque_direct,
+                        Event::GeneralRef(r.into_owned()),
+                    )?;
                     buf.clear();
                     continue;
                 }
@@ -6065,6 +6129,19 @@ fn rewrite_story_part(
                 }
                 if footnote_depth > 0 {
                     body.push_in_note(Event::End(e.into_owned()));
+                    buf.clear();
+                    continue;
+                }
+                if opaque_depth > 0 {
+                    // Nested elements of one name close in order; the
+                    // depth counts every element opened inside.
+                    opaque_depth -= 1;
+                    opaque_push(
+                        &mut writer,
+                        &mut body,
+                        opaque_direct,
+                        Event::End(e.into_owned()),
+                    )?;
                     buf.clear();
                     continue;
                 }
@@ -6325,6 +6402,8 @@ fn rewrite_story_part(
                     // A note's own number (`<?ACE 4?>`) and the rest of its
                     // markup belong to the note, not the host run.
                     body.push_in_note(other.into_owned());
+                } else if opaque_depth > 0 {
+                    opaque_push(&mut writer, &mut body, opaque_direct, other.into_owned())?;
                 } else if body.active {
                     // A processing instruction that is no marker, or other
                     // markup inside the span — buffer in order and never
@@ -6485,6 +6564,11 @@ struct RunBody {
     /// note it still references as it was (core ADR 163). A footnote is
     /// the reference character in the run's text, as the parser reads it.
     notes: Vec<(Option<String>, Vec<Event<'static>>)>,
+    /// The subtrees the parser reads no text from, standing in the run:
+    /// a `<Note>`, `<HiddenText>`, a tracked deletion. Each with the
+    /// character offset in the run's text where it stands, so a run
+    /// rewritten from the model writes it back there.
+    opaque: Vec<(usize, Vec<Event<'static>>)>,
 }
 
 /// Append one decoded `<Content>` fragment to a run's reconstructed
@@ -6562,6 +6646,116 @@ impl RunBody {
         }
         self.events.push(event);
     }
+
+    /// Buffer an event of an open opaque subtree (see [`Self::opaque`]).
+    fn push_in_opaque(&mut self, event: Event<'static>) {
+        if let Some(sub) = self.opaque.last_mut() {
+            sub.1.push(event.clone());
+        }
+        self.events.push(event);
+    }
+}
+
+/// One event of an open opaque subtree: into the run's body, or straight
+/// out when the subtree stands outside any run.
+fn opaque_push(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    body: &mut RunBody,
+    direct: bool,
+    event: Event<'static>,
+) -> Result<(), quick_xml::Error> {
+    if direct {
+        writer.write_event(event)?;
+        Ok(())
+    } else {
+        body.push_in_opaque(event);
+        Ok(())
+    }
+}
+
+/// [`RunBody::opaque`] with each offset moved from `old` text to `new`
+/// (see the caller): the common prefix keeps offsets, the common suffix
+/// keeps distances from the end.
+fn remap_opaque(
+    opaque: &[(usize, Vec<Event<'static>>)],
+    old: &str,
+    new: &str,
+) -> Vec<(usize, Vec<Event<'static>>)> {
+    let (o, n): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
+    let prefix = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
+    let room = o.len().min(n.len()) - prefix;
+    let suffix = o
+        .iter()
+        .rev()
+        .zip(n.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    opaque
+        .iter()
+        .map(|(at, events)| {
+            let mapped = if *at <= prefix {
+                *at
+            } else if *at >= o.len() - suffix {
+                n.len() - (o.len() - at)
+            } else {
+                n.len() - suffix
+            };
+            (mapped, events.clone())
+        })
+        .collect()
+}
+
+/// A run's text written from the model with its opaque subtrees (see
+/// [`RunBody::opaque`]) back at their character offsets, clamped to the
+/// new text.
+fn write_run_with_opaque(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    run: &CharacterRun,
+    para: Option<&Paragraph>,
+    notes: &[(Option<String>, Vec<Event<'static>>)],
+    opaque: &[(usize, Vec<Event<'static>>)],
+) -> Result<(), quick_xml::Error> {
+    const MARK: char = paged_model::FOOTNOTE_REFERENCE_MARKER;
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0usize;
+    // The footnote references written so far: a later piece's k-th is
+    // the run's (`write_run_with_notes`' `offset`).
+    let mut marks = 0usize;
+    let mut piece = |writer: &mut Writer<Cursor<Vec<u8>>>, segment: &str| {
+        let r = write_run_with_notes(writer, segment, run, para, notes, marks);
+        marks += segment.matches(MARK).count();
+        r
+    };
+    for (offset, events) in opaque {
+        let cut = (*offset).min(chars.len()).max(at);
+        if cut > at {
+            let segment: String = chars[at..cut].iter().collect();
+            piece(writer, &segment)?;
+        }
+        for ev in events {
+            writer.write_event(ev.clone())?;
+        }
+        at = cut;
+    }
+    if at < chars.len() {
+        let segment: String = chars[at..].iter().collect();
+        piece(writer, &segment)?;
+    }
+    Ok(())
+}
+
+/// True for the elements whose text the parser does not read into the
+/// story (`idml_import::story`): an editorial `<Note>`, `<HiddenText>`, a
+/// tracked deletion. Each holds ranges of its own; the writer carries it
+/// whole, as opaque markup of the run it stands in.
+fn is_opaque_subtree(e: &BytesStart) -> bool {
+    match e.name().as_ref() {
+        b"Note" | b"HiddenText" => true,
+        b"Change" => attr_value(e, b"ChangeType").as_deref() == Some("DeletedText"),
+        _ => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6610,6 +6804,11 @@ fn flush_run_body(
     if replace {
         let r = run.expect("checked above");
         let text = model_text(r);
+        // An opaque subtree keeps its place through a contiguous edit: an
+        // offset in the text both share before the edit stays, one after
+        // it keeps its distance from the end, one inside it goes to the
+        // edit's end.
+        let opaque = remap_opaque(&body.opaque, source_text, &text);
         let flavoured = |t: Option<String>| {
             matches!(
                 t.as_deref(),
@@ -6622,8 +6821,34 @@ fn flush_run_body(
                 .any(|c| crate::emit::page_number_type(c).is_some())
         {
             write_page_number_pieces(writer, &text, r, open, para, &body.notes, wrap_source)?;
-        } else {
+            // A note, hidden text or a tracked deletion in a run of page
+            // number pieces follows them, kept whole.
+            for (_, events) in &opaque {
+                for ev in events {
+                    writer.write_event(ev.clone())?;
+                }
+            }
+        } else if opaque.is_empty() {
             write_text_with_notes(writer, &text, r, para, &body.notes, 0, wrap_source)?;
+        } else {
+            match (&r.hyperlink_source, wrap_source) {
+                (Some(src), true) => {
+                    emit_start_with_attrs(
+                        writer,
+                        "HyperlinkTextSource",
+                        &[
+                            ("Self", src.clone()),
+                            ("Name", src.rsplit('/').next().unwrap_or(src).to_string()),
+                            ("Hidden", "false".to_string()),
+                        ],
+                    )?;
+                    write_run_with_opaque(writer, &text, r, para, &body.notes, &opaque)?;
+                    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
+                        "HyperlinkTextSource",
+                    )))?;
+                }
+                _ => write_run_with_opaque(writer, &text, r, para, &body.notes, &opaque)?,
+            }
         }
         if ends_with_br && !hold_br {
             writer.write_event(Event::Empty(BytesStart::new("Br")))?;
@@ -6645,6 +6870,7 @@ fn flush_run_body(
     body.has_tab_leaf = false;
     body.events.clear();
     body.notes.clear();
+    body.opaque.clear();
     Ok(())
 }
 

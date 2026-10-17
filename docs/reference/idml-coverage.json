@@ -26,7 +26,7 @@
     "exportOnly": 169,
     "propertiesChild": 61,
     "importerReadSites": 1030,
-    "exporterWriteSites": 1042,
+    "exporterWriteSites": 1045,
     "unresolved": 0,
     "partRows": 4150,
     "misplaced": 30,
@@ -4400,7 +4400,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7622
+        "line": 7848
       }
     },
     {
@@ -9013,7 +9013,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 6769
+        "line": 6995
       }
     },
     {
@@ -22135,7 +22135,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7565
+        "line": 7791
       }
     },
     {
@@ -22503,7 +22503,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7518
+        "line": 7744
       }
     },
     {
@@ -23137,7 +23137,7 @@
       },
       "exportSource": {
         "file": "crates/idml-export/src/rewrite.rs",
-        "line": 7566
+        "line": 7792
       }
     },
     {
