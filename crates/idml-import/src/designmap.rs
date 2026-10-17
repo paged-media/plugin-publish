@@ -48,7 +48,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
     // Open `<Topic>` elements: InDesign nests a subtopic inside its parent
     // (core ADR 168), and a topic's `<CrossReference>`s inside it.
     let mut topic_stack: Vec<String> = Vec::new();
-    // Open `<Bookmark>` elements: a nested bookmark's parent (L-12).
+    // Open `<Bookmark>` elements: a nested bookmark's parent (core ADR 171).
     let mut bookmark_stack: Vec<String> = Vec::new();
     // The open `<CrossReferenceFormat>` (index into
     // `out.cross_reference_formats`), whose `<BuildingBlock>`s fold in.
@@ -432,7 +432,7 @@ pub fn parse_designmap(xml: &[u8]) -> Result<DesignMap, ParseError> {
                 if e.name().as_ref() == b"Bookmark" {
                     if let Some(self_id) = attr(&e, b"Self") {
                         // InDesign nests a bookmark inside its parent's
-                        // element (core L-12).
+                        // element (core ADR 171).
                         if let Some(parent) = bookmark_stack.last() {
                             out.bookmark_parents.insert(self_id.clone(), parent.clone());
                         }
@@ -991,7 +991,7 @@ mod tests {
         assert_eq!(o.entry_end_separator.as_deref(), Some(""));
     }
 
-    /// Bookmarks nest as InDesign writes them (core L-12): a child's
+    /// Bookmarks nest as InDesign writes them (core ADR 171): a child's
     /// `<Bookmark>` inside its parent's.
     #[test]
     fn nested_bookmarks_record_their_parent() {
