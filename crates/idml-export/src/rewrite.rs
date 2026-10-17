@@ -1505,7 +1505,17 @@ fn write_new_text_frame(
     if let Some(a) = &f.stroke_alignment {
         attrs.push(("StrokeAlignment", a.clone()));
     }
-    emit_start_with_attrs(writer, "TextFrame", &attrs)?;
+    // The frame the endnote story stands in is InDesign's
+    // `<EndnoteTextFrame>` (core ADRs 170, 174): in a `<TextFrame>`
+    // InDesign does not take the story for the document's endnotes.
+    let endnote_frame = spread.endnote_frames.iter().any(|id| id == self_id);
+    let element = if endnote_frame {
+        emit_start_with_attrs(writer, "EndnoteTextFrame", &attrs)?;
+        "EndnoteTextFrame"
+    } else {
+        emit_start_with_attrs(writer, "TextFrame", &attrs)?;
+        "TextFrame"
+    };
     writer.write_event(Event::Start(BytesStart::new("Properties")))?;
     write_item_label(writer, spread, self_id)?;
     write_box_path_geometry(writer, f.bounds)?;
@@ -1513,7 +1523,7 @@ fn write_new_text_frame(
     write_text_frame_preference(writer, f)?;
     write_baseline_frame_grid(writer, f)?;
     write_transparency_setting(writer, &paint)?;
-    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("TextFrame")))?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(element)))?;
     Ok(())
 }
 
@@ -3322,8 +3332,12 @@ pub fn rewrite_spread(original: &[u8], spread: &Spread) -> Result<Vec<u8>, quick
         handled: bool,
     }
     let mut label_ctx: Vec<LabelCtx> = Vec::new();
-    const ITEM_KINDS: [&[u8]; 5] = [
+    // `<EndnoteTextFrame>` is the text frame the endnote story stands in
+    // (core ADRs 170, 174): an item of the source like any other, so the
+    // insert lane never writes it a second time.
+    const ITEM_KINDS: [&[u8]; 6] = [
         b"TextFrame",
+        b"EndnoteTextFrame",
         b"Rectangle",
         b"Oval",
         b"GraphicLine",
@@ -5616,6 +5630,9 @@ fn rewrite_story_part(
     // The open opaque subtree stands outside any run (between ranges):
     // its events stream straight through instead of into a run's body.
     let mut opaque_direct = false;
+    // Inside an `<EndnoteRange>` of the endnote story (core ADR 174): its
+    // text is the run's, and its `<?ACE 4?>` is the note's number.
+    let mut in_endnote_range = false;
 
     // W1.15 lane 3 — table-cell text write-back. Inside a `<Cell
     // Self="...">` the `<ParagraphStyleRange>` / `<CharacterStyleRange>`
@@ -5858,6 +5875,14 @@ fn rewrite_story_part(
                         body.ends_with_br = false;
                         body.events.push(Event::Start(e.into_owned()));
                     }
+                    // An endnote's range in the endnote story: its text is the
+                    // run's (core ADR 174); the run is written again around
+                    // the model's ranges when it changes.
+                    b"EndnoteRange" if csr_open => {
+                        in_endnote_range = true;
+                        body.active = true;
+                        body.events.push(Event::Start(e.into_owned()));
+                    }
                     _ => {
                         if body.active {
                             // A non-inline element opened inside the
@@ -6028,6 +6053,15 @@ fn rewrite_story_part(
                         body.text.push('\t');
                         body.ends_with_br = false;
                         body.has_tab_leaf = true;
+                        body.events.push(Event::Empty(e.into_owned()));
+                    }
+                    // An endnote's reference is a character of the run, as
+                    // the parser reads it (core ADRs 170, 174): a run that
+                    // lost or gained one is written again.
+                    b"Endnote" if csr_open => {
+                        body.active = true;
+                        body.text.push(paged_model::ENDNOTE_REFERENCE_MARKER);
+                        body.ends_with_br = false;
                         body.events.push(Event::Empty(e.into_owned()));
                     }
                     _ => {
@@ -6286,6 +6320,12 @@ fn rewrite_story_part(
                     // keep their own arms above: they carry writer-side
                     // cursor state (table depth, the cell stack, the run
                     // flush) that buffering would strand.
+                    b"EndnoteRange" if body.active => {
+                        in_endnote_range = false;
+                        body.events.push(Event::End(e.into_owned()));
+                        buf.clear();
+                        continue;
+                    }
                     _ if body.active => {
                         body.foreign = true;
                         body.events.push(Event::End(e.into_owned()));
@@ -6402,8 +6442,11 @@ fn rewrite_story_part(
                 let range_type = open_csr
                     .as_ref()
                     .and_then(|s| attr_value(s, b"PageNumberType"));
+                let number = in_endnote_range
+                    && std::str::from_utf8(pi.as_ref()).map(str::trim) == Ok("ACE 4");
                 match marker_of_pi(pi.as_ref(), range_type.as_deref()) {
                     Some(ch) => body.text.push(ch),
+                    None if number => body.text.push(paged_model::ENDNOTE_NUMBER_MARKER),
                     None => body.foreign = true,
                 }
                 body.events.push(Event::PI(pi.into_owned()));
@@ -6795,6 +6838,7 @@ pub(crate) struct Before {
     footnotes: usize,
     endnotes: usize,
     notes: usize,
+    ranges: usize,
 }
 
 impl Before {
@@ -6805,6 +6849,7 @@ impl Before {
             footnotes: self.footnotes + n(paged_model::FOOTNOTE_REFERENCE_MARKER),
             endnotes: self.endnotes + n(paged_model::ENDNOTE_REFERENCE_MARKER),
             notes: self.notes + n(paged_model::NOTE_MARKER),
+            ranges: self.ranges + n(paged_model::ENDNOTE_NUMBER_MARKER),
         }
     }
 }
@@ -7104,6 +7149,84 @@ fn flush_run_body(
 /// `offset`: references of the same run already written (a run cut into
 /// several ranges at its page numbers writes its notes piece by piece).
 fn write_run_with_notes(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    run: &CharacterRun,
+    para: Option<&Paragraph>,
+    sources: &RunSources<'_>,
+    before_piece: Before,
+) -> Result<(), quick_xml::Error> {
+    const NUM: char = paged_model::ENDNOTE_NUMBER_MARKER;
+    const BOM: char = '\u{FEFF}';
+    if !text.contains(NUM) {
+        return write_run_marks(writer, text, run, para, sources, before_piece);
+    }
+    // In the endnote story, each note's range — its opening mark, its
+    // number, its text, its closing mark — is its `<EndnoteRange Self
+    // SourceEndnote>`, as InDesign writes it (core ADR 174); the k-th
+    // number marker of the paragraph is its k-th range.
+    let ranges_before = para.map_or(0, |p| {
+        p.runs
+            .iter()
+            .take_while(|r| !std::ptr::eq(*r, run))
+            .map(|r| r.text.matches(NUM).count())
+            .sum::<usize>()
+    });
+    let chars: Vec<char> = text.chars().collect();
+    let mut before = before_piece;
+    let (mut i, mut plain, mut r) = (0usize, 0usize, 0usize);
+    let flush = |writer: &mut Writer<Cursor<Vec<u8>>>,
+                 from: usize,
+                 to: usize,
+                 before: &mut Before|
+     -> Result<(), quick_xml::Error> {
+        if to > from {
+            let piece: String = chars[from..to].iter().collect();
+            write_run_marks(writer, &piece, run, para, sources, *before)?;
+            *before = before.after(&piece);
+        }
+        Ok(())
+    };
+    while i < chars.len() {
+        let opens = (chars[i] == BOM && chars.get(i + 1) == Some(&NUM))
+            || (chars[i] == NUM && (i == 0 || chars[i - 1] != BOM));
+        if !opens {
+            i += 1;
+            continue;
+        }
+        let number = if chars[i] == NUM { i } else { i + 1 };
+        let end = chars[number + 1..]
+            .iter()
+            .position(|c| *c == BOM)
+            .map_or(chars.len(), |p| number + 1 + p + 1);
+        flush(writer, plain, i, &mut before)?;
+        let range: String = chars[i..end].iter().collect();
+        let def = para.and_then(|p| {
+            p.endnote_ranges
+                .get(ranges_before + before_piece.ranges + r)
+        });
+        match def {
+            Some(d) => {
+                let mut attrs = vec![("Self", d.self_id.clone())];
+                if let Some(source) = &d.source {
+                    attrs.push(("SourceEndnote", source.clone()));
+                }
+                emit_start_with_attrs(writer, "EndnoteRange", &attrs)?;
+                write_run_content(writer, &range)?;
+                writer.write_event(Event::End(BytesEnd::new("EndnoteRange")))?;
+            }
+            None => write_run_content(writer, &range)?,
+        }
+        r += 1;
+        i = end;
+        plain = end;
+    }
+    flush(writer, plain, chars.len(), &mut before)
+}
+
+/// [`write_run_with_notes`] for text holding no endnote range: the
+/// footnotes, endnote references and editorial notes at their markers.
+fn write_run_marks(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     text: &str,
     run: &CharacterRun,

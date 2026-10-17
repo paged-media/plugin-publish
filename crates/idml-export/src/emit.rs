@@ -129,6 +129,11 @@ pub(crate) fn story_part(
     if let Some(toc) = story.applied_toc_style.as_deref() {
         s.push_attribute(("AppliedTOCStyle", toc));
     }
+    // The story InDesign collects the document's endnotes in (core ADRs
+    // 170, 174).
+    if story.is_endnote_story {
+        s.push_attribute(("IsEndnoteStory", "true"));
+    }
     writer.write_event(Event::Start(s))?;
     if story.paragraphs.is_empty() && !anchors.is_empty() {
         // An anchor still needs a paragraph to sit in.
@@ -438,6 +443,9 @@ pub(crate) fn write_table(
         a.push(("AutoGrow", auto_grow.to_string()));
         if let Some(keep) = row.and_then(|r| r.keep_with_next_row) {
             a.push(("KeepWithNextRow", keep.to_string()));
+        }
+        if let Some(start) = row.and_then(|r| r.start_row) {
+            a.push(("StartRow", start.as_idml().to_string()));
         }
         rewrite::emit_empty_with_attrs(writer, "Row", &a)?;
     }
@@ -1337,12 +1345,15 @@ pub(crate) fn write_run_body(
             ],
         );
     }
-    // An editorial note or an endnote reference in a story with no source
-    // part is written from the model (core ADRs 170, 172).
+    // An editorial note, an endnote reference or an endnote's range in a
+    // story with no source part is written from the model (core ADRs 170,
+    // 172, 174).
     if para.is_some()
-        && r.text
-            .chars()
-            .any(|c| c == paged_model::NOTE_MARKER || c == paged_model::ENDNOTE_REFERENCE_MARKER)
+        && r.text.chars().any(|c| {
+            c == paged_model::NOTE_MARKER
+                || c == paged_model::ENDNOTE_REFERENCE_MARKER
+                || c == paged_model::ENDNOTE_NUMBER_MARKER
+        })
     {
         return rewrite::write_text_with_notes(
             writer,

@@ -276,7 +276,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "paged-composition"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=149d888b27e7ffd0f3eb67cbcde07e086870c7a2#149d888b27e7ffd0f3eb67cbcde07e086870c7a2"
+source = "git+https://github.com/paged-media/core?rev=b17870d2131a279264366cf6746d5373ad63059e#b17870d2131a279264366cf6746d5373ad63059e"
 dependencies = [
  "paged-flow",
  "serde",
@@ -285,7 +285,7 @@ dependencies = [
 [[package]]
 name = "paged-flow"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=149d888b27e7ffd0f3eb67cbcde07e086870c7a2#149d888b27e7ffd0f3eb67cbcde07e086870c7a2"
+source = "git+https://github.com/paged-media/core?rev=b17870d2131a279264366cf6746d5373ad63059e#b17870d2131a279264366cf6746d5373ad63059e"
 dependencies = [
  "serde",
 ]
@@ -293,7 +293,7 @@ dependencies = [
 [[package]]
 name = "paged-model"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=149d888b27e7ffd0f3eb67cbcde07e086870c7a2#149d888b27e7ffd0f3eb67cbcde07e086870c7a2"
+source = "git+https://github.com/paged-media/core?rev=b17870d2131a279264366cf6746d5373ad63059e#b17870d2131a279264366cf6746d5373ad63059e"
 dependencies = [
  "base64",
  "serde",
@@ -302,7 +302,7 @@ dependencies = [
 [[package]]
 name = "paged-scene"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=149d888b27e7ffd0f3eb67cbcde07e086870c7a2#149d888b27e7ffd0f3eb67cbcde07e086870c7a2"
+source = "git+https://github.com/paged-media/core?rev=b17870d2131a279264366cf6746d5373ad63059e#b17870d2131a279264366cf6746d5373ad63059e"
 dependencies = [
  "blake3",
  "paged-composition",
@@ -316,7 +316,7 @@ dependencies = [
 [[package]]
 name = "paged-store"
 version = "0.0.0"
-source = "git+https://github.com/paged-media/core?rev=149d888b27e7ffd0f3eb67cbcde07e086870c7a2#149d888b27e7ffd0f3eb67cbcde07e086870c7a2"
+source = "git+https://github.com/paged-media/core?rev=b17870d2131a279264366cf6746d5373ad63059e#b17870d2131a279264366cf6746d5373ad63059e"
 dependencies = [
  "blake3",
  "flate2",

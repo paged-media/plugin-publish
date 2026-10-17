@@ -250,3 +250,48 @@ fn a_minted_table_writes_its_fixed_and_kept_rows() {
         ]
     );
 }
+
+/// Core ADR 175: a row's Start Row option is read in InDesign's spelling,
+/// survives an unmutated save, and a changed one is patched in place.
+#[test]
+fn start_row_is_read_kept_and_patched() {
+    use paged_model::StartParagraph;
+    let source = package_with([r#" StartRow="NextFrame""#, "", ""]);
+    let mut doc = pkg::open(&source);
+    assert_eq!(
+        rows(&doc).iter().map(|r| r.start_row).collect::<Vec<_>>(),
+        vec![Some(StartParagraph::NextFrame), None, None]
+    );
+    pkg::assert_same_package(&source, &write_idml(&doc, &source).expect("write"));
+
+    {
+        let rows = rows_mut(&mut doc);
+        rows[0].start_row = Some(StartParagraph::NextOddPage); // changed
+        rows[2].start_row = Some(StartParagraph::NextColumn); // new
+    }
+    let out = write_idml(&doc, &source).expect("write");
+    let xml = pkg::entry(&out, "Stories/Story_st1.xml").expect("story");
+    assert!(
+        xml.contains(
+            r#"<Row Self="tRow0" Name="0" SingleRowHeight="20" MinimumHeight="20" StartRow="NextOddPage"/>"#
+        ),
+        "patched in place:\n{xml}"
+    );
+    assert!(
+        xml.contains(
+            r#"<Row Self="tRow2" Name="2" SingleRowHeight="20" MinimumHeight="20" StartRow="NextColumn"/>"#
+        ),
+        "appended:\n{xml}"
+    );
+    assert_eq!(
+        rows(&pkg::open(&out))
+            .iter()
+            .map(|r| r.start_row)
+            .collect::<Vec<_>>(),
+        vec![
+            Some(StartParagraph::NextOddPage),
+            None,
+            Some(StartParagraph::NextColumn)
+        ]
+    );
+}

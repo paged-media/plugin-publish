@@ -1202,8 +1202,14 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     }
                 }
                 // An `<EndnoteTextFrame>` is the text frame InDesign hosts
-                // the endnote story in (core ADR 170): read as one.
+                // the endnote story in (core ADR 170): read as one, and
+                // known as the endnote frame (core ADR 174).
                 b"TextFrame" | b"EndnoteTextFrame" => {
+                    if e.name().as_ref() == b"EndnoteTextFrame" {
+                        if let Some(id) = attr(&e, b"Self") {
+                            out.endnote_frames.push(id);
+                        }
+                    }
                     let parked = current_frame.is_some();
                     let nested_into = park_open_container(
                         &mut out,
