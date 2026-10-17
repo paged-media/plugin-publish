@@ -2432,10 +2432,10 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
                     }
                 }
                 b"FrameFittingOption" => {
-                    // Attaches to the current Rectangle. Crops are
-                    // signed pt offsets — negative values grow the
-                    // image past the frame edge for FillProportionally
-                    // fits.
+                    // Attaches to the current Rectangle. The crops are
+                    // InDesign's here, and become the model's frame-space
+                    // insets once the frame's picture transform is known
+                    // (the pass at the end; see `crop_from_idml`).
                     if let Some(CurrentFrameKind::Rect(i)) =
                         current_frame.as_ref().map(|cf| cf.kind)
                     {
@@ -2868,9 +2868,70 @@ pub fn parse_spread_with_provenance(xml: &[u8]) -> Result<(Spread, SpreadProvena
         }
         buf.clear();
     }
+    // A frame's `<FrameFittingOption>` crops, into the model's frame-space
+    // insets (see [`crop_from_idml`]) — once the placed child's
+    // transform, which follows the option in InDesign's element order,
+    // has been read.
+    for r in &mut out.rectangles {
+        let (Some(ff), Some((sx, sy))) = (
+            r.frame_fitting.as_mut(),
+            r.image_item_transform.as_ref().and_then(crop_scales),
+        ) else {
+            continue;
+        };
+        ff.left_crop = ff.left_crop.map(|v| crop_from_idml(v, sx));
+        ff.right_crop = ff.right_crop.map(|v| crop_from_idml(v, sx));
+        ff.top_crop = ff.top_crop.map(|v| crop_from_idml(v, sy));
+        ff.bottom_crop = ff.bottom_crop.map(|v| crop_from_idml(v, sy));
+    }
     out.item_names = item_names.clone();
     provenance.item_names = item_names;
     Ok((out, provenance))
+}
+
+/// One side of a `<FrameFittingOption>` crop as the model holds it, from
+/// InDesign's value.
+///
+/// InDesign measures a crop from the PICTURE's edge to the frame's, in
+/// the picture's own units (before its `ItemTransform` scales it),
+/// positive where the frame cuts into the picture: a letterboxed
+/// `Proportionally` frame 250.3 pt wide around a picture 1277 units wide
+/// at scale 0.13835 carries `LeftCrop="-266.077"` — the 36.81 pt band
+/// over the scale. Across the corpus's InDesign packages every frame
+/// whose crops are set agrees with that reading of its own transform
+/// and `<GraphicBounds>` (283 of 290; the rest were moved after
+/// cropping). The model's crop (`paged_model::FrameFittingOption`) is
+/// the frame-space inset from the frame's edge to the picture's: the
+/// same distance, the other sign, times the scale.
+///
+/// A `FillProportionally` frame often carries zero crops while its
+/// picture overhangs (InDesign keeps the fit's crop AMOUNT there, and
+/// the transform places the picture); that reads as zero either way.
+pub fn crop_from_idml(idml: f32, scale: f32) -> f32 {
+    let v = -idml * scale;
+    if v == 0.0 {
+        0.0
+    } else {
+        v
+    }
+}
+
+/// [`crop_from_idml`]'s inverse: the model's crop as InDesign spells it.
+pub fn crop_to_idml(model: f32, scale: f32) -> f32 {
+    let v = -model / scale;
+    if v == 0.0 {
+        0.0
+    } else {
+        v
+    }
+}
+
+/// The horizontal and vertical scale crops convert by: the placed
+/// child's transform's, when it neither rotates nor skews the picture
+/// and scales it on both axes. Otherwise `None`, and the crops stay as
+/// spelled — the reader and the writer agree on that.
+pub fn crop_scales(t: &[f32; 6]) -> Option<(f32, f32)> {
+    (t[1] == 0.0 && t[2] == 0.0 && t[0] != 0.0 && t[3] != 0.0).then(|| (t[0].abs(), t[3].abs()))
 }
 
 fn parse_bounds(s: &str) -> Option<Bounds> {

@@ -1917,6 +1917,17 @@ pub fn parse_story_with_provenance(xml: &[u8]) -> Result<(Story, StoryProvenance
                     if let Some(run) = current_run.as_mut() {
                         let body = pi.as_ref();
                         let body_str = std::str::from_utf8(body).unwrap_or("").trim();
+                        let is_marker = body_str == "ACE 18"
+                            || body_str == "ACE 19"
+                            || (body_str == "ACE 4" && !footnote_stack.is_empty());
+                        if is_marker {
+                            // A marker is a character, like text: a mark
+                            // held before it was interior.
+                            for _ in 0..pending_breaks {
+                                run.text.push('\n');
+                            }
+                            pending_breaks = 0;
+                        }
                         if body_str == "ACE 18" {
                             run.text.push(match range_page_number_type.as_deref() {
                                 Some("NextPageNumber") => NEXT_PAGE_NUMBER_MARKER,
@@ -2210,6 +2221,36 @@ mod tests {
             format!(
                 "pg=[{AUTO_PAGE_NUMBER_MARKER}]\nnext=[{NEXT_PAGE_NUMBER_MARKER}] prev=[\
                  {PREVIOUS_PAGE_NUMBER_MARKER}] sec=[{SECTION_MARKER}]"
+            )
+        );
+    }
+
+    /// A marker that opens a paragraph is that paragraph's first
+    /// character: the `<Br/>` before it was interior, exactly as it is
+    /// before text. The marker used to be pushed before the held break,
+    /// so a folio line "<page>\tChapter" read as the previous paragraph's
+    /// last character.
+    #[test]
+    fn a_marker_opening_a_paragraph_follows_the_break() {
+        let xml = br#"<idPkg:Story xmlns:idPkg="x"><Story Self="s">
+            <ParagraphStyleRange>
+              <CharacterStyleRange><Content>one</Content><Br/><Content><?ACE 18?> two</Content><Br/></CharacterStyleRange>
+              <CharacterStyleRange PageNumberType="NextPageNumber"><Content><?ACE 18?></Content></CharacterStyleRange>
+              <CharacterStyleRange><Content> three</Content><Br/><Content><?ACE 19?></Content></CharacterStyleRange>
+            </ParagraphStyleRange>
+          </Story></idPkg:Story>"#;
+        let story = parse_story(xml).unwrap();
+        let text: String = story
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .map(|r| r.text.as_str())
+            .collect();
+        assert_eq!(
+            text,
+            format!(
+                "one\n{AUTO_PAGE_NUMBER_MARKER} two\n{NEXT_PAGE_NUMBER_MARKER} three\n\
+                 {SECTION_MARKER}"
             )
         );
     }
