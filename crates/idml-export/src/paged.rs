@@ -268,7 +268,7 @@ pub fn write_paged(
         if raw.is_dir() || replace.contains(raw.name()?.as_ref()) {
             continue;
         }
-        zip.raw_copy_file(raw)?;
+        crate::zip_layout::copy_entry(&mut zip, raw)?;
     }
     zip.start_file(MANIFEST_NAME, deflated)?;
     zip.write_all(&manifest)?;
@@ -276,5 +276,5 @@ pub fn write_paged(
         zip.start_file(name.as_str(), deflated)?;
         zip.write_all(body)?;
     }
-    Ok(zip.finish()?.into_inner())
+    Ok(crate::zip_layout::finish(zip)?)
 }
